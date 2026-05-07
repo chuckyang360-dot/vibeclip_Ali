@@ -19,9 +19,28 @@ from .xai_video_client import XAIVideoClient, effective_xai_video_model
 
 logger = logging.getLogger(__name__)
 _XAI_PROVIDER_DURATION_CAP_SECONDS = 10
+_PRODUCTION_VIDEO_PROVIDER_ERROR = "生产环境未配置真实视频 provider，禁止使用 mock video provider"
 
 # Mock dev video must be produced by ffmpeg from runtime PATH.
 MOCK_FFMPEG_BIN = "ffmpeg"
+
+
+def _is_truthy(raw: str | None) -> bool:
+    return str(raw or "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _is_production_env() -> bool:
+    markers = [
+        os.getenv("APP_ENV"),
+        os.getenv("ENVIRONMENT"),
+        os.getenv("NODE_ENV"),
+        os.getenv("RAILWAY_ENVIRONMENT"),
+    ]
+    for raw in markers:
+        val = str(raw or "").strip().lower()
+        if val in {"prod", "production"}:
+            return True
+    return False
 
 
 @dataclass
@@ -461,8 +480,21 @@ class MockXAIVideoProvider:
 
 
 def build_xai_video_provider() -> SegmentVideoProvider:
-    if settings.SHORT_DRAMA_USE_MOCK_VIDEO_PROVIDER:
+    is_prod = _is_production_env()
+    provider_env = str(os.getenv("VIDEO_PROVIDER") or "").strip().lower()
+    explicit_mock = provider_env == "mock" or _is_truthy(os.getenv("MOCK_VIDEO_PROVIDER"))
+    legacy_mock = bool(settings.SHORT_DRAMA_USE_MOCK_VIDEO_PROVIDER)
+    use_mock = explicit_mock or (provider_env == "" and legacy_mock)
+
+    if is_prod and use_mock:
+        raise ShortDramaVideoProviderError(_PRODUCTION_VIDEO_PROVIDER_ERROR)
+
+    if use_mock:
         logger.warning("[VIDEO_PROVIDER] MOCK provider ENABLED")
         return MockXAIVideoProvider()
-    logger.info("[VIDEO_PROVIDER] REAL XAI provider ENABLED")
+
+    if is_prod and not (settings.XAI_API_KEY or "").strip():
+        raise ShortDramaVideoProviderError(_PRODUCTION_VIDEO_PROVIDER_ERROR)
+
+    logger.info("[VIDEO_PROVIDER] XAI provider ENABLED")
     return XAIVideoProvider()

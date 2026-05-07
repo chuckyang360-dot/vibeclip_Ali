@@ -26,7 +26,7 @@ from ...utils.r2_storage import upload_file
 from ..exceptions import ShortDramaInvalidSegmentVideoError, ShortDramaVideoInputError
 from ..models import AssetEntity, AssetImage, RenderJob, SegmentScriptRecord, ShortDramaProject
 from ..providers.xai_video_client import effective_xai_video_model
-from ..providers.xai_video_provider import SegmentVideoProvider, build_xai_video_provider
+from ..providers.xai_video_provider import MockXAIVideoProvider, SegmentVideoProvider, build_xai_video_provider
 from ..schemas.segment import SegmentScriptSchema
 from ..utils.enums import ProjectStatus, RenderJobStatus, RenderTargetType
 from ..utils.segment_mp4_validate import validate_segment_mp4_path
@@ -279,7 +279,7 @@ class RenderExecutorService:
         return max(1, int(settings.SHORT_DRAMA_VIDEO_MAX_CONCURRENT))
 
     def _provider_label(self) -> str:
-        return "mock" if settings.SHORT_DRAMA_USE_MOCK_VIDEO_PROVIDER else "xai"
+        return "mock" if isinstance(self._provider, MockXAIVideoProvider) else "xai"
 
     def _utc_now_iso(self) -> str:
         return datetime.now(timezone.utc).isoformat()
