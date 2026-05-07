@@ -50,18 +50,55 @@ app = FastAPI(
 )
 
 
-def _cors_allow_origins() -> list[str]:
-    raw = (settings.CORS_ORIGINS or "").strip()
-    if raw:
-        return [o.strip() for o in raw.split(",") if o.strip()]
-    base = (settings.FRONTEND_ORIGIN or "").strip()
-    return [base] if base else ["http://localhost:5173"]
+_DEFAULT_CORS_ORIGINS = [
+    "http://localhost:5173",
+    "http://localhost:5174",
+    "http://localhost:5175",
+    "http://localhost:5176",
+    "https://vibeclip-eight.vercel.app",
+]
 
+
+def _normalize_origin(origin: str) -> str:
+    return origin.strip().rstrip("/")
+
+
+def _split_origins(raw: str) -> list[str]:
+    if not raw:
+        return []
+    return [item.strip() for item in raw.split(",")]
+
+
+def _cors_allow_origins() -> list[str]:
+    raw_cors = settings.CORS_ORIGINS or ""
+    frontend_origin = settings.FRONTEND_ORIGIN or ""
+    frontend_url = settings.FRONTEND_URL or ""
+
+    merged = [
+        *_DEFAULT_CORS_ORIGINS,
+        *_split_origins(raw_cors),
+        frontend_origin,
+        frontend_url,
+    ]
+
+    unique_origins: list[str] = []
+    seen: set[str] = set()
+    for origin in merged:
+        normalized = _normalize_origin(origin)
+        if not normalized or normalized in seen:
+            continue
+        seen.add(normalized)
+        unique_origins.append(normalized)
+    return unique_origins
+
+
+_allowed_origins = _cors_allow_origins()
+logging.info("[CORS] allowed_origins=%s", _allowed_origins)
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=_cors_allow_origins(),
-    allow_credentials=False,
+    allow_origins=_allowed_origins,
+    allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
     expose_headers=["Authorization"],

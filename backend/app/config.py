@@ -120,6 +120,7 @@ class Settings(BaseSettings):
 
     # Frontend / CORS (Vibe Clip)
     FRONTEND_ORIGIN: str = Field(default="http://localhost:5173", env="FRONTEND_ORIGIN")
+    FRONTEND_URL: Optional[str] = Field(default=None, env="FRONTEND_URL")
     CORS_ORIGINS: str = Field(
         default=(
             "http://localhost:5173,http://127.0.0.1:5173,"

@@ -34,6 +34,13 @@ const VIDEO_ALLOWED_STATUSES = new Set([
   'completed',
 ]);
 
+const PIPELINE_POLLING_ACTIVE_STATUSES = new Set([
+  'video_rendering',
+  'segment_rendering',
+  'generating',
+  'pending',
+]);
+
 function pipelineHasSegmentScripts(p: PipelineSummaryDto | null): boolean {
   const rows = p?.segment_scripts;
   if (!Array.isArray(rows) || rows.length === 0) return false;
@@ -156,6 +163,21 @@ export function useStepFourPage() {
   const pipelinePollFailureRef = useRef(0);
   const pipelinePollAbortRef = useRef<AbortController | null>(null);
 
+  const shouldKeepPipelinePolling = useCallback((p: PipelineSummaryDto | null | undefined): boolean => {
+    if (!p) return false;
+    const stage = String(p.current_video_stage || '').trim();
+    if (stage === 'segment_rendering' || stage === 'final_rendering') return true;
+
+    const effectiveStatus = String(p.project?.effective_status || p.project?.status || '').trim().toLowerCase();
+    const isExplicitFailure =
+      effectiveStatus === 'failed' ||
+      String(p.final_render_status || '').trim().toLowerCase() === 'failed' ||
+      !!String(p.final_render_error || '').trim();
+    if (isExplicitFailure) return false;
+
+    return PIPELINE_POLLING_ACTIVE_STATUSES.has(effectiveStatus);
+  }, []);
+
   const stopSegmentJobPolling = useCallback((segmentUiId: number) => {
     const timerId = segmentJobPollersRef.current[segmentUiId];
     if (timerId != null) {
@@ -229,9 +251,10 @@ export function useStepFourPage() {
   );
 
   useEffect(() => {
-    if (projectId == null || phase !== 'ready') return;
+    if (projectId == null || phase !== 'ready' || !!loadError) return;
+    if (!shouldKeepPipelinePolling(pipeline)) return;
+
     const stage = pipeline?.current_video_stage ?? '';
-    if (stage !== 'segment_rendering' && stage !== 'final_rendering') return;
 
     pollEpochRef.current += 1;
     const epoch = pollEpochRef.current;
@@ -253,9 +276,14 @@ export function useStepFourPage() {
           });
           touchProjectNameFromPipeline(projectId, p.project?.project_name);
           pipelinePollFailureRef.current = 0;
-          const st = p.current_video_stage ?? '';
-          if (st !== 'segment_rendering' && st !== 'final_rendering') {
-            console.info('[STEP4_POLLING_STOP]', { reason: 'stage_settled', stage: st });
+          if (!shouldKeepPipelinePolling(p)) {
+            console.info('[STEP4_POLLING_STOP]', {
+              reason: 'pipeline_not_in_progress',
+              stage: p.current_video_stage ?? '',
+              effective_status: p.project?.effective_status ?? p.project?.status ?? '',
+              final_render_status: p.final_render_status ?? '',
+            });
+            window.clearInterval(id);
             pollEpochRef.current += 1;
           }
         } catch {
@@ -287,7 +315,7 @@ export function useStepFourPage() {
       pipelinePollAbortRef.current?.abort();
       pipelinePollAbortRef.current = null;
     };
-  }, [projectId, phase, pipeline?.current_video_stage]);
+  }, [projectId, phase, pipeline, loadError, shouldKeepPipelinePolling]);
 
   useEffect(() => {
     let cancelled = false;
