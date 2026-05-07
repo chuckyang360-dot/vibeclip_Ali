@@ -15,7 +15,7 @@ export default function ShortDramaLandingPage() {
     <ShortDramaLayout headerMode="landing">
       <ShortDramaHero />
 
-      <section id="sd-capabilities" className="scroll-mt-24 bg-[#F7F8FA] px-6 py-24">
+      <section id="features" className="scroll-mt-24 bg-[#F7F8FA] px-6 py-24">
         <div className="mx-auto max-w-6xl">
           <SectionHeader
             eyebrow="Core Capabilities"
@@ -26,7 +26,7 @@ export default function ShortDramaLandingPage() {
         </div>
       </section>
 
-      <section id="sd-workflow" className="scroll-mt-24 bg-white px-6 py-24">
+      <section id="workflow" className="scroll-mt-24 bg-white px-6 py-24">
         <div className="mx-auto max-w-6xl">
           <SectionHeader
             eyebrow="Workflow"
@@ -39,7 +39,7 @@ export default function ShortDramaLandingPage() {
         </div>
       </section>
 
-      <section id="sd-audience" className="scroll-mt-24 bg-[#F7F8FA] px-6 py-24">
+      <section id="cases" className="scroll-mt-24 bg-[#F7F8FA] px-6 py-24">
         <div className="mx-auto max-w-6xl">
           <SectionHeader
             eyebrow="For Who"

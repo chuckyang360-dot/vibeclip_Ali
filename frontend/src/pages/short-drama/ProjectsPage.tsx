@@ -185,13 +185,43 @@ export function ShortDramaProjectsPage() {
     <ShortDramaLayout headerMode="landing">
       <div className="min-h-screen bg-[#F7F8FA] px-6 py-10" style={{ fontFamily: "'Inter', sans-serif" }}>
         <div className="mx-auto max-w-5xl">
+        {!user?.id ? (
+          <div className="rounded-2xl border border-amber-200 bg-amber-50 p-6">
+            <p className="text-[14px] font-semibold text-amber-900">请先登录后查看项目列表</p>
+            <div className="mt-4 flex items-center gap-3">
+              <button
+                type="button"
+                onClick={() => navigate('/login')}
+                className="rounded-lg bg-[#1D1D1F] px-4 py-2 text-[13px] font-semibold text-white"
+              >
+                登录
+              </button>
+              <button
+                type="button"
+                onClick={() => navigate('/')}
+                className="rounded-lg border border-[#EAEAEA] bg-white px-4 py-2 text-[13px] font-semibold text-[#444444]"
+              >
+                返回首页
+              </button>
+            </div>
+          </div>
+        ) : (
+          <>
         <div className="mb-6">
-          <div>
+          <div className="flex items-center justify-between gap-3">
+            <div>
             <h1 className="text-2xl font-black text-[#1D1D1F]" style={{ fontFamily: "'Syne', sans-serif" }}>VibeClip 项目</h1>
             <p className="mt-1 text-[13px] text-[#8E8E93]">继续编辑草稿、处理中和已完成的商品营销短视频项目。</p>
+            </div>
+            <button
+              type="button"
+              onClick={() => navigate('/short-drama/create')}
+              className="rounded-lg bg-[#1D1D1F] px-4 py-2 text-[13px] font-semibold text-white"
+            >
+              创建项目
+            </button>
           </div>
         </div>
-        {!user?.id ? <div className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-[13px] text-amber-900">请先登录后查看项目列表。</div> : null}
         {loading ? <div className="text-[13px] text-[#8E8E93]">加载中...</div> : null}
         {error ? <div className="rounded-xl border border-red-200 bg-red-50 p-4 text-[13px] text-red-800">{error}</div> : null}
           <div className="mb-5 flex flex-wrap gap-2">
@@ -291,7 +321,7 @@ export function ShortDramaProjectsPage() {
           </div>
           {!loading && sorted.length === 0 && !error ? (
             <div className="rounded-2xl border border-dashed border-[#D1D1D6] bg-white px-6 py-10 text-center">
-              <p className="text-[14px] font-semibold text-[#1D1D1F]">还没有 VibeClip 项目</p>
+              <p className="text-[14px] font-semibold text-[#1D1D1F]">还没有 Vibe Clip 项目</p>
               <p className="mt-1 text-[12px] text-[#8E8E93]">创建项目后，这里会展示角色封面和生成进度。</p>
             </div>
           ) : null}
@@ -341,6 +371,8 @@ export function ShortDramaProjectsPage() {
               </div>
             </div>
           ) : null}
+          </>
+        )}
         </div>
       </div>
     </ShortDramaLayout>

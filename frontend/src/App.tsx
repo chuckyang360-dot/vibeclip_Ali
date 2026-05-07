@@ -10,14 +10,19 @@ import { ShortDramaStoryBlueprintPage } from './pages/short-drama/StoryBlueprint
 import { ShortDramaAssetsPage } from './pages/short-drama/AssetsPage';
 import { ShortDramaStepFourPage } from './pages/short-drama/StepFourPage';
 import { ShortDramaOverviewPage } from './pages/short-drama/OverviewPage';
+import { AccountSettingsPage } from './pages/account/AccountSettingsPage';
+import { PricingPage } from './pages/pricing/PricingPage';
+import { BillingPage } from './pages/billing/BillingPage';
 import { AuthProvider } from './contexts/AuthContext';
 
 export function App() {
   return (
     <AuthProvider>
       <Routes>
-        <Route path="/" element={<Navigate to="/short-drama/projects" replace />} />
-        <Route path="/short-drama" element={<ShortDramaLandingPage />} />
+        <Route path="/" element={<ShortDramaLandingPage />} />
+        <Route path="/workflow" element={<Navigate to="/#workflow" replace />} />
+        <Route path="/cases" element={<Navigate to="/#cases" replace />} />
+        <Route path="/short-drama" element={<Navigate to="/short-drama/projects" replace />} />
         <Route path="/short-drama/projects" element={<ShortDramaProjectsPage />} />
         <Route path="/short-drama/projects/:projectId" element={<ShortDramaProjectEntryPage />} />
         <Route path="/short-drama/projects/:projectId/step-1" element={<ShortDramaProductInputPage />} />
@@ -33,7 +38,10 @@ export function App() {
         <Route path="/short-drama/overview" element={<ShortDramaOverviewPage />} />
         <Route path="/login" element={<Login />} />
         <Route path="/register" element={<Register />} />
-        <Route path="*" element={<Navigate to="/short-drama/projects" replace />} />
+        <Route path="/account/settings" element={<AccountSettingsPage />} />
+        <Route path="/pricing" element={<PricingPage />} />
+        <Route path="/billing" element={<BillingPage />} />
+        <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
     </AuthProvider>
   );

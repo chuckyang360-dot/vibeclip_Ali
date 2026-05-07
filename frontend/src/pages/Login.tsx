@@ -101,8 +101,8 @@ export function Login() {
 
         {/* Back to Home */}
         <div className="text-center mt-6">
-          <Link to="/short-drama/projects" className="text-sm text-gray-500 hover:text-gray-700">
-            返回项目列表
+          <Link to="/" className="text-sm text-gray-500 hover:text-gray-700">
+            返回首页
           </Link>
         </div>
       </div>

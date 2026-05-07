@@ -13,6 +13,7 @@ export function ShortDramaHero() {
 
   return (
     <section
+      id="home"
       className="relative flex min-h-[calc(100vh-4.5rem)] flex-col items-center justify-center overflow-hidden"
       style={{ background: 'linear-gradient(180deg, #F8FAFC 0%, #FFFFFF 45%)' }}
     >
