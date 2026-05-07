@@ -1,0 +1,62 @@
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Node
+node_modules/
+dist/
+*.log
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.Python
+venv/
+env/
+
+# Database
+*.db
+*.sqlite
+*.sqlite3
+
+# Railway
+.railway/
+backend/generated/
+backend/tests/_sd_*_out/
+docs/step3-evidence/
+docs/*verify*.json
+logs/
+data/raw_data/
+data/processed_data/
+data/reports/
+configs/api_keys.json
+*.log
+*.tmp.json
+*.temp.json
+*.local.json
+*-evidence.png
+*-screenshot.png
+generated-*.png
+generated-*.jpg
+generated-*.jpeg
+generated-*.webp
+/*-page-*.png
+/about-*.png
+/case-*.png
+/product-*.png
+/frontend/*fixed*.png
+backend/examples/
+frontend/scripts/

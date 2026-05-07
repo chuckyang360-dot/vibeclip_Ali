@@ -1,0 +1,8 @@
+# Vibe Clip 后端 — 独立 Railway Project
+[http_service]
+  internal_port = 8000
+  force_https = true
+
+[env]
+  PYTHONUNBUFFERED = "1"
+  DEBUG = "false"
