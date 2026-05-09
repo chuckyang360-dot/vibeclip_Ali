@@ -1,20 +1,20 @@
 const tone: Record<string, string> = {
-  success: 'bg-emerald-500/15 text-emerald-200 ring-emerald-500/30',
-  failed: 'bg-red-500/15 text-red-200 ring-red-500/30',
-  error: 'bg-red-500/15 text-red-200 ring-red-500/30',
-  running: 'bg-amber-500/15 text-amber-200 ring-amber-500/30',
-  queued: 'bg-sky-500/15 text-sky-200 ring-sky-500/30',
-  completed: 'bg-emerald-500/15 text-emerald-200 ring-emerald-500/30',
-  normal: 'bg-zinc-500/15 text-zinc-200 ring-zinc-500/30',
-  disabled: 'bg-rose-500/15 text-rose-200 ring-rose-500/30',
-  default: 'bg-violet-500/15 text-violet-200 ring-violet-500/30',
+  success: 'bg-emerald-50 text-emerald-700 border-emerald-200',
+  failed: 'bg-rose-50 text-rose-700 border-rose-200',
+  error: 'bg-rose-50 text-rose-700 border-rose-200',
+  running: 'bg-amber-50 text-amber-700 border-amber-200',
+  queued: 'bg-sky-50 text-sky-700 border-sky-200',
+  completed: 'bg-emerald-50 text-emerald-700 border-emerald-200',
+  normal: 'bg-emerald-50 text-emerald-700 border-emerald-200',
+  disabled: 'bg-gray-100 text-gray-600 border-gray-200',
+  default: 'bg-indigo-50 text-indigo-700 border-indigo-200',
 };
 
 export function AdminStatusBadge({ status }: { status: string }) {
   const key = status?.toLowerCase?.() || 'default';
   const cls = tone[key] || tone.default;
   return (
-    <span className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-[11px] font-medium ring-1 ring-inset ${cls}`}>
+    <span className={`inline-flex items-center rounded-full border px-2 py-0.5 text-xs font-medium ${cls}`}>
       {status}
     </span>
   );

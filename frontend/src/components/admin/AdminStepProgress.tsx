@@ -4,28 +4,27 @@ export function AdminStepProgress({
   steps: { step: string; label: string; status: string; error_message?: string | null }[];
 }) {
   return (
-    <div className="space-y-3">
+    <div className="flex items-start gap-0">
       {steps.map((s, i) => (
-        <div key={s.step} className="flex gap-3">
+        <div key={s.step} className="flex min-w-0 flex-1 items-center">
           <div className="flex flex-col items-center">
             <div
-              className={`flex h-8 w-8 items-center justify-center rounded-full text-xs font-semibold ${
+              className={`flex h-7 w-7 items-center justify-center rounded-full text-xs ${
                 s.status === 'completed'
-                  ? 'bg-emerald-500/20 text-emerald-200 ring-1 ring-emerald-500/40'
-                  : 'bg-zinc-800 text-zinc-300 ring-1 ring-white/10'
+                  ? 'bg-emerald-500 text-white'
+                  : s.status === 'processing'
+                    ? 'bg-indigo-500 text-white'
+                    : s.status === 'error'
+                      ? 'bg-rose-500 text-white'
+                      : 'bg-gray-200 text-gray-500'
               }`}
             >
               {i + 1}
             </div>
-            {i < steps.length - 1 ? <div className="mt-1 h-8 w-px bg-white/10" /> : null}
+            <span className="mt-1.5 whitespace-nowrap text-xs font-medium text-gray-700">{s.label}</span>
+            {s.error_message ? <span className="mt-0.5 max-w-[100px] truncate text-xs text-rose-500">{s.error_message}</span> : null}
           </div>
-          <div className="flex-1 pb-4">
-            <p className="text-xs font-medium text-zinc-400">
-              {s.step} · {s.label}
-            </p>
-            <p className="mt-1 text-sm text-white">{s.status}</p>
-            {s.error_message ? <p className="mt-1 text-xs text-red-300">{s.error_message}</p> : null}
-          </div>
+          {i < steps.length - 1 ? <div className="mx-1 mt-[-16px] h-0.5 flex-1 rounded-full bg-gray-200" /> : null}
         </div>
       ))}
     </div>

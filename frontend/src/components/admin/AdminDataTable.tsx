@@ -13,11 +13,11 @@ export function AdminDataTable({
     return null;
   }
   return (
-    <div className="overflow-hidden rounded-2xl border border-white/10 bg-zinc-950/50 shadow-[0_24px_80px_-48px_rgba(0,0,0,0.9)]">
+    <div className="overflow-hidden rounded-lg border border-gray-200 bg-white">
       <div className="overflow-x-auto">
         <table className="min-w-full border-collapse text-left text-sm">
           <thead>
-            <tr className="border-b border-white/10 bg-zinc-900/60 text-xs uppercase tracking-wide text-zinc-500">
+            <tr className="border-b border-gray-100 text-xs font-medium text-gray-500">
               {headers.map((h) => (
                 <th key={h} className="whitespace-nowrap px-4 py-3 font-medium">
                   {h}
@@ -25,7 +25,7 @@ export function AdminDataTable({
               ))}
             </tr>
           </thead>
-          <tbody className="divide-y divide-white/5 text-zinc-200">{children}</tbody>
+          <tbody className="divide-y divide-gray-50 text-gray-700">{children}</tbody>
         </table>
       </div>
     </div>

@@ -1,8 +1,11 @@
 export function AdminEmptyState({ title, description }: { title: string; description?: string }) {
   return (
-    <div className="rounded-2xl border border-dashed border-white/10 bg-zinc-950/30 px-8 py-12 text-center">
-      <p className="text-sm font-medium text-zinc-200">{title}</p>
-      {description ? <p className="mt-2 text-xs text-zinc-500">{description}</p> : null}
+    <div className="flex flex-col items-center justify-center rounded-lg border border-gray-200 bg-white px-8 py-12 text-center">
+      <div className="mb-3 flex h-12 w-12 items-center justify-center rounded-full bg-gray-50">
+        <i className="ri-inbox-line text-xl text-gray-400" />
+      </div>
+      <p className="text-sm font-medium text-gray-900">{title}</p>
+      {description ? <p className="mt-2 text-xs text-gray-500">{description}</p> : null}
     </div>
   );
 }

@@ -7,8 +7,11 @@ import { AdminFilterBar } from '../../components/admin/AdminFilterBar';
 import { AdminLoadingState } from '../../components/admin/AdminLoadingState';
 import { AdminTabs } from '../../components/admin/AdminTabs';
 import { CreditAdjustmentModal } from '../../components/admin/CreditAdjustmentModal';
+import { useAdminLocale } from '../../contexts/AdminLocaleContext';
+import { formatTransactionType } from '../../i18n/adminI18n';
 
 export function AdminCreditsPage() {
+  const { locale, t } = useAdminLocale();
   const [tab, setTab] = useState('accounts');
   const [accounts, setAccounts] = useState<Record<string, unknown>[]>([]);
   const [acctTotal, setAcctTotal] = useState(0);
@@ -114,19 +117,19 @@ export function AdminCreditsPage() {
           setError(null);
         }}
         tabs={[
-          { id: 'accounts', label: 'Credit accounts' },
-          { id: 'transactions', label: 'Credit transactions' },
-          { id: 'manual', label: 'Manual adjustment' },
+          { id: 'accounts', label: t('creditAccounts') },
+          { id: 'transactions', label: t('creditTransactions') },
+          { id: 'manual', label: t('manualAdjustment') },
         ]}
       />
 
       {tab === 'accounts' ? (
         <>
           <AdminFilterBar>
-            <label className="flex flex-col text-xs text-zinc-500">
-              Search
+            <label className="flex flex-col text-xs text-gray-600">
+              {t('search')}
               <input
-                className="mt-1 rounded-lg border border-white/10 bg-zinc-900 px-3 py-2 text-sm text-white"
+                className="mt-1 rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 text-sm text-gray-900"
                 value={search}
                 onChange={(e) => {
                   setPage(1);
@@ -137,17 +140,17 @@ export function AdminCreditsPage() {
             <button
               type="button"
               onClick={() => void loadAccounts()}
-              className="rounded-lg bg-violet-600 px-4 py-2 text-xs font-semibold text-white hover:bg-violet-500"
+              className="rounded-lg bg-indigo-600 px-4 py-2 text-xs font-semibold text-white hover:bg-indigo-700"
             >
-              Apply
+              {t('apply')}
             </button>
           </AdminFilterBar>
           {loading ? <AdminLoadingState /> : null}
           {error ? <AdminErrorState message={error} onRetry={loadAccounts} /> : null}
-          {!loading && !error && accounts.length === 0 ? <AdminEmptyState title="No credit accounts" /> : null}
+          {!loading && !error && accounts.length === 0 ? <AdminEmptyState title={locale === 'zh' ? '暂无积分账户' : 'No credit accounts'} /> : null}
           {!loading && !error && accounts.length > 0 ? (
             <>
-              <AdminDataTable headers={['User', 'Email', 'Balance', 'Granted', 'Consumed', 'Refunded', 'Updated']}>
+              <AdminDataTable headers={[t('user'), 'Email', t('currentBalance'), t('totalGranted'), t('totalConsumed'), t('totalRefunded'), t('updatedAt')]}>
                 {accounts.map((row, i) => {
                   const u = row.user as Record<string, unknown> | undefined;
                   return (
@@ -155,34 +158,34 @@ export function AdminCreditsPage() {
                       <td className="px-4 py-3 text-xs">{String(u?.username || u?.user_id)}</td>
                       <td className="px-4 py-3 text-xs">{String(row.email)}</td>
                       <td className="px-4 py-3 text-sm">{String(row.current_balance)}</td>
-                      <td className="px-4 py-3 text-xs text-zinc-400">{String(row.total_granted)}</td>
-                      <td className="px-4 py-3 text-xs text-zinc-400">{String(row.total_consumed)}</td>
-                      <td className="px-4 py-3 text-xs text-zinc-400">{String(row.total_refunded)}</td>
-                      <td className="px-4 py-3 text-xs text-zinc-500">{String(row.updated_at || '')}</td>
+                      <td className="px-4 py-3 text-xs text-gray-500">{String(row.total_granted)}</td>
+                      <td className="px-4 py-3 text-xs text-gray-500">{String(row.total_consumed)}</td>
+                      <td className="px-4 py-3 text-xs text-gray-500">{String(row.total_refunded)}</td>
+                      <td className="px-4 py-3 text-xs text-gray-500">{String(row.updated_at || '')}</td>
                     </tr>
                   );
                 })}
               </AdminDataTable>
-              <div className="flex items-center justify-between text-xs text-zinc-500">
+              <div className="flex items-center justify-between text-xs text-gray-500">
                 <span>
-                  Page {page} / {pages}
+                  {locale === 'zh' ? `第 ${page} / ${pages} 页` : `Page ${page} / ${pages}`}
                 </span>
                 <div className="flex gap-2">
                   <button
                     type="button"
                     disabled={page <= 1}
                     onClick={() => setPage((p) => Math.max(1, p - 1))}
-                    className="rounded-lg border border-white/10 px-3 py-1 disabled:opacity-40"
+                    className="rounded-lg border border-gray-200 px-3 py-1 disabled:opacity-40"
                   >
-                    Prev
+                    {locale === 'zh' ? '上一页' : 'Prev'}
                   </button>
                   <button
                     type="button"
                     disabled={page >= pages}
                     onClick={() => setPage((p) => Math.min(pages, p + 1))}
-                    className="rounded-lg border border-white/10 px-3 py-1 disabled:opacity-40"
+                    className="rounded-lg border border-gray-200 px-3 py-1 disabled:opacity-40"
                   >
-                    Next
+                    {locale === 'zh' ? '下一页' : 'Next'}
                   </button>
                 </div>
               </div>
@@ -194,10 +197,10 @@ export function AdminCreditsPage() {
       {tab === 'transactions' ? (
         <>
           <AdminFilterBar>
-            <label className="flex flex-col text-xs text-zinc-500">
+            <label className="flex flex-col text-xs text-gray-600">
               User ID
               <input
-                className="mt-1 rounded-lg border border-white/10 bg-zinc-900 px-3 py-2 text-sm text-white"
+                className="mt-1 rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 text-sm text-gray-900"
                 value={userId}
                 onChange={(e) => {
                   setPage(1);
@@ -205,10 +208,10 @@ export function AdminCreditsPage() {
                 }}
               />
             </label>
-            <label className="flex flex-col text-xs text-zinc-500">
-              Type
+            <label className="flex flex-col text-xs text-gray-600">
+              {t('action')}
               <input
-                className="mt-1 rounded-lg border border-white/10 bg-zinc-900 px-3 py-2 text-sm text-white"
+                className="mt-1 rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 text-sm text-gray-900"
                 value={txnType}
                 onChange={(e) => {
                   setPage(1);
@@ -220,17 +223,17 @@ export function AdminCreditsPage() {
             <button
               type="button"
               onClick={() => void loadTxns()}
-              className="rounded-lg bg-violet-600 px-4 py-2 text-xs font-semibold text-white hover:bg-violet-500"
+              className="rounded-lg bg-indigo-600 px-4 py-2 text-xs font-semibold text-white hover:bg-indigo-700"
             >
-              Apply
+              {t('apply')}
             </button>
           </AdminFilterBar>
           {loading ? <AdminLoadingState /> : null}
           {error ? <AdminErrorState message={error} onRetry={loadTxns} /> : null}
-          {!loading && !error && txns.length === 0 ? <AdminEmptyState title="No transactions" /> : null}
+          {!loading && !error && txns.length === 0 ? <AdminEmptyState title={locale === 'zh' ? '暂无积分流水' : 'No transactions'} /> : null}
           {!loading && !error && txns.length > 0 ? (
             <>
-              <AdminDataTable headers={['ID', 'User', 'Type', 'Amount', 'Balances', 'Operator', 'Note', 'At']}>
+              <AdminDataTable headers={['ID', t('user'), t('action'), t('amount'), locale === 'zh' ? '余额变化' : 'Balances', t('operator'), t('reason'), t('createdAt')]}>
                 {txns.map((t) => {
                   const u = t.user as Record<string, unknown> | undefined;
                   const op = t.operator as Record<string, unknown> | undefined;
@@ -238,40 +241,40 @@ export function AdminCreditsPage() {
                     <tr key={String(t.transaction_id)}>
                       <td className="px-4 py-3 text-xs">{String(t.transaction_id)}</td>
                       <td className="px-4 py-3 text-xs">{String(u?.email || u?.user_id)}</td>
-                      <td className="px-4 py-3 text-xs">{String(t.type)}</td>
+                      <td className="px-4 py-3 text-xs">{formatTransactionType(locale, t.type)}</td>
                       <td className="px-4 py-3 text-sm">{String(t.amount)}</td>
-                      <td className="px-4 py-3 text-xs text-zinc-500">
+                      <td className="px-4 py-3 text-xs text-gray-500">
                         {String(t.balance_before)} → {String(t.balance_after)}
                       </td>
-                      <td className="px-4 py-3 text-xs text-zinc-400">
+                      <td className="px-4 py-3 text-xs text-gray-500">
                         {String(op?.type || '')} {op?.admin_email ? `· ${String(op.admin_email)}` : ''}
                       </td>
-                      <td className="max-w-xs truncate px-4 py-3 text-xs text-zinc-400">{String(t.note || '')}</td>
-                      <td className="px-4 py-3 text-xs text-zinc-500">{String(t.created_at || '')}</td>
+                      <td className="max-w-xs truncate px-4 py-3 text-xs text-gray-500">{String(t.note || '')}</td>
+                      <td className="px-4 py-3 text-xs text-gray-500">{String(t.created_at || '')}</td>
                     </tr>
                   );
                 })}
               </AdminDataTable>
-              <div className="flex items-center justify-between text-xs text-zinc-500">
+              <div className="flex items-center justify-between text-xs text-gray-500">
                 <span>
-                  Page {page} / {pages}
+                  {locale === 'zh' ? `第 ${page} / ${pages} 页` : `Page ${page} / ${pages}`}
                 </span>
                 <div className="flex gap-2">
                   <button
                     type="button"
                     disabled={page <= 1}
                     onClick={() => setPage((p) => Math.max(1, p - 1))}
-                    className="rounded-lg border border-white/10 px-3 py-1 disabled:opacity-40"
+                    className="rounded-lg border border-gray-200 px-3 py-1 disabled:opacity-40"
                   >
-                    Prev
+                    {locale === 'zh' ? '上一页' : 'Prev'}
                   </button>
                   <button
                     type="button"
                     disabled={page >= pages}
                     onClick={() => setPage((p) => Math.min(pages, p + 1))}
-                    className="rounded-lg border border-white/10 px-3 py-1 disabled:opacity-40"
+                    className="rounded-lg border border-gray-200 px-3 py-1 disabled:opacity-40"
                   >
-                    Next
+                    {locale === 'zh' ? '下一页' : 'Next'}
                   </button>
                 </div>
               </div>
@@ -281,18 +284,18 @@ export function AdminCreditsPage() {
       ) : null}
 
       {tab === 'manual' ? (
-        <div className="rounded-2xl border border-white/10 bg-zinc-900/40 p-6 space-y-4 max-w-xl">
-          <label className="block text-xs text-zinc-500">
+        <div className="max-w-xl space-y-4 rounded-lg border border-gray-200 bg-white p-6">
+          <label className="block text-xs text-gray-600">
             User ID
             <input
-              className="mt-1 w-full rounded-lg border border-white/10 bg-zinc-900 px-3 py-2 text-sm text-white"
+              className="mt-1 w-full rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 text-sm text-gray-900"
               value={adjUserId}
               onChange={(e) => setAdjUserId(e.target.value)}
             />
           </label>
-          <div className="text-sm text-zinc-300">
-            Current balance:{' '}
-            <span className="font-semibold text-white">{adjBalance == null ? '—' : String(adjBalance)}</span>
+          <div className="text-sm text-gray-600">
+            {t('currentBalance')}:{' '}
+            <span className="font-semibold text-gray-900">{adjBalance == null ? '—' : String(adjBalance)}</span>
           </div>
           <div className="flex gap-2">
             <button
@@ -300,21 +303,21 @@ export function AdminCreditsPage() {
               onClick={() => {
                 setGrantOpen(true);
               }}
-              className="rounded-lg bg-violet-600 px-4 py-2 text-xs font-semibold text-white hover:bg-violet-500"
+              className="rounded-lg bg-indigo-600 px-4 py-2 text-xs font-semibold text-white hover:bg-indigo-700"
             >
-              Grant
+              {t('grant')}
             </button>
             <button
               type="button"
               onClick={() => {
                 setDeductOpen(true);
               }}
-              className="rounded-lg border border-white/10 px-4 py-2 text-xs font-semibold text-zinc-200 hover:bg-white/5"
+              className="rounded-lg border border-gray-200 px-4 py-2 text-xs font-semibold text-gray-700 hover:bg-gray-50"
             >
-              Deduct
+              {locale === 'zh' ? '扣减' : 'Deduct'}
             </button>
           </div>
-          <p className="text-xs text-zinc-500">Reason is required for all adjustments. Keys/tokens are never displayed.</p>
+          <p className="text-xs text-gray-500">Reason is required for all adjustments. Keys/tokens are never displayed.</p>
         </div>
       ) : null}
 

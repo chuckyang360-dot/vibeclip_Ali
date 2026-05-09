@@ -9,8 +9,11 @@ import { AdminMetricCard } from '../../components/admin/AdminMetricCard';
 import { AdminStatusBadge } from '../../components/admin/AdminStatusBadge';
 import { AdminTabs } from '../../components/admin/AdminTabs';
 import { CreditAdjustmentModal } from '../../components/admin/CreditAdjustmentModal';
+import { useAdminLocale } from '../../contexts/AdminLocaleContext';
+import { formatAdminStatus, formatBusinessType, formatTransactionType } from '../../i18n/adminI18n';
 
 export function AdminUserDetailPage() {
+  const { locale, t } = useAdminLocale();
   const { id } = useParams();
   const [data, setData] = useState<Record<string, unknown> | null>(null);
   const [tab, setTab] = useState('projects');
@@ -56,23 +59,23 @@ export function AdminUserDetailPage() {
   return (
     <div className="space-y-6">
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <Link to="/admin/users" className="text-xs text-violet-400 hover:underline">
-          ← Back to users
+        <Link to="/admin/users" className="text-xs text-indigo-600 hover:underline">
+          {locale === 'zh' ? '← 返回用户列表' : '← Back to users'}
         </Link>
         <div className="flex flex-wrap gap-2">
           <button
             type="button"
             onClick={() => setGrantOpen(true)}
-            className="rounded-lg bg-violet-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-violet-500"
+            className="rounded-lg bg-indigo-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-indigo-700"
           >
-            Grant credits
+            {locale === 'zh' ? '赠送积分' : 'Grant credits'}
           </button>
           <button
             type="button"
             onClick={() => setDeductOpen(true)}
-            className="rounded-lg border border-white/10 px-3 py-1.5 text-xs font-semibold text-zinc-200 hover:bg-white/5"
+            className="rounded-lg border border-gray-200 px-3 py-1.5 text-xs font-semibold text-gray-700 hover:bg-gray-50"
           >
-            Deduct credits
+            {locale === 'zh' ? '扣减积分' : 'Deduct credits'}
           </button>
           {isDisabled ? (
             <button
@@ -80,7 +83,7 @@ export function AdminUserDetailPage() {
               onClick={() => setRestoreOpen(true)}
               className="rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-emerald-500"
             >
-              Restore user
+              {locale === 'zh' ? '恢复用户' : 'Restore user'}
             </button>
           ) : (
             <button
@@ -88,25 +91,25 @@ export function AdminUserDetailPage() {
               onClick={() => setDisableOpen(true)}
               className="rounded-lg bg-rose-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-rose-500"
             >
-              Disable user
+              {locale === 'zh' ? '禁用用户' : 'Disable user'}
             </button>
           )}
         </div>
       </div>
 
-      <div className="rounded-2xl border border-white/10 bg-zinc-900/50 p-6">
+      <div className="rounded-lg border border-gray-200 bg-white p-6">
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div>
-            <h2 className="text-lg font-semibold text-white">{String(basic.email)}</h2>
-            <p className="text-xs text-zinc-500">User #{uid}</p>
+            <h2 className="text-lg font-semibold text-gray-900">{String(basic.email)}</h2>
+            <p className="text-xs text-gray-500">{locale === 'zh' ? `用户 #${uid}` : `User #${uid}`}</p>
             <div className="mt-3 flex flex-wrap gap-2">
-              <AdminStatusBadge status={String(basic.status || 'normal')} />
-              <span className="rounded-full bg-zinc-800 px-2.5 py-0.5 text-[11px] text-zinc-300 ring-1 ring-white/10">
+              <AdminStatusBadge status={formatAdminStatus(locale, basic.status || 'normal')} />
+              <span className="rounded-full bg-gray-100 px-2.5 py-0.5 text-[11px] text-gray-600 ring-1 ring-gray-200">
                 {String(basic.subscription || 'free')}
               </span>
             </div>
           </div>
-          <div className="text-right text-xs text-zinc-500">
+          <div className="text-right text-xs text-gray-500">
             <div>Registered: {String(basic.registered_at || '—')}</div>
             <div className="mt-1">Credits: {String(basic.credit_balance)}</div>
           </div>
@@ -114,11 +117,11 @@ export function AdminUserDetailPage() {
       </div>
 
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-        <AdminMetricCard label="Projects" value={Number(metrics.total_projects || 0)} />
-        <AdminMetricCard label="Assets" value={Number(metrics.total_assets || 0)} />
-        <AdminMetricCard label="Videos" value={Number(metrics.total_videos || 0)} />
-        <AdminMetricCard label="Credits granted" value={Number(metrics.total_credits_granted || 0)} />
-        <AdminMetricCard label="Credits consumed" value={Number(metrics.total_credits_consumed || 0)} />
+        <AdminMetricCard label={t('projects')} value={Number(metrics.total_projects || 0)} />
+        <AdminMetricCard label={t('assets')} value={Number(metrics.total_assets || 0)} />
+        <AdminMetricCard label={t('videos')} value={Number(metrics.total_videos || 0)} />
+        <AdminMetricCard label={locale === 'zh' ? '累计发放积分' : 'Credits granted'} value={Number(metrics.total_credits_granted || 0)} />
+        <AdminMetricCard label={locale === 'zh' ? '累计消耗积分' : 'Credits consumed'} value={Number(metrics.total_credits_consumed || 0)} />
         <AdminMetricCard label="Est. API cost" value={Number(metrics.estimated_api_cost || 0).toFixed(4)} />
       </div>
 
@@ -127,67 +130,67 @@ export function AdminUserDetailPage() {
           active={tab}
           onChange={setTab}
           tabs={[
-            { id: 'projects', label: 'Projects' },
-            { id: 'credits', label: 'Credit transactions' },
-            { id: 'api', label: 'API usage' },
-            { id: 'ops', label: 'Operation history' },
+            { id: 'projects', label: t('projects') },
+            { id: 'credits', label: t('creditTransactions') },
+            { id: 'api', label: locale === 'zh' ? 'API 使用' : 'API Usage' },
+            { id: 'ops', label: locale === 'zh' ? '操作历史' : 'Operation History' },
           ]}
         />
         {tab === 'projects' ? (
-          <AdminDataTable headers={['Project', 'Status', 'Step', 'Updated']}>
+          <AdminDataTable headers={[t('projectName'), t('status'), t('currentStep'), t('updatedAt')]}>
             {projects.map((p) => (
               <tr key={String(p.project_id)}>
                 <td className="px-4 py-3">
-                  <Link className="text-violet-400 hover:underline" to={`/admin/projects/${p.project_id}`}>
+                    <Link className="text-indigo-600 hover:underline" to={`/admin/projects/${p.project_id}`}>
                     {String(p.project_name)}
                   </Link>
                 </td>
-                <td className="px-4 py-3 text-xs">{String(p.status)}</td>
+                <td className="px-4 py-3 text-xs">{formatAdminStatus(locale, p.status)}</td>
                 <td className="px-4 py-3 text-xs">{String(p.current_step || '—')}</td>
-                <td className="px-4 py-3 text-xs text-zinc-500">{String(p.updated_at || '')}</td>
+                <td className="px-4 py-3 text-xs text-gray-500">{String(p.updated_at || '')}</td>
               </tr>
             ))}
           </AdminDataTable>
         ) : null}
         {tab === 'credits' ? (
-          <AdminDataTable headers={['ID', 'Type', 'Amount', 'Balances', 'Note', 'At']}>
+          <AdminDataTable headers={['ID', t('action'), t('amount'), locale === 'zh' ? '余额变化' : 'Balances', t('reason'), t('createdAt')]}>
             {txns.map((t) => (
               <tr key={String(t.transaction_id)}>
                 <td className="px-4 py-3 text-xs">{String(t.transaction_id)}</td>
-                <td className="px-4 py-3 text-xs">{String(t.type)}</td>
+                <td className="px-4 py-3 text-xs">{formatTransactionType(locale, t.type)}</td>
                 <td className="px-4 py-3 text-sm">{String(t.amount)}</td>
-                <td className="px-4 py-3 text-xs text-zinc-500">
+                <td className="px-4 py-3 text-xs text-gray-500">
                   {String(t.balance_before)} → {String(t.balance_after)}
                 </td>
-                <td className="max-w-xs truncate px-4 py-3 text-xs text-zinc-400">{String(t.note || '')}</td>
-                <td className="px-4 py-3 text-xs text-zinc-500">{String(t.created_at || '')}</td>
+                <td className="max-w-xs truncate px-4 py-3 text-xs text-gray-500">{String(t.note || '')}</td>
+                <td className="px-4 py-3 text-xs text-gray-500">{String(t.created_at || '')}</td>
               </tr>
             ))}
           </AdminDataTable>
         ) : null}
         {tab === 'api' ? (
-          <AdminDataTable headers={['ID', 'Provider', 'Type', 'Status', 'Cost USD?', 'At']}>
+          <AdminDataTable headers={['ID', t('provider'), t('businessType'), t('status'), t('estimatedCost'), t('createdAt')]}>
             {apiu.map((a) => (
               <tr key={String(a.api_call_id)}>
                 <td className="px-4 py-3 text-xs">{String(a.api_call_id)}</td>
                 <td className="px-4 py-3 text-xs">{String(a.provider)}</td>
-                <td className="px-4 py-3 text-xs">{String(a.business_type)}</td>
-                <td className="px-4 py-3 text-xs">{String(a.status)}</td>
+                <td className="px-4 py-3 text-xs">{formatBusinessType(locale, a.business_type)}</td>
+                <td className="px-4 py-3 text-xs">{formatAdminStatus(locale, a.status)}</td>
                 <td className="px-4 py-3 text-xs">{a.estimated_cost_usd == null ? '—' : String(a.estimated_cost_usd)}</td>
-                <td className="px-4 py-3 text-xs text-zinc-500">{String(a.created_at || '')}</td>
+                <td className="px-4 py-3 text-xs text-gray-500">{String(a.created_at || '')}</td>
               </tr>
             ))}
           </AdminDataTable>
         ) : null}
         {tab === 'ops' ? (
-          <AdminDataTable headers={['ID', 'Operator', 'Action', 'Reason', 'At']}>
+          <AdminDataTable headers={['ID', t('operator'), t('action'), t('reason'), t('createdAt')]}>
             {ops.map((o) => (
               <tr key={String(o.log_id)}>
                 <td className="px-4 py-3 text-xs">{String(o.log_id)}</td>
                 <td className="px-4 py-3 text-xs">{String(o.operator)}</td>
                 <td className="px-4 py-3 text-xs">{String(o.action)}</td>
-                <td className="max-w-sm truncate px-4 py-3 text-xs text-zinc-400">{String(o.reason || '')}</td>
-                <td className="px-4 py-3 text-xs text-zinc-500">{String(o.created_at || '')}</td>
+                <td className="max-w-sm truncate px-4 py-3 text-xs text-gray-500">{String(o.reason || '')}</td>
+                <td className="px-4 py-3 text-xs text-gray-500">{String(o.created_at || '')}</td>
               </tr>
             ))}
           </AdminDataTable>
@@ -215,8 +218,8 @@ export function AdminUserDetailPage() {
 
       <AdminConfirmModal
         open={disableOpen}
-        title="Disable user"
-        confirmLabel="Disable"
+        title={locale === 'zh' ? '禁用用户' : 'Disable user'}
+        confirmLabel={locale === 'zh' ? '禁用' : 'Disable'}
         danger
         onCancel={() => {
           setDisableOpen(false);
@@ -231,9 +234,9 @@ export function AdminUserDetailPage() {
         }}
       >
         <textarea
-          className="mt-4 w-full rounded-lg border border-white/10 bg-zinc-900 px-3 py-2 text-sm text-white"
+          className="mt-4 w-full rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 text-sm text-gray-900"
           rows={3}
-          placeholder="Reason"
+          placeholder={t('reason')}
           value={reason}
           onChange={(e) => setReason(e.target.value)}
         />
@@ -241,8 +244,8 @@ export function AdminUserDetailPage() {
 
       <AdminConfirmModal
         open={restoreOpen}
-        title="Restore user"
-        confirmLabel="Restore"
+        title={locale === 'zh' ? '恢复用户' : 'Restore user'}
+        confirmLabel={locale === 'zh' ? '恢复' : 'Restore'}
         onCancel={() => {
           setRestoreOpen(false);
           setReason('');
@@ -256,9 +259,9 @@ export function AdminUserDetailPage() {
         }}
       >
         <textarea
-          className="mt-4 w-full rounded-lg border border-white/10 bg-zinc-900 px-3 py-2 text-sm text-white"
+          className="mt-4 w-full rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 text-sm text-gray-900"
           rows={3}
-          placeholder="Reason"
+          placeholder={t('reason')}
           value={reason}
           onChange={(e) => setReason(e.target.value)}
         />

@@ -8,7 +8,7 @@ export function AdminTabs({
   onChange: (id: string) => void;
 }) {
   return (
-    <div className="flex flex-wrap gap-2 border-b border-white/10 pb-2">
+    <div className="flex items-center gap-1 border-b border-gray-200">
       {tabs.map((t) => {
         const on = t.id === active;
         return (
@@ -16,10 +16,8 @@ export function AdminTabs({
             key={t.id}
             type="button"
             onClick={() => onChange(t.id)}
-            className={`rounded-full px-4 py-1.5 text-xs font-medium transition ${
-              on
-                ? 'bg-violet-600 text-white shadow-lg shadow-violet-600/25'
-                : 'text-zinc-400 hover:bg-white/5 hover:text-zinc-100'
+            className={`-mb-px border-b-2 px-4 py-2.5 text-xs font-medium transition ${
+              on ? 'border-indigo-500 text-indigo-600' : 'border-transparent text-gray-500 hover:text-gray-700'
             }`}
           >
             {t.label}

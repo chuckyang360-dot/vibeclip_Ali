@@ -31,8 +31,27 @@ async function adminFetch<T>(path: string, init?: RequestInit): Promise<T> {
   return response.json() as Promise<T>;
 }
 
+export interface AdminDashboardResponse {
+  total_users: number;
+  new_users_today: number;
+  total_projects: number;
+  projects_today: number;
+  assets_generated_today: number;
+  videos_generated_today: number;
+  api_calls_today: number;
+  credits_consumed_today: number;
+  estimated_cost_today: number;
+  failed_jobs_today: number;
+  user_growth_7d: Record<string, unknown>[];
+  project_video_generation_7d: Record<string, unknown>[];
+  api_calls_cost_7d: Record<string, unknown>[];
+  provider_stats: Record<string, unknown>[];
+  abnormal_tasks: Record<string, unknown>[];
+  top_consuming_users: Record<string, unknown>[];
+}
+
 export const adminApi = {
-  dashboard: () => adminFetch<Record<string, unknown>>('/dashboard'),
+  dashboard: () => adminFetch<AdminDashboardResponse>('/dashboard'),
   users: (q: string) => adminFetch<Record<string, unknown>>(`/users?${q}`),
   user: (id: string | number) => adminFetch<Record<string, unknown>>(`/users/${id}`),
   grantCredits: (id: string | number, body: { amount: number; reason: string }) =>

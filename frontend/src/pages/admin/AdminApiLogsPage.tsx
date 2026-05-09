@@ -8,8 +8,11 @@ import { AdminFilterBar } from '../../components/admin/AdminFilterBar';
 import { AdminLoadingState } from '../../components/admin/AdminLoadingState';
 import { AdminMetricCard } from '../../components/admin/AdminMetricCard';
 import { AdminStatusBadge } from '../../components/admin/AdminStatusBadge';
+import { useAdminLocale } from '../../contexts/AdminLocaleContext';
+import { formatAdminStatus, formatBusinessType } from '../../i18n/adminI18n';
 
 export function AdminApiLogsPage() {
+  const { locale, t } = useAdminLocale();
   const [items, setItems] = useState<Record<string, unknown>[]>([]);
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
@@ -79,16 +82,16 @@ export function AdminApiLogsPage() {
   return (
     <div className="space-y-6">
       <div className="grid gap-4 sm:grid-cols-3">
-        <AdminMetricCard label="Total logs (filter)" value={total} />
-        <AdminMetricCard label="On this page" value={items.length} />
-        <AdminMetricCard label="Non-success (page)" value={failedOnPage} hint="Approximate from current page" />
+        <AdminMetricCard label={locale === 'zh' ? '日志总数（筛选）' : 'Total logs (filter)'} value={total} />
+        <AdminMetricCard label={locale === 'zh' ? '当前页数量' : 'On this page'} value={items.length} />
+        <AdminMetricCard label={locale === 'zh' ? '失败数（当前页）' : 'Non-success (page)'} value={failedOnPage} hint={locale === 'zh' ? '按当前页估算' : 'Approximate from current page'} />
       </div>
 
       <AdminFilterBar>
-        <label className="flex flex-col text-xs text-zinc-500">
-          Provider
+        <label className="flex flex-col text-xs text-gray-600">
+          {t('provider')}
           <input
-            className="mt-1 rounded-lg border border-white/10 bg-zinc-900 px-3 py-2 text-sm text-white"
+            className="mt-1 rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 text-sm text-gray-900"
             value={provider}
             onChange={(e) => {
               setPage(1);
@@ -97,10 +100,10 @@ export function AdminApiLogsPage() {
             placeholder="xAI / Gemini / …"
           />
         </label>
-        <label className="flex flex-col text-xs text-zinc-500">
-          Business type
+        <label className="flex flex-col text-xs text-gray-600">
+          {t('businessType')}
           <input
-            className="mt-1 rounded-lg border border-white/10 bg-zinc-900 px-3 py-2 text-sm text-white"
+            className="mt-1 rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 text-sm text-gray-900"
             value={businessType}
             onChange={(e) => {
               setPage(1);
@@ -108,10 +111,10 @@ export function AdminApiLogsPage() {
             }}
           />
         </label>
-        <label className="flex flex-col text-xs text-zinc-500">
-          Status
+        <label className="flex flex-col text-xs text-gray-600">
+          {t('status')}
           <input
-            className="mt-1 rounded-lg border border-white/10 bg-zinc-900 px-3 py-2 text-sm text-white"
+            className="mt-1 rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 text-sm text-gray-900"
             value={logStatus}
             onChange={(e) => {
               setPage(1);
@@ -120,10 +123,10 @@ export function AdminApiLogsPage() {
             placeholder="success / failed / …"
           />
         </label>
-        <label className="flex flex-col text-xs text-zinc-500">
+        <label className="flex flex-col text-xs text-gray-600">
           User ID
           <input
-            className="mt-1 rounded-lg border border-white/10 bg-zinc-900 px-3 py-2 text-sm text-white"
+            className="mt-1 rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 text-sm text-gray-900"
             value={userId}
             onChange={(e) => {
               setPage(1);
@@ -131,10 +134,10 @@ export function AdminApiLogsPage() {
             }}
           />
         </label>
-        <label className="flex flex-col text-xs text-zinc-500">
+        <label className="flex flex-col text-xs text-gray-600">
           Project ID
           <input
-            className="mt-1 rounded-lg border border-white/10 bg-zinc-900 px-3 py-2 text-sm text-white"
+            className="mt-1 rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 text-sm text-gray-900"
             value={projectId}
             onChange={(e) => {
               setPage(1);
@@ -145,29 +148,29 @@ export function AdminApiLogsPage() {
         <button
           type="button"
           onClick={() => void load()}
-          className="rounded-lg bg-violet-600 px-4 py-2 text-xs font-semibold text-white hover:bg-violet-500"
+          className="rounded-lg bg-indigo-600 px-4 py-2 text-xs font-semibold text-white hover:bg-indigo-700"
         >
-          Apply
+          {t('apply')}
         </button>
       </AdminFilterBar>
 
       {loading ? <AdminLoadingState /> : null}
       {error ? <AdminErrorState message={error} onRetry={load} /> : null}
-      {!loading && !error && items.length === 0 ? <AdminEmptyState title="No API logs yet" /> : null}
+      {!loading && !error && items.length === 0 ? <AdminEmptyState title={locale === 'zh' ? '暂无 API 日志' : 'No API logs yet'} /> : null}
 
       {!loading && !error && items.length > 0 ? (
         <>
-          <AdminDataTable headers={['ID', 'Provider', 'Model', 'Business', 'User', 'Status', 'Duration', 'Cost', 'At']}>
+          <AdminDataTable headers={['ID', t('provider'), t('model'), t('businessType'), t('user'), t('status'), t('duration'), t('estimatedCost'), t('createdAt')]}>
             {items.map((row) => (
               <tr
                 key={String(row.api_call_id)}
-                className="cursor-pointer hover:bg-white/5"
+                className="cursor-pointer hover:bg-gray-50/60"
                 onClick={() => setDetailId(Number(row.api_call_id))}
               >
                 <td className="px-4 py-3 text-xs">{String(row.api_call_id)}</td>
                 <td className="px-4 py-3 text-xs">{String(row.provider)}</td>
                 <td className="px-4 py-3 text-xs">{String(row.model || '—')}</td>
-                <td className="px-4 py-3 text-xs">{String(row.business_type)}</td>
+                <td className="px-4 py-3 text-xs">{formatBusinessType(locale, row.business_type)}</td>
                 <td className="px-4 py-3 text-xs">
                   {(() => {
                     const u = row.user as Record<string, unknown> | undefined;
@@ -175,64 +178,64 @@ export function AdminApiLogsPage() {
                   })()}
                 </td>
                 <td className="px-4 py-3">
-                  <AdminStatusBadge status={String(row.status || 'unknown')} />
+                  <AdminStatusBadge status={formatAdminStatus(locale, row.status || 'unknown')} />
                 </td>
                 <td className="px-4 py-3 text-xs">{row.duration == null ? '—' : String(row.duration)}</td>
                 <td className="px-4 py-3 text-xs">{row.estimated_cost == null ? '—' : Number(row.estimated_cost).toFixed(4)}</td>
-                <td className="px-4 py-3 text-xs text-zinc-500">{String(row.created_at || '')}</td>
+                  <td className="px-4 py-3 text-xs text-gray-500">{String(row.created_at || '')}</td>
               </tr>
             ))}
           </AdminDataTable>
-          <div className="flex items-center justify-between text-xs text-zinc-500">
+          <div className="flex items-center justify-between text-xs text-gray-500">
             <span>
-              Page {page} / {pages}
+              {locale === 'zh' ? `第 ${page} / ${pages} 页` : `Page ${page} / ${pages}`}
             </span>
             <div className="flex gap-2">
               <button
                 type="button"
                 disabled={page <= 1}
                 onClick={() => setPage((p) => Math.max(1, p - 1))}
-                className="rounded-lg border border-white/10 px-3 py-1 disabled:opacity-40"
+                className="rounded-lg border border-gray-200 px-3 py-1 disabled:opacity-40"
               >
-                Prev
+                {locale === 'zh' ? '上一页' : 'Prev'}
               </button>
               <button
                 type="button"
                 disabled={page >= pages}
                 onClick={() => setPage((p) => Math.min(pages, p + 1))}
-                className="rounded-lg border border-white/10 px-3 py-1 disabled:opacity-40"
+                className="rounded-lg border border-gray-200 px-3 py-1 disabled:opacity-40"
               >
-                Next
+                {locale === 'zh' ? '下一页' : 'Next'}
               </button>
             </div>
           </div>
         </>
       ) : null}
 
-      <AdminDetailDrawer open={detailId !== null} title="API log detail" onClose={() => setDetailId(null)}>
+      <AdminDetailDrawer open={detailId !== null} title={locale === 'zh' ? 'API 日志详情' : 'API log detail'} onClose={() => setDetailId(null)}>
         {detail ? (
           <div className="space-y-4 text-xs">
             <section>
-              <h4 className="text-[11px] font-semibold uppercase tracking-wide text-zinc-500">Request summary</h4>
-              <pre className="mt-2 whitespace-pre-wrap rounded-lg bg-black/40 p-3 text-zinc-300">
+              <h4 className="text-[11px] font-semibold uppercase tracking-wide text-gray-500">{t('requestSummary')}</h4>
+              <pre className="mt-2 whitespace-pre-wrap rounded-lg bg-gray-50 p-3 text-gray-700">
                 {String(detail.request_summary || '—')}
               </pre>
             </section>
             <section>
-              <h4 className="text-[11px] font-semibold uppercase tracking-wide text-zinc-500">Response summary</h4>
-              <pre className="mt-2 whitespace-pre-wrap rounded-lg bg-black/40 p-3 text-zinc-300">
+              <h4 className="text-[11px] font-semibold uppercase tracking-wide text-gray-500">{t('responseSummary')}</h4>
+              <pre className="mt-2 whitespace-pre-wrap rounded-lg bg-gray-50 p-3 text-gray-700">
                 {String(detail.response_summary || '—')}
               </pre>
             </section>
             <section>
-              <h4 className="text-[11px] font-semibold uppercase tracking-wide text-zinc-500">Error detail</h4>
-              <pre className="mt-2 whitespace-pre-wrap rounded-lg bg-black/40 p-3 text-red-200">
+              <h4 className="text-[11px] font-semibold uppercase tracking-wide text-gray-500">{t('errorDetail')}</h4>
+              <pre className="mt-2 whitespace-pre-wrap rounded-lg bg-rose-50 p-3 text-rose-700">
                 {JSON.stringify(detail.error_detail, null, 2)}
               </pre>
             </section>
             <section>
-              <h4 className="text-[11px] font-semibold uppercase tracking-wide text-zinc-500">Related</h4>
-              <pre className="mt-2 whitespace-pre-wrap rounded-lg bg-black/40 p-3 text-zinc-300">
+              <h4 className="text-[11px] font-semibold uppercase tracking-wide text-gray-500">{locale === 'zh' ? '关联信息' : 'Related'}</h4>
+              <pre className="mt-2 whitespace-pre-wrap rounded-lg bg-gray-50 p-3 text-gray-700">
                 {JSON.stringify(
                   {
                     user: detail.related_user,
