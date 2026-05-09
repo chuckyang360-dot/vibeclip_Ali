@@ -1,9 +1,9 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import type { DemoCaseConfig } from '../../short-drama/data/demoCases';
+import type { DemoCase } from '../../short-drama/data/demoCases';
 
 interface Props {
-  demo: DemoCaseConfig;
+  demo: DemoCase;
   onPrev: () => void;
 }
 
@@ -33,7 +33,7 @@ export function DemoOverview({ demo, onPrev }: Props) {
             <div className="rounded-2xl border border-[#EAEAEA] bg-white p-5">
               <h3 className="mb-4 text-[12px] font-bold tracking-wider text-[#8E8E93]">分段预览</h3>
               <div className="grid grid-cols-3 gap-4">
-                {overview.segments.map((seg) => (
+                {overview.segments.map((seg: DemoCase["overview"]["segments"][number]) => (
                   <div key={seg.id}>
                     <button
                       onClick={() => handlePlay(seg.id)}

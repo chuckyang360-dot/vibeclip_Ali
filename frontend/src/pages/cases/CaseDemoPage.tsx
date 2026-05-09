@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { UserMenuDropdown } from '../../components/UserMenuDropdown';
-import { DEMO_CASES, type DemoCaseConfig } from '../short-drama/data/demoCases';
+import { DEMO_CASES, type DemoCase } from '../short-drama/data/demoCases';
 import { DemoCreate } from './components/DemoCreate';
 import { DemoOverview } from './components/DemoOverview';
 import { DemoStep1 } from './components/DemoStep1';
@@ -22,7 +22,7 @@ export function CaseDemoPage() {
   const { caseId } = useParams<{ caseId: string }>();
   const navigate = useNavigate();
   const [activeTab, setActiveTab] = useState<TabKey>('create');
-  const demo: DemoCaseConfig | undefined = DEMO_CASES.find((c) => c.id === caseId);
+  const demo: DemoCase | undefined = DEMO_CASES.find((c: DemoCase) => c.id === caseId);
 
   if (!demo) {
     return (

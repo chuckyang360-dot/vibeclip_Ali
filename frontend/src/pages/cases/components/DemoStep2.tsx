@@ -1,8 +1,8 @@
 import { useState } from 'react';
-import type { DemoCaseConfig } from '../../short-drama/data/demoCases';
+import type { DemoCase } from '../../short-drama/data/demoCases';
 
 interface Props {
-  demo: DemoCaseConfig;
+  demo: DemoCase;
   onNext: () => void;
   onPrev: () => void;
 }
@@ -47,7 +47,7 @@ export function DemoStep2({ demo, onNext, onPrev }: Props) {
           ))}
         </div>
         <div className="mt-8 space-y-3">
-          {step2.segments.map((seg) => (
+          {step2.segments.map((seg: DemoCase["step2"]["segments"][number]) => (
             <div
               key={seg.id}
               className="cursor-pointer rounded-2xl border bg-white p-5"

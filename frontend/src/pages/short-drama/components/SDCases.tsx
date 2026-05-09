@@ -1,5 +1,5 @@
 import { useNavigate } from 'react-router-dom';
-import { DEMO_CASES } from '../data/demoCases';
+import { DEMO_CASES, type DemoCase } from '../data/demoCases';
 
 const GENRE_COLORS: Record<string, string> = {
   品牌广告: '#B45309',
@@ -35,7 +35,7 @@ export function SDCases() {
         </div>
 
         <div className="grid grid-cols-1 gap-5 md:grid-cols-2 lg:grid-cols-3">
-          {DEMO_CASES.map((c) => {
+          {DEMO_CASES.map((c: DemoCase) => {
             const genreColor = GENRE_COLORS[c.genre] || c.color;
             return (
               <div

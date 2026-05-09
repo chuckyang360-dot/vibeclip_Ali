@@ -1,8 +1,8 @@
 import { useState } from 'react';
-import type { DemoCaseConfig } from '../../short-drama/data/demoCases';
+import type { DemoCase } from '../../short-drama/data/demoCases';
 
 type TabType = 'characters' | 'scenes' | 'assets';
-interface Props { demo: DemoCaseConfig; onNext: () => void; onPrev: () => void; }
+interface Props { demo: DemoCase; onNext: () => void; onPrev: () => void; }
 
 export function DemoStep3({ demo, onNext, onPrev }: Props) {
   const { step3 } = demo;
@@ -29,7 +29,7 @@ export function DemoStep3({ demo, onNext, onPrev }: Props) {
 
       {activeTab === 'characters' ? (
         <div className="mt-6 grid grid-cols-1 gap-5 md:grid-cols-2 lg:grid-cols-4">
-          {step3.characters.map((char) => (
+          {step3.characters.map((char: DemoCase["step3"]["characters"][number]) => (
             <div key={char.id} className="overflow-hidden rounded-2xl border border-[#EAEAEA] bg-white">
               <img src={char.img} alt={char.name} className="h-52 w-full object-contain bg-[#F5F5F7]" />
               <div className="p-4">
@@ -42,7 +42,7 @@ export function DemoStep3({ demo, onNext, onPrev }: Props) {
       ) : null}
       {activeTab === 'scenes' ? (
         <div className="mt-6 grid grid-cols-1 gap-5 md:grid-cols-2 lg:grid-cols-3">
-          {step3.scenes.map((scene) => (
+          {step3.scenes.map((scene: DemoCase["step3"]["scenes"][number]) => (
             <div key={scene.id} className="overflow-hidden rounded-2xl border border-[#EAEAEA] bg-white">
               <img src={scene.img} alt={scene.name} className="h-48 w-full object-cover" />
               <div className="p-4">
@@ -55,7 +55,7 @@ export function DemoStep3({ demo, onNext, onPrev }: Props) {
       ) : null}
       {activeTab === 'assets' ? (
         <div className="mt-6 grid grid-cols-1 gap-5 md:grid-cols-2 lg:grid-cols-4">
-          {step3.products.map((asset) => (
+          {step3.products.map((asset: DemoCase["step3"]["products"][number]) => (
             <div key={asset.id} className="overflow-hidden rounded-2xl border border-[#EAEAEA] bg-white">
               <img src={asset.img} alt={asset.name} className="h-44 w-full object-cover" />
               <div className="p-4">

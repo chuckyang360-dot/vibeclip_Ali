@@ -1,7 +1,7 @@
-import type { DemoCaseConfig } from '../../short-drama/data/demoCases';
+import type { DemoCase } from '../../short-drama/data/demoCases';
 
 interface Props {
-  demo: DemoCaseConfig;
+  demo: DemoCase;
   onNext: () => void;
   onPrev: () => void;
 }
@@ -30,7 +30,7 @@ export function DemoStep1({ demo, onNext, onPrev }: Props) {
           <div>
             <label className="mb-2 block text-[12px] font-medium text-[#6E6E73]">核心卖点</label>
             <div className="flex flex-wrap gap-2">
-              {step1.sellingPoints.map((sp) => (
+              {step1.sellingPoints.map((sp: string) => (
                 <span key={sp} className="rounded-lg border border-[#E5E5EA] bg-[#F5F5F7] px-3 py-1.5 text-[12px] text-[#1D1D1F]">{sp}</span>
               ))}
             </div>
@@ -48,7 +48,7 @@ export function DemoStep1({ demo, onNext, onPrev }: Props) {
       <section className="mt-4 rounded-2xl border border-[#EAEAEA] bg-white p-6">
         <h2 className="mb-5 text-[13px] font-bold text-[#444444]">产品图片</h2>
         <div className="grid grid-cols-3 gap-3 sm:grid-cols-5">
-          {step1.imgs.map((src, idx) => (
+          {step1.imgs.map((src: string, idx: number) => (
             <div key={idx} className="aspect-square overflow-hidden rounded-xl border border-[#EAEAEA]">
               <img src={src} alt="" className="h-full w-full object-cover" />
             </div>
@@ -66,7 +66,7 @@ export function DemoStep1({ demo, onNext, onPrev }: Props) {
               <div key={block.label} className="rounded-xl border border-[#EAEAEA] bg-[#F7F8FA] p-4">
                 <p className="mb-3 text-[11px] font-bold tracking-wider text-[#8E8E93]">{block.label}</p>
                 <div className="flex flex-wrap gap-1.5">
-                  {block.items.map((item) => (
+                  {block.items.map((item: string) => (
                     <span key={item} className="rounded-full border border-[#EAEAEA] bg-white px-2.5 py-1 text-[11.5px] text-[#444444]">{item}</span>
                   ))}
                 </div>
