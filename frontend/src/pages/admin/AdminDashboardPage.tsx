@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { AdminDashboardResponse, adminApi } from '../../api/adminApi';
+import { Area, AreaChart, Bar, BarChart, CartesianGrid, Legend, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import { AdminEmptyState } from '../../components/admin/AdminEmptyState';
 import { AdminErrorState } from '../../components/admin/AdminErrorState';
 import { AdminLoadingState } from '../../components/admin/AdminLoadingState';
@@ -9,44 +10,19 @@ import { AdminStatusBadge } from '../../components/admin/AdminStatusBadge';
 import { useAdminLocale } from '../../contexts/AdminLocaleContext';
 import { formatAdminStatus } from '../../i18n/adminI18n';
 
-function MiniBars({
-  data,
-  valueKey,
-  emptyTitle,
-  labelKey = 'date',
-}: {
-  data: Record<string, unknown>[];
-  valueKey: string;
-  emptyTitle: string;
-  labelKey?: string;
-}) {
-  const nums = data.map((d) => Number(d[valueKey] || 0));
-  const max = Math.max(1, ...nums);
-  if (!data.length) {
-    return <AdminEmptyState title={emptyTitle} />;
-  }
+function ChartEmpty({ title }: { title: string }) {
   return (
-    <div className="flex h-40 items-end gap-2">
-      {data.map((row, i) => {
-        const v = Number(row[valueKey] || 0);
-        const h = `${Math.round((v / max) * 100)}%`;
-        return (
-          <div key={i} className="flex flex-1 flex-col items-center gap-1">
-            <div className="flex w-full flex-1 items-end justify-center">
-              <div
-                className="w-full max-w-[28px] rounded-t-lg bg-gradient-to-t from-indigo-600 to-sky-500 opacity-90"
-                style={{ height: h }}
-                title={`${v}`}
-              />
-            </div>
-            <span className="max-w-full truncate text-[10px] text-gray-500">
-              {String(row[labelKey] || '').slice(5)}
-            </span>
-          </div>
-        );
-      })}
+    <div className="flex h-full flex-col items-center justify-center gap-2 rounded-lg bg-gray-50">
+      <div className="flex h-10 w-10 items-center justify-center rounded-full bg-white">
+        <i className="ri-line-chart-line text-lg text-gray-400" />
+      </div>
+      <p className="text-xs font-medium text-gray-600">{title}</p>
     </div>
   );
+}
+
+function hasAnyPositive(data: Record<string, unknown>[], keys: string[]) {
+  return data.some((row) => keys.some((key) => Number(row[key] || 0) > 0));
 }
 
 export function AdminDashboardPage() {
@@ -82,39 +58,94 @@ export function AdminDashboardPage() {
   const userGrowth = data.user_growth_7d || [];
   const pv = data.project_video_generation_7d || [];
   const apiCost = data.api_calls_cost_7d || [];
+  const canRenderUserGrowth = userGrowth.length > 0 && hasAnyPositive(userGrowth, ['count', 'value']);
+  const canRenderPv = pv.length > 0 && hasAnyPositive(pv, ['projects', 'videos', 'value', 'value2']);
+  const canRenderApiCost = apiCost.length > 0 && hasAnyPositive(apiCost, ['calls', 'cost_usd', 'value', 'value2']);
 
   return (
     <div className="space-y-5">
       <div className="grid grid-cols-2 gap-3 md:grid-cols-3 lg:grid-cols-5">
-        <AdminMetricCard label={t('totalUsers')} value={data.total_users || 0} />
-        <AdminMetricCard label={t('newUsersToday')} value={data.new_users_today || 0} />
-        <AdminMetricCard label={t('totalProjects')} value={data.total_projects || 0} />
-        <AdminMetricCard label={t('projectsToday')} value={data.projects_today || 0} />
-        <AdminMetricCard label={t('assetsGeneratedToday')} value={data.assets_generated_today || 0} />
-        <AdminMetricCard label={t('videosGeneratedToday')} value={data.videos_generated_today || 0} />
-        <AdminMetricCard label={t('apiCallsToday')} value={data.api_calls_today || 0} />
-        <AdminMetricCard label={t('creditsConsumedToday')} value={data.credits_consumed_today || 0} />
-        <AdminMetricCard label={t('estimatedCostToday')} value={(data.estimated_cost_today || 0).toFixed(4)} />
-        <AdminMetricCard label={t('failedJobsToday')} value={data.failed_jobs_today || 0} />
+        <AdminMetricCard label={t('totalUsers')} value={data.total_users || 0} icon="ri-user-3-line" />
+        <AdminMetricCard label={t('newUsersToday')} value={data.new_users_today || 0} icon="ri-user-add-line" />
+        <AdminMetricCard label={t('totalProjects')} value={data.total_projects || 0} icon="ri-folder-line" />
+        <AdminMetricCard label={t('projectsToday')} value={data.projects_today || 0} icon="ri-folder-add-line" />
+        <AdminMetricCard label={t('assetsGeneratedToday')} value={data.assets_generated_today || 0} icon="ri-image-line" />
+        <AdminMetricCard label={t('videosGeneratedToday')} value={data.videos_generated_today || 0} icon="ri-video-line" />
+        <AdminMetricCard label={t('apiCallsToday')} value={data.api_calls_today || 0} icon="ri-server-line" />
+        <AdminMetricCard label={t('creditsConsumedToday')} value={data.credits_consumed_today || 0} icon="ri-coins-line" />
+        <AdminMetricCard label={t('estimatedCostToday')} value={(data.estimated_cost_today || 0).toFixed(4)} icon="ri-money-dollar-circle-line" />
+        <AdminMetricCard label={t('failedJobsToday')} value={data.failed_jobs_today || 0} icon="ri-error-warning-line" />
       </div>
 
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
         <div className="rounded-lg border border-gray-200 bg-white p-4">
           <h3 className="mb-3 text-sm font-semibold text-gray-900">{t('userGrowth')}</h3>
-          <div className="mt-4">
-            <MiniBars data={userGrowth} valueKey="count" emptyTitle={locale === 'zh' ? '暂无趋势数据' : 'No trend data'} />
+          <div className="h-56">
+            {!canRenderUserGrowth ? (
+              <ChartEmpty title={locale === 'zh' ? '暂无趋势数据' : 'No trend data'} />
+            ) : (
+              <ResponsiveContainer width="100%" height="100%">
+                <AreaChart data={userGrowth.map((item) => ({ date: String(item.date || ''), value: Number(item.count ?? item.value ?? 0) }))}>
+                  <defs>
+                    <linearGradient id="colorUserReal" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="5%" stopColor="#4f46e5" stopOpacity={0.15} />
+                      <stop offset="95%" stopColor="#4f46e5" stopOpacity={0} />
+                    </linearGradient>
+                  </defs>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#f3f4f6" />
+                  <XAxis dataKey="date" tick={{ fontSize: 11 }} stroke="#9ca3af" />
+                  <YAxis tick={{ fontSize: 11 }} stroke="#9ca3af" />
+                  <Tooltip contentStyle={{ fontSize: 12, borderRadius: 8, border: '1px solid #e5e7eb' }} />
+                  <Area type="monotone" dataKey="value" stroke="#4f46e5" strokeWidth={2} fill="url(#colorUserReal)" name={locale === 'zh' ? '新增用户' : 'New Users'} />
+                </AreaChart>
+              </ResponsiveContainer>
+            )}
           </div>
         </div>
         <div className="rounded-lg border border-gray-200 bg-white p-4">
           <h3 className="mb-3 text-sm font-semibold text-gray-900">{t('projectVideoGeneration')}</h3>
-          <div className="mt-4">
-            <MiniBars data={pv} valueKey="projects" emptyTitle={locale === 'zh' ? '暂无趋势数据' : 'No trend data'} />
+          <div className="h-56">
+            {!canRenderPv ? (
+              <ChartEmpty title={locale === 'zh' ? '暂无趋势数据' : 'No trend data'} />
+            ) : (
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={pv.map((item) => ({ date: String(item.date || ''), projects: Number(item.projects ?? item.value ?? 0), videos: Number(item.videos ?? item.value2 ?? 0) }))}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#f3f4f6" />
+                  <XAxis dataKey="date" tick={{ fontSize: 11 }} stroke="#9ca3af" />
+                  <YAxis tick={{ fontSize: 11 }} stroke="#9ca3af" />
+                  <Tooltip contentStyle={{ fontSize: 12, borderRadius: 8, border: '1px solid #e5e7eb' }} />
+                  <Legend wrapperStyle={{ fontSize: 11 }} />
+                  <Bar dataKey="projects" name={locale === 'zh' ? '项目' : 'Projects'} fill="#4f46e5" radius={[3, 3, 0, 0]} />
+                  <Bar dataKey="videos" name={locale === 'zh' ? '视频' : 'Videos'} fill="#0ea5e9" radius={[3, 3, 0, 0]} />
+                </BarChart>
+              </ResponsiveContainer>
+            )}
           </div>
         </div>
         <div className="rounded-lg border border-gray-200 bg-white p-4">
           <h3 className="mb-3 text-sm font-semibold text-gray-900">{t('apiCallsAndCost')}</h3>
-          <div className="mt-4">
-            <MiniBars data={apiCost} valueKey="calls" emptyTitle={locale === 'zh' ? '暂无趋势数据' : 'No trend data'} />
+          <div className="h-56">
+            {!canRenderApiCost ? (
+              <ChartEmpty title={locale === 'zh' ? '暂无趋势数据' : 'No trend data'} />
+            ) : (
+              <ResponsiveContainer width="100%" height="100%">
+                <AreaChart data={apiCost.map((item) => ({ date: String(item.date || ''), calls: Number(item.calls ?? item.value ?? 0), cost: Number(item.cost_usd ?? item.value2 ?? 0) }))}>
+                  <defs>
+                    <linearGradient id="colorApiReal" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="5%" stopColor="#10b981" stopOpacity={0.15} />
+                      <stop offset="95%" stopColor="#10b981" stopOpacity={0} />
+                    </linearGradient>
+                  </defs>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#f3f4f6" />
+                  <XAxis dataKey="date" tick={{ fontSize: 11 }} stroke="#9ca3af" />
+                  <YAxis tick={{ fontSize: 11 }} stroke="#9ca3af" />
+                  <Tooltip contentStyle={{ fontSize: 12, borderRadius: 8, border: '1px solid #e5e7eb' }} />
+                  <Legend wrapperStyle={{ fontSize: 11 }} />
+                  <Area type="monotone" dataKey="calls" stroke="#10b981" strokeWidth={2} fill="url(#colorApiReal)" name={locale === 'zh' ? 'API 调用' : 'API Calls'} />
+                  <Area type="monotone" dataKey="cost" stroke="#f59e0b" strokeWidth={2} fill="none" name={locale === 'zh' ? '成本 USD' : 'Cost USD'} />
+                </AreaChart>
+              </ResponsiveContainer>
+            )}
           </div>
         </div>
       </div>
@@ -127,16 +158,29 @@ export function AdminDashboardPage() {
               <AdminEmptyState title={t('noProviderStats')} description={t('logsPopulate')} />
             </div>
           ) : (
-            <AdminDataTable headers={[t('provider'), t('apiCalls'), 'Success %', 'Fail %']}>
-              {providerStats.map((p, i) => (
-                <tr key={i}>
-                  <td className="px-4 py-3 text-sm">{String(p.provider)}</td>
-                  <td className="px-4 py-3 text-sm">{String(p.calls)}</td>
-                  <td className="px-4 py-3 text-sm">{Math.round(Number(p.success_rate || 0) * 1000) / 10}</td>
-                  <td className="px-4 py-3 text-sm">{Math.round(Number(p.failure_rate || 0) * 1000) / 10}</td>
-                </tr>
-              ))}
-            </AdminDataTable>
+            <div className="mt-4 space-y-4">
+              {providerStats.map((p, i) => {
+                const calls = Number(p.calls || 0);
+                const successRateRaw = Number(p.success_rate || 0);
+                const failureRateRaw = Number(p.failure_rate || 0);
+                const successPct = successRateRaw > 1 ? successRateRaw : successRateRaw * 100;
+                const failurePct = failureRateRaw > 1 ? failureRateRaw : failureRateRaw * 100;
+                return (
+                  <div key={i}>
+                    <div className="mb-1.5 flex items-center justify-between">
+                      <span className="text-xs text-gray-600">{String(p.provider)}</span>
+                      <span className="text-xs font-medium text-gray-900">{calls}</span>
+                    </div>
+                    <div className="h-2 w-full overflow-hidden rounded-full bg-gray-100">
+                      <div className="h-full rounded-full bg-emerald-500" style={{ width: `${Math.max(0, Math.min(100, successPct))}%` }} />
+                    </div>
+                    <p className="mt-0.5 text-xs text-gray-400">
+                      {locale === 'zh' ? `成功率 ${successPct.toFixed(1)}% · 失败率 ${failurePct.toFixed(1)}%` : `Success ${successPct.toFixed(1)}% · Failure ${failurePct.toFixed(1)}%`}
+                    </p>
+                  </div>
+                );
+              })}
+            </div>
           )}
         </div>
         <div className="rounded-lg border border-gray-200 bg-white p-4">
