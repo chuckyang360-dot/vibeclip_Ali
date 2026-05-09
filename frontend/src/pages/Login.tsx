@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { useNavigate, Link } from 'react-router-dom';
+import { useNavigate, Link, useLocation } from 'react-router-dom';
 import { Navbar } from '../components/Navbar';
 import { useAuth } from '../contexts/AuthContext';
 import * as api from '../services/api';
@@ -11,6 +11,8 @@ export function Login() {
   const [loading, setLoading] = useState(false);
   const { login: authLogin } = useAuth();
   const navigate = useNavigate();
+  const location = useLocation();
+  const redirectTo = (location.state as { from?: string } | null)?.from;
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -21,7 +23,7 @@ export function Login() {
       const result = await api.login(email, password);
       if (result.user && result.access_token) {
         authLogin(result);
-        navigate('/short-drama/projects');
+        navigate(redirectTo && redirectTo.startsWith('/admin') ? redirectTo : '/short-drama/projects');
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Login failed');

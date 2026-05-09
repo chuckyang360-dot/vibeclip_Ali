@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 from ..models import User
 from ..config import settings
 from .jwt_handler import create_access_token
+from .user_payload import public_user_dict
 
 
 async def verify_google_token(id_token_str: str) -> dict:
@@ -76,18 +77,16 @@ async def login_with_google(id_token_str: str, db: Session) -> dict:
     """Login user with Google OAuth token"""
     user_info = await verify_google_token(id_token_str)
     user = await authenticate_or_create_user(user_info, db)
+    acct_status = getattr(user, "account_status", None) or "normal"
+    if acct_status == "disabled" or not user.is_active:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Account disabled",
+        )
     access_token = create_access_token(data={"sub": user.email})
 
     return {
         "access_token": access_token,
         "token_type": "bearer",
-        "user": {
-            "id": user.id,
-            "email": user.email,
-            "name": user.name,
-            "google_id": user.google_id,
-            "picture": None,
-            "is_active": user.is_active,
-            "created_at": user.created_at,
-        },
+        "user": public_user_dict(user),
     }

@@ -14,6 +14,10 @@ class User(Base):
     email = Column(String, unique=True, index=True, nullable=False)
     password_hash = Column(String, nullable=False)
     is_active = Column(Boolean, default=True)
+    #: RBAC: user | admin | super_admin
+    role = Column(String, nullable=False, default="user")
+    #: Account lifecycle: normal | disabled | risk (maps to DB column "status")
+    account_status = Column("status", String, nullable=False, default="normal")
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
 

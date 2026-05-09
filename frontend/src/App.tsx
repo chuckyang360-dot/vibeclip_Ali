@@ -1,4 +1,15 @@
 import { Routes, Route, Navigate } from 'react-router-dom';
+import { AdminLayout } from './components/admin/AdminLayout';
+import { AdminRouteGuard } from './components/admin/AdminRouteGuard';
+import { AdminApiLogsPage } from './pages/admin/AdminApiLogsPage';
+import { AdminCreditsPage } from './pages/admin/AdminCreditsPage';
+import { AdminDashboardPage } from './pages/admin/AdminDashboardPage';
+import { AdminOperationLogsPage } from './pages/admin/AdminOperationLogsPage';
+import { AdminProjectDetailPage } from './pages/admin/AdminProjectDetailPage';
+import { AdminProjectsPage } from './pages/admin/AdminProjectsPage';
+import { AdminSettingsPage } from './pages/admin/AdminSettingsPage';
+import { AdminUserDetailPage } from './pages/admin/AdminUserDetailPage';
+import { AdminUsersPage } from './pages/admin/AdminUsersPage';
 import { Login } from './pages/Login';
 import { Register } from './pages/Register';
 import ShortDramaLandingPage from './pages/short-drama';
@@ -41,6 +52,24 @@ export function App() {
         <Route path="/account/settings" element={<AccountSettingsPage />} />
         <Route path="/pricing" element={<PricingPage />} />
         <Route path="/billing" element={<BillingPage />} />
+        <Route
+          path="/admin"
+          element={
+            <AdminRouteGuard>
+              <AdminLayout />
+            </AdminRouteGuard>
+          }
+        >
+          <Route index element={<AdminDashboardPage />} />
+          <Route path="users" element={<AdminUsersPage />} />
+          <Route path="users/:id" element={<AdminUserDetailPage />} />
+          <Route path="projects" element={<AdminProjectsPage />} />
+          <Route path="projects/:id" element={<AdminProjectDetailPage />} />
+          <Route path="api-logs" element={<AdminApiLogsPage />} />
+          <Route path="credits" element={<AdminCreditsPage />} />
+          <Route path="logs" element={<AdminOperationLogsPage />} />
+          <Route path="settings" element={<AdminSettingsPage />} />
+        </Route>
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
     </AuthProvider>

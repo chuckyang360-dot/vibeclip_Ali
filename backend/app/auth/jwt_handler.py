@@ -54,6 +54,12 @@ async def get_current_user(
     user = db.query(User).filter(User.email == email).first()
     if user is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+    acct_status = getattr(user, "account_status", None) or "normal"
+    if acct_status == "disabled" or not user.is_active:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Account disabled",
+        )
     return user
 
 

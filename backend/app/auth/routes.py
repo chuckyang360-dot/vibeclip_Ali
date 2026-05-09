@@ -13,7 +13,8 @@ from ..schemas import (
 )
 from ..config import settings
 from .google_oauth import login_with_google
-from .jwt_handler import create_access_token
+from .jwt_handler import create_access_token, get_current_user
+from .user_payload import public_user_dict
 
 router = APIRouter()
 
@@ -39,20 +40,18 @@ async def login_with_email(request: LoginRequest, db: Session = Depends(get_db))
             status_code=status.HTTP_403_FORBIDDEN,
             detail="User account is inactive"
         )
+    acct_status = getattr(user, "account_status", None) or "normal"
+    if acct_status == "disabled":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Account disabled",
+        )
 
     access_token = create_access_token(data={"sub": user.email})
     return {
         "access_token": access_token,
         "token_type": "bearer",
-        "user": {
-            "id": user.id,
-            "email": user.email,
-            "name": user.name,
-            "google_id": user.google_id,
-            "picture": None,
-            "is_active": user.is_active,
-            "created_at": user.created_at,
-        }
+        "user": public_user_dict(user),
     }
 
 
@@ -101,16 +100,13 @@ async def register_with_email(request: RegisterRequest, db: Session = Depends(ge
     return {
         "access_token": access_token,
         "token_type": "bearer",
-        "user": {
-            "id": new_user.id,
-            "email": new_user.email,
-            "name": new_user.name,
-            "google_id": new_user.google_id,
-            "picture": None,
-            "is_active": new_user.is_active,
-            "created_at": new_user.created_at,
-        }
+        "user": public_user_dict(new_user),
     }
+
+
+@router.get("/me")
+async def read_current_user(current_user: User = Depends(get_current_user)):
+    return {"user": public_user_dict(current_user)}
 
 
 @router.get("/google")

@@ -7,6 +7,7 @@ from typing import Any
 
 import httpx
 
+from ...admin.api_logger import safe_log_api_call
 from ...config import settings
 from ..exceptions import ShortDramaProviderError
 from ..utils.flow_logging import (
@@ -259,6 +260,18 @@ class XAIClient:
                 }
                 if resp.status_code != 200:
                     snippet = _truncate(resp.text, 800)
+                    safe_log_api_call(
+                        user_id=log_context.get("user_id"),
+                        project_id=log_context.get("project_id"),
+                        business_type=str(log_context.get("business_type") or "other"),
+                        provider="xAI",
+                        model=model,
+                        status="failed",
+                        http_status=resp.status_code,
+                        error_message=snippet,
+                        duration_ms=latency_ms,
+                        request_summary=input_summary,
+                    )
                     log_ai_error(
                         logger,
                         provider=prov,
@@ -297,6 +310,18 @@ class XAIClient:
                     response_id=str(data.get("id") or ""),
                     summary=summary,
                 )
+                safe_log_api_call(
+                    user_id=log_context.get("user_id"),
+                    project_id=log_context.get("project_id"),
+                    business_type=str(log_context.get("business_type") or "other"),
+                    provider="xAI",
+                    model=model,
+                    status="success",
+                    http_status=resp.status_code,
+                    duration_ms=latency_ms,
+                    request_summary=input_summary,
+                    response_summary=summary,
+                )
                 return data, str(data.get("id") or req_id or ""), latency_ms
 
             except ShortDramaProviderError:
@@ -304,6 +329,17 @@ class XAIClient:
             except httpx.TimeoutException as e:
                 last_err = e
                 latency_ms = int((time.perf_counter() - t0) * 1000)
+                safe_log_api_call(
+                    user_id=log_context.get("user_id"),
+                    project_id=log_context.get("project_id"),
+                    business_type=str(log_context.get("business_type") or "other"),
+                    provider="xAI",
+                    model=model,
+                    status="timeout",
+                    duration_ms=latency_ms,
+                    error_message="timeout",
+                    request_summary=input_summary,
+                )
                 log_ai_error(
                     logger,
                     provider=prov,
@@ -316,6 +352,17 @@ class XAIClient:
             except httpx.RequestError as e:
                 last_err = e
                 latency_ms = int((time.perf_counter() - t0) * 1000)
+                safe_log_api_call(
+                    user_id=log_context.get("user_id"),
+                    project_id=log_context.get("project_id"),
+                    business_type=str(log_context.get("business_type") or "other"),
+                    provider="xAI",
+                    model=model,
+                    status="failed",
+                    duration_ms=latency_ms,
+                    error_message=f"network: {e}",
+                    request_summary=input_summary,
+                )
                 log_ai_error(
                     logger,
                     provider=prov,

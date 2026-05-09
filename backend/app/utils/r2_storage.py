@@ -1,6 +1,9 @@
 import os
+import time
 
 import boto3
+
+from ..admin.api_logger import safe_log_api_call
 
 s3 = boto3.client(
     "s3",
@@ -19,6 +22,37 @@ def upload_file(file_path: str, key: str) -> str:
     if not base_url:
         raise RuntimeError("R2_PUBLIC_BASE_URL is not configured")
 
-    s3.upload_file(file_path, bucket, key)
+    started = time.perf_counter()
+    file_size: int | None = None
+    try:
+        file_size = os.path.getsize(file_path)
+    except Exception:
+        file_size = None
+
+    try:
+        s3.upload_file(file_path, bucket, key)
+        duration_ms = int((time.perf_counter() - started) * 1000)
+        safe_log_api_call(
+            business_type="r2_upload",
+            provider="Cloudflare R2",
+            status="success",
+            duration_ms=duration_ms,
+            request_summary={"bucket": bucket},
+            file_size=file_size,
+            object_key=key,
+        )
+    except Exception as e:
+        duration_ms = int((time.perf_counter() - started) * 1000)
+        safe_log_api_call(
+            business_type="r2_upload",
+            provider="Cloudflare R2",
+            status="failed",
+            duration_ms=duration_ms,
+            error_message=str(e),
+            request_summary={"bucket": bucket},
+            file_size=file_size,
+            object_key=key,
+        )
+        raise
 
     return f"{base_url.rstrip('/')}/{key.lstrip('/')}"

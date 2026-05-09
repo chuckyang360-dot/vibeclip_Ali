@@ -1,45 +1,72 @@
 import { createContext, useContext, useState, useEffect, ReactNode } from 'react';
 import * as api from '../services/api';
-
-interface User {
-  id: number;
-  email: string;
-  name: string;
-  google_id: string | null;
-  picture: string | null;
-  is_active: boolean;
-  created_at: string;
-}
+import type { AuthUser } from '../services/api';
 
 interface AuthContextType {
-  user: User | null;
+  user: AuthUser | null;
   token: string | null;
   isAuthenticated: boolean;
   loading: boolean;
-  login: (data: { user: User; access_token: string }) => void;
+  login: (data: { user: AuthUser; access_token: string }) => void;
   register: (name: string, email: string, password: string) => Promise<void>;
   logout: () => void;
+  refreshUser: () => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
 export function AuthProvider({ children }: { children: ReactNode }) {
-  const [user, setUser] = useState<User | null>(null);
+  const [user, setUser] = useState<AuthUser | null>(null);
   const [token, setToken] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
 
-  // Load auth state from localStorage on mount
-  useEffect(() => {
-    const storedToken = api.getToken();
-    const storedUser = api.getUser();
-    if (storedToken && storedUser) {
-      setToken(storedToken);
-      setUser(storedUser);
+  const refreshUser = async () => {
+    const t = api.getToken();
+    if (!t) return;
+    try {
+      const u = await api.fetchCurrentUser();
+      setUser(u);
+      api.setUser(u);
+    } catch {
+      setToken(null);
+      setUser(null);
+      api.removeToken();
+      api.removeUser();
     }
-    setLoading(false);
+  };
+
+  // Load auth state from localStorage on mount; refresh profile for role/status
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      const storedToken = api.getToken();
+      const storedUser = api.getUser();
+      if (storedToken && storedUser) {
+        setToken(storedToken);
+        setUser(storedUser);
+        try {
+          const u = await api.fetchCurrentUser();
+          if (!cancelled) {
+            setUser(u);
+            api.setUser(u);
+          }
+        } catch {
+          if (!cancelled) {
+            setToken(null);
+            setUser(null);
+            api.removeToken();
+            api.removeUser();
+          }
+        }
+      }
+      if (!cancelled) setLoading(false);
+    })();
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
-  const login = (data: { user: User; access_token: string }) => {
+  const login = (data: { user: AuthUser; access_token: string }) => {
     setToken(data.access_token);
     setUser(data.user);
     api.setToken(data.access_token);
@@ -59,7 +86,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   };
 
   return (
-    <AuthContext.Provider value={{ user, token, isAuthenticated: !!token, loading, login, register, logout }}>
+    <AuthContext.Provider
+      value={{ user, token, isAuthenticated: !!token, loading, login, register, logout, refreshUser }}
+    >
       {children}
     </AuthContext.Provider>
   );

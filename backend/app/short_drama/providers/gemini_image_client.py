@@ -7,6 +7,7 @@ from typing import Any
 
 import httpx
 
+from ...admin.api_logger import safe_log_api_call
 from ...config import settings
 from ..exceptions import ShortDramaImageProviderError
 from ..utils.flow_logging import (
@@ -116,6 +117,18 @@ class GeminiImageClient:
                 latency_ms = int((time.perf_counter() - t0) * 1000)
 
                 if resp.status_code == 429:
+                    safe_log_api_call(
+                        user_id=log_context.get("user_id"),
+                        project_id=log_context.get("project_id"),
+                        business_type=str(log_context.get("business_type") or "asset_generate"),
+                        provider="Gemini",
+                        model=m,
+                        status="rate_limited",
+                        http_status=429,
+                        duration_ms=latency_ms,
+                        error_message=resp.text[:500],
+                        request_summary={"prompt_len": len(prompt or "")},
+                    )
                     log_ai_error(
                         logger,
                         provider="gemini_image",
@@ -130,6 +143,18 @@ class GeminiImageClient:
                     )
 
                 if resp.status_code != 200:
+                    safe_log_api_call(
+                        user_id=log_context.get("user_id"),
+                        project_id=log_context.get("project_id"),
+                        business_type=str(log_context.get("business_type") or "asset_generate"),
+                        provider="Gemini",
+                        model=m,
+                        status="failed",
+                        http_status=resp.status_code,
+                        duration_ms=latency_ms,
+                        error_message=resp.text[:500],
+                        request_summary={"prompt_len": len(prompt or "")},
+                    )
                     log_ai_error(
                         logger,
                         provider="gemini_image",
@@ -169,12 +194,34 @@ class GeminiImageClient:
                     mime=mime,
                     summary=summarize_gemini_generate_content_json(data),
                 )
+                safe_log_api_call(
+                    user_id=log_context.get("user_id"),
+                    project_id=log_context.get("project_id"),
+                    business_type=str(log_context.get("business_type") or "asset_generate"),
+                    provider="Gemini",
+                    model=m,
+                    status="success",
+                    http_status=resp.status_code,
+                    duration_ms=latency_ms,
+                    request_summary={"prompt_len": len(prompt or "")},
+                    response_summary={"image_bytes": len(raw), "mime": mime},
+                )
                 return raw, mime
 
             except ShortDramaImageProviderError:
                 raise
             except httpx.TimeoutException as e:
                 last_err = e
+                safe_log_api_call(
+                    user_id=log_context.get("user_id"),
+                    project_id=log_context.get("project_id"),
+                    business_type=str(log_context.get("business_type") or "asset_generate"),
+                    provider="Gemini",
+                    model=m,
+                    status="timeout",
+                    error_message="timeout",
+                    request_summary={"prompt_len": len(prompt or "")},
+                )
                 log_ai_error(
                     logger,
                     provider="gemini_image",
@@ -185,6 +232,16 @@ class GeminiImageClient:
                 )
             except httpx.RequestError as e:
                 last_err = e
+                safe_log_api_call(
+                    user_id=log_context.get("user_id"),
+                    project_id=log_context.get("project_id"),
+                    business_type=str(log_context.get("business_type") or "asset_generate"),
+                    provider="Gemini",
+                    model=m,
+                    status="failed",
+                    error_message=f"network: {e}",
+                    request_summary={"prompt_len": len(prompt or "")},
+                )
                 log_ai_error(
                     logger,
                     provider="gemini_image",

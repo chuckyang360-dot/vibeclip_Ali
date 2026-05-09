@@ -382,9 +382,81 @@ def _ensure_short_drama_product_context_columns() -> None:
         logger.exception("Migration for short_drama_product_contexts columns failed")
 
 
+def _ensure_user_admin_columns() -> None:
+    """Add role / status (account_status) for admin RBAC and account lifecycle."""
+    table_name = "users"
+    try:
+        insp = inspect(engine)
+        dialect = engine.dialect.name
+        if not insp.has_table(table_name):
+            return
+        cols = {c["name"] for c in insp.get_columns(table_name)}
+        alters: list[str] = []
+        if "role" not in cols:
+            if dialect == "postgresql":
+                alters.append(
+                    "ALTER TABLE users ADD COLUMN IF NOT EXISTS role VARCHAR NOT NULL DEFAULT 'user'"
+                )
+            else:
+                alters.append("ALTER TABLE users ADD COLUMN role VARCHAR NOT NULL DEFAULT 'user'")
+        if "status" not in cols:
+            if dialect == "postgresql":
+                alters.append(
+                    "ALTER TABLE users ADD COLUMN IF NOT EXISTS status VARCHAR NOT NULL DEFAULT 'normal'"
+                )
+            else:
+                alters.append("ALTER TABLE users ADD COLUMN status VARCHAR NOT NULL DEFAULT 'normal'")
+        if not alters:
+            return
+        with engine.begin() as conn:
+            for stmt in alters:
+                conn.execute(text(stmt))
+        logger.info("Migration: users admin columns added (%s): %s", dialect, alters)
+    except Exception:
+        logger.exception("Migration for users admin columns failed")
+
+
+def _ensure_api_call_log_columns() -> None:
+    """Add api_call_logs v1 extension columns used by admin analytics."""
+    table_name = "api_call_logs"
+    try:
+        insp = inspect(engine)
+        dialect = engine.dialect.name
+        if not insp.has_table(table_name):
+            return
+        cols = {c["name"] for c in insp.get_columns(table_name)}
+        alters: list[str] = []
+        if "file_size" not in cols:
+            if dialect == "postgresql":
+                alters.append("ALTER TABLE api_call_logs ADD COLUMN IF NOT EXISTS file_size INTEGER")
+            else:
+                alters.append("ALTER TABLE api_call_logs ADD COLUMN file_size INTEGER")
+        if "object_key" not in cols:
+            if dialect == "postgresql":
+                alters.append("ALTER TABLE api_call_logs ADD COLUMN IF NOT EXISTS object_key VARCHAR")
+            else:
+                alters.append("ALTER TABLE api_call_logs ADD COLUMN object_key VARCHAR")
+        if not alters:
+            return
+        with engine.begin() as conn:
+            for stmt in alters:
+                try:
+                    conn.execute(text(stmt))
+                except Exception as e:
+                    # SQLite concurrent startup can race and hit duplicate column.
+                    if "duplicate column name" in str(e).lower():
+                        continue
+                    raise
+        logger.info("Migration: api_call_logs columns added (%s): %s", dialect, alters)
+    except Exception:
+        logger.exception("Migration for api_call_logs columns failed")
+
+
 def init_db():
     """Initialize database tables - models must be imported before calling this"""
     Base.metadata.create_all(bind=engine)
+    _ensure_user_admin_columns()
+    _ensure_api_call_log_columns()
     _sqlite_ensure_render_job_columns()
     _ensure_short_drama_project_step_columns()
     ensure_short_drama_project_columns(engine)

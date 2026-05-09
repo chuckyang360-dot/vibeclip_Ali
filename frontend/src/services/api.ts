@@ -1,17 +1,22 @@
 import { API_BASE_URL } from '../config/api';
 
+export interface AuthUser {
+  id: number;
+  email: string;
+  name: string;
+  username?: string;
+  google_id: string | null;
+  picture: string | null;
+  is_active: boolean;
+  role?: string;
+  status?: string;
+  created_at: string;
+}
+
 export interface LoginResponse {
   access_token: string;
   token_type: string;
-  user: {
-    id: number;
-    email: string;
-    name: string;
-    google_id: string | null;
-    picture: string | null;
-    is_active: boolean;
-    created_at: string;
-  };
+  user: AuthUser;
 }
 
 export interface LoginRequest {
@@ -28,7 +33,7 @@ export interface RegisterRequest {
 export interface RegisterResponse {
   access_token: string;
   token_type: string;
-  user: LoginResponse['user'];
+  user: AuthUser;
 }
 
 export async function login(email: string, password: string): Promise<LoginResponse> {
@@ -84,11 +89,11 @@ export function removeToken(): void {
   localStorage.removeItem(TOKEN_KEY);
 }
 
-export function setUser(user: LoginResponse['user']): void {
+export function setUser(user: AuthUser): void {
   localStorage.setItem(USER_KEY, JSON.stringify(user));
 }
 
-export function getUser(): LoginResponse['user'] | null {
+export function getUser(): AuthUser | null {
   const userJson = localStorage.getItem(USER_KEY);
   return userJson ? JSON.parse(userJson) : null;
 }
@@ -97,6 +102,24 @@ export function removeUser(): void {
   localStorage.removeItem(USER_KEY);
 }
 
-export function getCurrentUser(): LoginResponse['user'] | null {
+export function getCurrentUser(): AuthUser | null {
   return getUser();
+}
+
+export async function fetchCurrentUser(): Promise<AuthUser> {
+  const token = getToken();
+  if (!token) {
+    throw new Error('Not authenticated');
+  }
+  const response = await fetch(`${API_BASE_URL}/api/auth/me`, {
+    headers: {
+      Authorization: `Bearer ${token}`,
+    },
+  });
+  if (!response.ok) {
+    const err = await response.json().catch(() => ({}));
+    throw new Error(err.detail || 'Failed to load user');
+  }
+  const data = await response.json();
+  return data.user as AuthUser;
 }
