@@ -1,8 +1,9 @@
 import { useState } from 'react';
-import { useNavigate, Link, useLocation } from 'react-router-dom';
-import { Navbar } from '../components/Navbar';
+import { useNavigate, Link, useLocation, useSearchParams } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import * as api from '../services/api';
+import { getPostAuthRedirect } from '../utils/authRedirect';
+import { VibeClipLogo } from './short-drama/components/VibeClipLogo';
 
 export function Login() {
   const [email, setEmail] = useState('');
@@ -12,7 +13,7 @@ export function Login() {
   const { login: authLogin } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
-  const redirectTo = (location.state as { from?: string } | null)?.from;
+  const [searchParams] = useSearchParams();
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -23,7 +24,8 @@ export function Login() {
       const result = await api.login(email, password);
       if (result.user && result.access_token) {
         authLogin(result);
-        navigate(redirectTo && redirectTo.startsWith('/admin') ? redirectTo : '/short-drama/projects');
+        const redirectTo = getPostAuthRedirect(searchParams, location.state);
+        navigate(redirectTo, { replace: true });
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Login failed');
@@ -33,82 +35,74 @@ export function Login() {
   };
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-gray-50 via-white to-blue-50">
-      <Navbar />
-      <div className="flex items-center justify-center px-6 pt-28 pb-16">
-      <div className="w-full max-w-md">
-        {/* Logo */}
-        <div className="text-center mb-8">
-          <div className="w-16 h-16 bg-gradient-to-br from-blue-600 to-purple-600 rounded-2xl flex items-center justify-center mx-auto mb-4">
-            <svg className="w-10 h-10 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 3v18h18" />
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 21V9m0-6-6-6" />
-            </svg>
-          </div>
-          <h1 className="text-2xl font-bold text-gray-900 mb-2">登录 Vibe Clip · 维播</h1>
-          <p className="text-sm text-gray-500">继续您的 AI 商品短视频创作</p>
-        </div>
+    <div className="min-h-screen flex flex-col bg-[#F7F8FA]">
+      <header className="h-14 px-6 lg:px-10 flex items-center justify-between border-b border-[#EAEAEA] bg-[rgba(255,255,255,0.96)] backdrop-blur-md">
+        <Link to="/" className="flex items-center gap-2" style={{ textDecoration: 'none' }}>
+          <VibeClipLogo />
+        </Link>
+        <Link to="/" className="text-[13px] font-medium text-[#8E8E93] hover:text-[#1D1D1F]">返回首页</Link>
+      </header>
 
-        {/* Login Form */}
-        <div className="bg-white rounded-2xl p-8 shadow-lg border border-gray-100">
+      <main className="flex-1 flex items-center justify-center px-6 py-10">
+        <div className="w-full max-w-[400px]">
+          <div className="bg-white rounded-2xl p-7 md:p-8 border border-[#EAEAEA]" style={{ boxShadow: '0 2px 12px rgba(0,0,0,0.04)' }}>
+            <div className="text-center mb-7">
+              <h1 className="text-[24px] font-black text-[#1D1D1F]">登录 VibeClip</h1>
+              <p className="text-[13px] mt-2 text-[#8E8E93]">继续创建你的 AI 内容视频项目</p>
+            </div>
+
           {error && (
-            <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded-lg">
-              <p className="text-sm text-red-700">{error}</p>
-            </div>
-          )}
+              <div className="mb-4 rounded-lg bg-[#FEF2F2] px-3 py-2 flex items-center gap-2">
+                <i className="ri-error-warning-line text-[14px] text-[#EF4444]" />
+                <p className="text-[12.5px] text-[#DC2626]">{error}</p>
+              </div>
+            )}
 
-          <form onSubmit={handleSubmit} className="space-y-4">
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">邮箱</label>
-              <input
-                type="email"
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                placeholder="请输入邮箱地址"
-                className="w-full px-4 py-3 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all"
+            <form onSubmit={handleSubmit} className="space-y-4">
+              <div>
+                <label className="block text-[12.5px] font-semibold mb-1.5 text-[#1D1D1F]">邮箱 / 用户名</label>
+                <input
+                  type="text"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  placeholder="请输入邮箱或用户名"
+                  className="w-full px-4 py-2.5 rounded-xl text-[13.5px] outline-none transition-all duration-200 border border-[#EAEAEA] bg-[#FAFAFA] focus:border-[#7C3AED] focus:bg-white"
+                  disabled={loading}
+                  required
+                />
+              </div>
+
+              <div>
+                <label className="block text-[12.5px] font-semibold mb-1.5 text-[#1D1D1F]">密码</label>
+                <input
+                  type="password"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  placeholder="输入你的密码"
+                  className="w-full px-4 py-2.5 rounded-xl text-[13.5px] outline-none transition-all duration-200 border border-[#EAEAEA] bg-[#FAFAFA] focus:border-[#7C3AED] focus:bg-white"
+                  disabled={loading}
+                  required
+                />
+              </div>
+
+              <button
+                type="submit"
                 disabled={loading}
-                required
-              />
-            </div>
+                className="w-full py-3 rounded-xl text-[14px] font-bold text-white bg-[#1D1D1F] disabled:opacity-70"
+              >
+                {loading ? '登录中...' : '登录'}
+              </button>
+            </form>
 
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">密码</label>
-              <input
-                type="password"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                placeholder="请输入密码"
-                className="w-full px-4 py-3 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all"
-                disabled={loading}
-                required
-              />
-            </div>
-
-            <button
-              type="submit"
-              disabled={loading}
-              className="w-full px-6 py-3 bg-gradient-to-r from-blue-600 to-purple-600 text-white font-medium rounded-xl hover:from-blue-700 hover:to-purple-700 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-              {loading ? '登录中...' : '登录'}
-            </button>
-          </form>
-
-          <div className="mt-6 text-center text-sm text-gray-500">
-            还没有账号？{' '}
-            <Link to="/register" className="text-blue-600 hover:text-blue-700 font-medium">
-              立即注册
-            </Link>
+            <p className="text-center text-[13px] mt-6 text-[#8E8E93]">
+              还没有账号？{' '}
+              <Link to="/register" state={location.state} className="font-semibold text-[#7C3AED] hover:text-[#5B21B6]">
+                立即注册
+              </Link>
+            </p>
           </div>
         </div>
-
-        {/* Back to Home */}
-        <div className="text-center mt-6">
-          <Link to="/" className="text-sm text-gray-500 hover:text-gray-700">
-            返回首页
-          </Link>
-        </div>
-      </div>
-      </div>
+      </main>
     </div>
   );
 }

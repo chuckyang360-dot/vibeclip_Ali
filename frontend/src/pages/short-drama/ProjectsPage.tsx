@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useLocation } from 'react-router-dom';
 import { getUser } from '../../services/api';
 import { ProjectCoverImage } from './components/ProjectCoverImage';
 import { ShortDramaLayout } from './components/ShortDramaLayout';
@@ -110,6 +110,7 @@ function coverEmptyTitle(p: ShortDramaProjectDto): string {
 
 export function ShortDramaProjectsPage() {
   const navigate = useNavigate();
+  const location = useLocation();
   const user = getUser();
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -191,7 +192,11 @@ export function ShortDramaProjectsPage() {
             <div className="mt-4 flex items-center gap-3">
               <button
                 type="button"
-                onClick={() => navigate('/login')}
+                onClick={() =>
+                  navigate('/login', {
+                    state: { from: `${location.pathname}${location.search}${location.hash}` },
+                  })
+                }
                 className="rounded-lg bg-[#1D1D1F] px-4 py-2 text-[13px] font-semibold text-white"
               >
                 登录
