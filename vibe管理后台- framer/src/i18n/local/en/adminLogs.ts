@@ -1,0 +1,27 @@
+export default {
+  page_title: "Admin Logs",
+  search_placeholder: "Search by ID, operator, target, reason...",
+  filter_action: "Action Type",
+  filter_target_type: "Target Type",
+
+  log_id: "Log ID",
+  operator: "Operator",
+  action: "Action",
+  target_type: "Target Type",
+  target_id: "Target ID",
+  before: "Before",
+  after: "After",
+  reason: "Reason",
+  ip: "IP",
+  created_at: "Created At",
+  no_logs: "No admin logs found",
+
+  action_grant_credits: "Grant Credits",
+  action_deduct_credits: "Deduct Credits",
+  action_disable_user: "Disable User",
+  action_restore_user: "Restore User",
+  action_update_note: "Update Note",
+  action_mark_asset: "Mark Asset Abnormal",
+  action_mark_video: "Mark Video Abnormal",
+  action_adjustment: "Adjustment",
+};

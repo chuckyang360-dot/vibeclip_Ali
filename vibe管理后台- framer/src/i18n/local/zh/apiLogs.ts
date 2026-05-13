@@ -1,0 +1,47 @@
+export default {
+  page_title: "API 调用日志",
+  search_placeholder: "按 ID、用户、项目或业务类型搜索...",
+  filter_provider: "服务商",
+  filter_status: "状态",
+  provider_xai: "xAI",
+  provider_gemini: "Gemini",
+  provider_r2: "Cloudflare R2",
+  status_success: "成功",
+  status_failed: "失败",
+  status_timeout: "超时",
+  status_rate_limited: "限流",
+
+  // Stats
+  api_calls_today: "今日 API 调用",
+  success_rate: "成功率",
+  failure_rate: "失败率",
+  avg_latency: "平均延迟",
+  est_cost_today: "今日预估成本",
+  rate_limit_errors: "限流错误数",
+
+  // Table
+  api_call_id: "调用 ID",
+  provider: "服务商",
+  model: "模型",
+  business_type: "业务类型",
+  user: "用户",
+  project: "项目",
+  status: "状态",
+  http_status: "HTTP 状态",
+  duration: "耗时",
+  est_cost: "预估成本",
+  error_message: "错误信息",
+  created_at: "创建时间",
+  no_logs: "暂无 API 调用日志",
+
+  // Drawer
+  drawer_title: "API 调用详情",
+  request_summary: "请求摘要",
+  response_summary: "响应摘要",
+  error_detail: "错误详情",
+  related_info: "关联信息",
+  credit_transaction: "积分交易",
+  request_body: "请求内容",
+  response_body: "响应内容",
+  redacted: "内容已脱敏（安全保护）",
+};

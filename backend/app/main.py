@@ -11,12 +11,14 @@ from .config import settings
 from .database import init_db
 from .admin.router import router as admin_router
 from .auth.routes import router as auth_router
+from .routes.billing import router as billing_router
 from .short_drama.routes import router as short_drama_router
 
 # Import models so Base.metadata includes short drama tables before init_db()
 from .models import (  # noqa: F401
     AdminOperationLog,
     ApiCallLog,
+    PaymentOrder,
     User,
     UserCreditAccount,
     UserCreditTransaction,
@@ -115,6 +117,7 @@ init_db()
 
 app.include_router(auth_router, prefix="/api/auth", tags=["Authentication"])
 app.include_router(admin_router, prefix="/api/admin", tags=["Admin"])
+app.include_router(billing_router, prefix="/api/billing", tags=["Billing"])
 app.include_router(short_drama_router, prefix="/api/short-drama", tags=["Short Drama"])
 
 _backend_root = Path(__file__).resolve().parent.parent
