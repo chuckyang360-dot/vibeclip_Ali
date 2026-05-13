@@ -43,6 +43,10 @@ class Settings(BaseSettings):
     #: PEM PKCS8; env may use literal \\n for newlines
     WECHAT_PAY_PRIVATE_KEY: Optional[str] = Field(default=None, env="WECHAT_PAY_PRIVATE_KEY")
     WECHAT_PAY_NOTIFY_URL: Optional[str] = Field(default=None, env="WECHAT_PAY_NOTIFY_URL")
+    #: 回调「微信支付公钥」模式：须与 Wechatpay-Serial 完全一致（通常以 PUB_KEY_ / PUB_KEY_ID_ 开头）
+    WECHAT_PAY_PUBLIC_KEY_ID: Optional[str] = Field(default=None, env="WECHAT_PAY_PUBLIC_KEY_ID")
+    #: PEM 公钥；环境变量可用 \\n 表示换行
+    WECHAT_PAY_PUBLIC_KEY: Optional[str] = Field(default=None, env="WECHAT_PAY_PUBLIC_KEY")
 
     # X AI API Configuration
     XAI_API_KEY: Optional[str] = None

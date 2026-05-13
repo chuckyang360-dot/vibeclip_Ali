@@ -37,6 +37,20 @@ def normalize_wechat_private_key(raw: str) -> str:
     return f"-----BEGIN PRIVATE KEY-----\n{body}\n-----END PRIVATE KEY-----\n"
 
 
+def normalize_wechat_public_key(raw: str) -> str:
+    """PEM 公钥；支持 env 内 \\n；无 PEM 头尾时按 SPKI PUBLIC KEY 包裹。"""
+    s = (raw or "").strip().replace("\\n", "\n")
+    if "BEGIN" in s and "END" in s:
+        return s
+    body = s.strip()
+    return f"-----BEGIN PUBLIC KEY-----\n{body}\n-----END PUBLIC KEY-----\n"
+
+
+def _notify_uses_wechat_public_key_mode(serial: str) -> bool:
+    s = (serial or "").strip()
+    return s.startswith("PUB_KEY_") or s.startswith("PUB_KEY_ID_")
+
+
 def build_wechat_notify_url() -> str | None:
     u = (settings.WECHAT_PAY_NOTIFY_URL or "").strip()
     if u:
@@ -187,6 +201,33 @@ def verify_notify_signature(
     wechatpay_signature_b64: str,
     wechatpay_serial: str,
 ) -> bool:
+    message = f"{wechatpay_timestamp}\n{wechatpay_nonce}\n{body_str}\n"
+    serial = (wechatpay_serial or "").strip()
+
+    if _notify_uses_wechat_public_key_mode(serial):
+        expected_id = (settings.WECHAT_PAY_PUBLIC_KEY_ID or "").strip()
+        raw_pub = settings.WECHAT_PAY_PUBLIC_KEY
+        if not expected_id or not (raw_pub or "").strip():
+            logger.warning("[WECHAT_NOTIFY_VERIFY_FAILED] mode=public_key reason=missing_config")
+            return False
+        if serial != expected_id:
+            logger.warning("[WECHAT_NOTIFY_VERIFY_FAILED] mode=public_key reason=key_id_mismatch")
+            return False
+        try:
+            pem = normalize_wechat_public_key(str(raw_pub))
+            pub = serialization.load_pem_public_key(pem.encode("utf-8"))
+        except Exception:
+            logger.warning("[WECHAT_NOTIFY_VERIFY_FAILED] mode=public_key reason=invalid_public_key_pem")
+            return False
+        try:
+            sig = base64.b64decode(wechatpay_signature_b64)
+            pub.verify(sig, message.encode("utf-8"), padding.PKCS1v15(), hashes.SHA256())
+        except Exception:
+            logger.warning("[WECHAT_NOTIFY_VERIFY_FAILED] mode=public_key reason=signature_mismatch")
+            return False
+        logger.info("[WECHAT_NOTIFY_VERIFY_SUCCESS] mode=public_key")
+        return True
+
     try:
         serial_map = _refresh_platform_certificates_if_needed()
     except Exception:
@@ -194,16 +235,15 @@ def verify_notify_signature(
         return False
     pem = serial_map.get(wechatpay_serial)
     if not pem:
-        logger.warning("[WECHAT_NOTIFY_VERIFY_FAILED] unknown_serial serial_prefix=%s", wechatpay_serial[:8])
+        logger.warning("[WECHAT_NOTIFY_VERIFY_FAILED] unknown_serial serial_prefix=%s", serial[:8])
         return False
-    message = f"{wechatpay_timestamp}\n{wechatpay_nonce}\n{body_str}\n"
     try:
         pub = serialization.load_pem_public_key(pem.encode("utf-8"))
         sig = base64.b64decode(wechatpay_signature_b64)
         pub.verify(sig, message.encode("utf-8"), padding.PKCS1v15(), hashes.SHA256())
         return True
     except Exception:
-        logger.exception("[WECHAT_NOTIFY_VERIFY_FAILED] rsa_verify serial_prefix=%s", wechatpay_serial[:8])
+        logger.exception("[WECHAT_NOTIFY_VERIFY_FAILED] rsa_verify serial_prefix=%s", serial[:8])
         return False
 
 
