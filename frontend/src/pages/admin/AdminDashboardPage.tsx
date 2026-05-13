@@ -8,7 +8,7 @@ import { AdminMetricCard } from '../../components/admin/AdminMetricCard';
 import { AdminDataTable } from '../../components/admin/AdminDataTable';
 import { AdminStatusBadge } from '../../components/admin/AdminStatusBadge';
 import { useAdminLocale } from '../../contexts/AdminLocaleContext';
-import { formatAdminStatus } from '../../i18n/adminI18n';
+import { formatAdminStatus, tAdmin } from '../../i18n/adminI18n';
 
 function ChartEmpty({ title }: { title: string }) {
   return (
@@ -75,8 +75,8 @@ export function AdminDashboardPage() {
   return (
     <div className="space-y-5">
       <div className="grid grid-cols-2 gap-3 md:grid-cols-3 lg:grid-cols-5">
-        <AdminMetricCard label={t('totalRevenue')} value={formatCny(data.total_revenue ?? '0')} icon="ri-wallet-3-line" />
-        <AdminMetricCard label={t('todayRevenue')} value={formatCny(data.today_revenue ?? '0')} icon="ri-money-cny-circle-line" />
+        <AdminMetricCard label={tAdmin(locale, 'totalRevenue')} value={formatCny(data.total_revenue ?? '0')} icon="ri-wallet-3-line" />
+        <AdminMetricCard label={tAdmin(locale, 'todayRevenue')} value={formatCny(data.today_revenue ?? '0')} icon="ri-money-cny-circle-line" />
         <AdminMetricCard label={t('totalUsers')} value={data.total_users || 0} icon="ri-user-3-line" />
         <AdminMetricCard label={t('newUsersToday')} value={data.new_users_today || 0} icon="ri-user-add-line" />
         <AdminMetricCard label={t('totalProjects')} value={data.total_projects || 0} icon="ri-folder-line" />
@@ -85,7 +85,7 @@ export function AdminDashboardPage() {
         <AdminMetricCard label={t('videosGeneratedToday')} value={data.videos_generated_today || 0} icon="ri-video-line" />
         <AdminMetricCard label={t('apiCallsToday')} value={data.api_calls_today || 0} icon="ri-server-line" />
         <AdminMetricCard label={t('creditsConsumedToday')} value={data.credits_consumed_today || 0} icon="ri-coins-line" />
-        <AdminMetricCard label={t('estimatedCostToday')} value={(data.estimated_cost_today || 0).toFixed(4)} icon="ri-money-dollar-circle-line" />
+        <AdminMetricCard label={t('estimatedCostToday')} value={Number(data.estimated_cost_today || 0).toFixed(2)} icon="ri-money-dollar-circle-line" />
         <AdminMetricCard label={t('failedJobsToday')} value={data.failed_jobs_today || 0} icon="ri-error-warning-line" />
       </div>
 

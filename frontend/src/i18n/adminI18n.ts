@@ -27,6 +27,8 @@ const zh: Dict = {
   creditsConsumedToday: '今日积分消耗',
   estimatedCostToday: '今日预估成本',
   failedJobsToday: '今日失败任务',
+  totalRevenue: '总收入',
+  todayRevenue: '今日收入',
   userGrowth: '用户增长趋势',
   projectVideoGeneration: '项目与视频生成趋势',
   apiCallsAndCost: 'API 调用与成本',
@@ -93,6 +95,12 @@ const zh: Dict = {
   viewer: '查看人员',
 };
 
+/** 关键指标：主字典缺失或为空时仍返回正确文案（避免旧构建/缓存导致 label 回退为 key）。 */
+const LABEL_FALLBACK: Partial<Record<string, Record<AdminLocale, string>>> = {
+  totalRevenue: { zh: '总收入', en: 'Total Revenue' },
+  todayRevenue: { zh: '今日收入', en: 'Today Revenue' },
+};
+
 const en: Dict = {
   dashboard: 'Dashboard',
   users: 'Users',
@@ -118,6 +126,8 @@ const en: Dict = {
   creditsConsumedToday: 'Credits Consumed Today',
   estimatedCostToday: 'Estimated Cost Today',
   failedJobsToday: 'Failed Jobs Today',
+  totalRevenue: 'Total Revenue',
+  todayRevenue: 'Today Revenue',
   userGrowth: 'User Growth',
   projectVideoGeneration: 'Project & Video Generation',
   apiCallsAndCost: 'API Calls & Cost',
@@ -186,7 +196,15 @@ const en: Dict = {
 
 export function tAdmin(locale: AdminLocale, key: string): string {
   const dict = locale === 'zh' ? zh : en;
-  return dict[key] || key;
+  const fromDict = dict[key];
+  if (typeof fromDict === 'string' && fromDict.length > 0) {
+    return fromDict;
+  }
+  const fb = LABEL_FALLBACK[key];
+  if (fb) {
+    return fb[locale];
+  }
+  return key;
 }
 
 const statusMap: Record<string, { zh: string; en: string }> = {
