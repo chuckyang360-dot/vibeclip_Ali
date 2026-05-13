@@ -11,6 +11,7 @@ from ..database import get_db
 from ..models import (
     AdminOperationLog,
     ApiCallLog,
+    PaymentOrder,
     User,
     UserCreditAccount,
     UserCreditTransaction,
@@ -894,6 +895,21 @@ async def list_credit_transactions(
                 "related_object_type": t.related_object_type,
                 "related_object_id": t.related_object_id,
             }
+        subscription_order = None
+        if (
+            t.transaction_type == "subscription_grant"
+            and (t.related_object_type or "") == "payment_order"
+            and t.related_object_id
+            and str(t.related_object_id).isdigit()
+        ):
+            po = db.query(PaymentOrder).filter(PaymentOrder.id == int(t.related_object_id)).first()
+            if po:
+                subscription_order = {
+                    "plan_code": po.plan_code,
+                    "period": po.period,
+                    "out_trade_no": po.out_trade_no,
+                    "payment_provider": po.payment_provider or "alipay",
+                }
         items.append(
             {
                 "transaction_id": t.id,
@@ -903,6 +919,7 @@ async def list_credit_transactions(
                 "balance_before": t.balance_before,
                 "balance_after": t.balance_after,
                 "related_object": rel,
+                "subscription_order": subscription_order,
                 "operator": {"type": t.operator_type, "admin_email": op.email if op else None},
                 "note": t.note,
                 "created_at": t.created_at.isoformat() if t.created_at else None,

@@ -32,6 +32,8 @@ async function adminFetch<T>(path: string, init?: RequestInit): Promise<T> {
 }
 
 export interface AdminDashboardResponse {
+  total_revenue?: string;
+  today_revenue?: string;
   total_users: number;
   new_users_today: number;
   total_projects: number;

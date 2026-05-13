@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from datetime import timedelta
 from decimal import Decimal
 from typing import Any
@@ -7,9 +8,11 @@ from typing import Any
 from sqlalchemy import case, func
 from sqlalchemy.orm import Session
 
-from ..models import ApiCallLog, User, UserCreditTransaction
+from ..models import ApiCallLog, PaymentOrder, User, UserCreditTransaction
 from ..short_drama.models import AssetEntity, RenderJob, ShortDramaProject
 from .timeutil import TZ_ADMIN, day_range_utc_sh, last_n_days_dates_sh, now_utc, today_range_utc_sh
+
+logger = logging.getLogger(__name__)
 
 
 def _dec_float(v: Any) -> float:
@@ -18,6 +21,13 @@ def _dec_float(v: Any) -> float:
     if isinstance(v, Decimal):
         return float(v)
     return float(v)
+
+
+def _money_decimal_str(v: Any) -> str:
+    if v is None:
+        return "0.00"
+    d = v if isinstance(v, Decimal) else Decimal(str(v))
+    return f"{d.quantize(Decimal('0.01'))}"
 
 
 def build_dashboard(db: Session) -> dict[str, Any]:
@@ -84,6 +94,61 @@ def build_dashboard(db: Session) -> dict[str, Any]:
         )
         .scalar()
         or 0
+    )
+
+    dist_rows = (
+        db.query(
+            PaymentOrder.status,
+            func.count(PaymentOrder.id),
+            func.coalesce(func.sum(PaymentOrder.amount), 0),
+        )
+        .group_by(PaymentOrder.status)
+        .all()
+    )
+    if not dist_rows:
+        logger.info(
+            "[ADMIN_PAYMENT_ORDER_STATUS_DISTRIBUTION] status=None count=0 sum_amount=0.00 (no payment_orders rows)"
+        )
+    for st, cnt, amt in dist_rows:
+        logger.info(
+            "[ADMIN_PAYMENT_ORDER_STATUS_DISTRIBUTION] status=%r count=%s sum_amount=%s",
+            st,
+            int(cnt or 0),
+            _money_decimal_str(amt),
+        )
+
+    _paid_filter = PaymentOrder.status == "paid"
+    total_revenue_raw = (
+        db.query(func.coalesce(func.sum(PaymentOrder.amount), 0)).filter(_paid_filter).scalar()
+    )
+    today_revenue_raw = (
+        db.query(func.coalesce(func.sum(PaymentOrder.amount), 0))
+        .filter(
+            _paid_filter,
+            PaymentOrder.paid_at.isnot(None),
+            PaymentOrder.paid_at >= t0,
+            PaymentOrder.paid_at < t1,
+        )
+        .scalar()
+    )
+    paid_order_count = int(db.query(func.count(PaymentOrder.id)).filter(_paid_filter).scalar() or 0)
+    today_paid_order_count = int(
+        db.query(func.count(PaymentOrder.id))
+        .filter(
+            _paid_filter,
+            PaymentOrder.paid_at.isnot(None),
+            PaymentOrder.paid_at >= t0,
+            PaymentOrder.paid_at < t1,
+        )
+        .scalar()
+        or 0
+    )
+    logger.info(
+        "[ADMIN_REVENUE_SUMMARY] paid_order_count=%s total_revenue=%s today_paid_order_count=%s today_revenue=%s",
+        paid_order_count,
+        _money_decimal_str(total_revenue_raw),
+        today_paid_order_count,
+        _money_decimal_str(today_revenue_raw),
     )
 
     # --- 7d trends ---
@@ -280,6 +345,8 @@ def build_dashboard(db: Session) -> dict[str, Any]:
         )
 
     return {
+        "total_revenue": _money_decimal_str(total_revenue_raw),
+        "today_revenue": _money_decimal_str(today_revenue_raw),
         "total_users": int(total_users),
         "new_users_today": int(new_users_today),
         "total_projects": int(total_projects),

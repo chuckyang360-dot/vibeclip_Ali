@@ -52,6 +52,16 @@ export function AdminDashboardPage() {
   if (error) return <AdminErrorState message={error} onRetry={load} />;
   if (!data) return <AdminEmptyState title={locale === 'zh' ? '暂无数据' : 'No data'} />;
 
+  const formatCny = (raw: string | number | undefined) => {
+    if (raw == null) return '¥0.00';
+    if (typeof raw === 'number') {
+      return Number.isFinite(raw) ? `¥${raw.toFixed(2)}` : '¥0.00';
+    }
+    const n = Number(String(raw).trim().replace(/[¥,\s]/g, ''));
+    if (!Number.isFinite(n)) return '¥0.00';
+    return `¥${n.toFixed(2)}`;
+  };
+
   const abnormal = data.abnormal_tasks || [];
   const topUsers = data.top_consuming_users || [];
   const providerStats = data.provider_stats || [];
@@ -65,6 +75,8 @@ export function AdminDashboardPage() {
   return (
     <div className="space-y-5">
       <div className="grid grid-cols-2 gap-3 md:grid-cols-3 lg:grid-cols-5">
+        <AdminMetricCard label={t('totalRevenue')} value={formatCny(data.total_revenue ?? '0')} icon="ri-wallet-3-line" />
+        <AdminMetricCard label={t('todayRevenue')} value={formatCny(data.today_revenue ?? '0')} icon="ri-money-cny-circle-line" />
         <AdminMetricCard label={t('totalUsers')} value={data.total_users || 0} icon="ri-user-3-line" />
         <AdminMetricCard label={t('newUsersToday')} value={data.new_users_today || 0} icon="ri-user-add-line" />
         <AdminMetricCard label={t('totalProjects')} value={data.total_projects || 0} icon="ri-folder-line" />
