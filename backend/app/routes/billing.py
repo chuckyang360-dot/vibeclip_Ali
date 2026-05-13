@@ -88,6 +88,12 @@ class CreditRecordOut(BaseModel):
     balance_after: int
     note: str | None = None
     created_at: datetime | None = None
+    # Optional: subscription_grant linked payment_order (read-only, for UI)
+    related_object_type: str | None = None
+    related_object_id: str | None = None
+    plan_code: str | None = None
+    period: str | None = None
+    out_trade_no: str | None = None
 
 
 class PaymentOrderListItem(BaseModel):
@@ -343,17 +349,44 @@ async def billing_me(
         .limit(50)
         .all()
     )
-    credit_records = [
-        CreditRecordOut(
-            id=t.id,
-            transaction_type=t.transaction_type,
-            amount=int(t.amount),
-            balance_after=int(t.balance_after),
-            note=t.note,
-            created_at=t.created_at,
+    credit_records: list[CreditRecordOut] = []
+    for t in txns:
+        plan_code: str | None = None
+        period: str | None = None
+        out_trade_no: str | None = None
+        if (
+            t.transaction_type == "subscription_grant"
+            and (t.related_object_type or "") == "payment_order"
+            and t.related_object_id
+            and str(t.related_object_id).isdigit()
+        ):
+            po = (
+                db.query(PaymentOrder)
+                .filter(
+                    PaymentOrder.id == int(t.related_object_id),
+                    PaymentOrder.user_id == current_user.id,
+                )
+                .first()
+            )
+            if po:
+                plan_code = po.plan_code
+                period = po.period
+                out_trade_no = po.out_trade_no
+        credit_records.append(
+            CreditRecordOut(
+                id=t.id,
+                transaction_type=t.transaction_type,
+                amount=int(t.amount),
+                balance_after=int(t.balance_after),
+                note=t.note,
+                created_at=t.created_at,
+                related_object_type=t.related_object_type,
+                related_object_id=t.related_object_id,
+                plan_code=plan_code,
+                period=period,
+                out_trade_no=out_trade_no,
+            )
         )
-        for t in txns
-    ]
 
     orders = (
         db.query(PaymentOrder)

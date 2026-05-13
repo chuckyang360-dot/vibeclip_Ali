@@ -38,6 +38,11 @@ export type CreditRecordDto = {
   balance_after: number;
   note: string | null;
   created_at: string | null;
+  related_object_type?: string | null;
+  related_object_id?: string | null;
+  plan_code?: string | null;
+  period?: string | null;
+  out_trade_no?: string | null;
 };
 
 export type PaymentOrderListItemDto = {

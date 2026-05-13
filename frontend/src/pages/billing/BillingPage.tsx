@@ -4,6 +4,11 @@ import { fetchBillingMe } from '../../api/billingApi';
 import type { BillingMeResponse, CreditRecordDto, PaymentOrderListItemDto } from '../../api/billingApi';
 import { SUBSCRIPTION_PLANS } from '../../constants/billing';
 import { getToken } from '../../services/api';
+import {
+  parseSubscriptionGrantNote,
+  subscriptionGrantTitle,
+  type SubscriptionGrantParts,
+} from '../../utils/creditRecordLabels';
 import { ShortDramaLayout } from '../short-drama/components/ShortDramaLayout';
 
 function formatDate(iso: string | null | undefined): string {
@@ -39,6 +44,27 @@ function creditTxnLabel(t: CreditRecordDto): string {
   if (t.transaction_type === 'admin_grant') return '管理员发放';
   if (t.transaction_type === 'admin_deduct') return '管理员扣减';
   return t.transaction_type;
+}
+
+function resolveSubscriptionGrantParts(row: CreditRecordDto): SubscriptionGrantParts | null {
+  if (row.transaction_type !== 'subscription_grant') return null;
+  if (row.plan_code && row.period && row.out_trade_no) {
+    return { plan: row.plan_code, period: row.period, outTradeNo: row.out_trade_no };
+  }
+  return parseSubscriptionGrantNote(row.note);
+}
+
+function creditRecordPrimaryLine(row: CreditRecordDto): string {
+  const sub = resolveSubscriptionGrantParts(row);
+  if (sub) return subscriptionGrantTitle(sub.plan, sub.period);
+  return creditTxnLabel(row);
+}
+
+function creditRecordSecondaryLine(row: CreditRecordDto): string | null {
+  const sub = resolveSubscriptionGrantParts(row);
+  if (sub) return `订单号：${sub.outTradeNo}`;
+  if (row.note) return row.note;
+  return null;
 }
 
 export function BillingPage() {
@@ -159,16 +185,20 @@ export function BillingPage() {
               ) : !data?.credit_records?.length ? (
                 <p className="text-[13px] text-[#8E8E93]">暂无积分变动记录</p>
               ) : (
-                data.credit_records.map((row, idx) => (
+                data.credit_records.map((row, idx) => {
+                  const secondary = creditRecordSecondaryLine(row);
+                  return (
                   <div
                     key={row.id}
                     className="flex items-center justify-between py-3"
                     style={{ borderBottom: idx < data.credit_records.length - 1 ? '1px solid #F0F0F5' : 'none' }}
                   >
                     <div>
-                      <p className="text-[13.5px] text-[#1D1D1F]">{creditTxnLabel(row)}</p>
-                      <p className="text-[11.5px] text-[#8E8E93]">{formatDate(row.created_at)}</p>
-                      {row.note ? <p className="text-[11px] text-[#AEAEB2] mt-0.5 max-w-[480px]">{row.note}</p> : null}
+                      <p className="text-[13.5px] text-[#1D1D1F]">{creditRecordPrimaryLine(row)}</p>
+                      {secondary ? (
+                        <p className="text-[12px] text-[#6E6E73] mt-0.5">{secondary}</p>
+                      ) : null}
+                      <p className="text-[11.5px] text-[#8E8E93] mt-1">{formatDate(row.created_at)}</p>
                     </div>
                     <span
                       className="text-[13.5px] font-bold"
@@ -178,7 +208,8 @@ export function BillingPage() {
                       {row.amount}
                     </span>
                   </div>
-                ))
+                  );
+                })
               )}
             </div>
           </div>
