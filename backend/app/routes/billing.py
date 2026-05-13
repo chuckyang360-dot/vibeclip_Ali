@@ -12,12 +12,17 @@ from sqlalchemy.orm import Session
 
 from ..auth.jwt_handler import get_current_user
 from ..database import get_db
-from ..models import PaymentOrder, User
+from ..models import PaymentOrder, User, UserCreditAccount, UserCreditTransaction
 from ..services.alipay_client import (
-    build_return_url_with_order_id,
+    build_payment_return_url,
     create_page_pay_order,
     generate_out_trade_no,
     verify_notify,
+)
+from ..services.billing_fulfillment import (
+    PLAN_MONTHLY_CREDITS,
+    apply_paid_subscription_to_user,
+    verify_total_amount,
 )
 
 logger = logging.getLogger(__name__)
@@ -30,6 +35,18 @@ PLAN_PRICE: dict[str, dict[str, Decimal]] = {
     "standard": {"monthly": Decimal("209.00"), "yearly": Decimal("2006.00")},
     "pro": {"monthly": Decimal("529.00"), "yearly": Decimal("5078.00")},
 }
+
+
+def _api_order_status(db_status: str) -> str:
+    if db_status == "cancelled":
+        return "closed"
+    return db_status
+
+
+def _amount_str(amount: Decimal | float) -> str:
+    if isinstance(amount, Decimal):
+        return f"{amount.quantize(Decimal('0.01'))}"
+    return f"{Decimal(str(amount)).quantize(Decimal('0.01'))}"
 
 
 class CreateAlipayOrderRequest(BaseModel):
@@ -45,14 +62,50 @@ class CreateAlipayOrderResponse(BaseModel):
     status: str
 
 
-class BillingOrderResponse(BaseModel):
+class OrderDetailResponse(BaseModel):
     order_id: int
     out_trade_no: str
     status: str
     plan_code: str
     period: str
-    amount: float
-    paid_at: datetime | None
+    amount: str
+    paid_at: datetime | None = None
+    created_at: datetime | None = None
+
+
+class CurrentSubscriptionOut(BaseModel):
+    plan: str
+    status: str
+    billing_period: str | None = None
+    renews_at: datetime | None = None
+    monthly_credits: int | None = None
+
+
+class CreditRecordOut(BaseModel):
+    id: int
+    transaction_type: str
+    amount: int
+    balance_after: int
+    note: str | None = None
+    created_at: datetime | None = None
+
+
+class PaymentOrderListItem(BaseModel):
+    order_id: int
+    out_trade_no: str
+    status: str
+    plan_code: str
+    period: str
+    amount: str
+    paid_at: datetime | None = None
+    created_at: datetime | None = None
+
+
+class BillingMeResponse(BaseModel):
+    current_subscription: CurrentSubscriptionOut
+    current_credits_balance: int
+    credit_records: list[CreditRecordOut]
+    payment_orders: list[PaymentOrderListItem]
 
 
 @router.post("/alipay/create-order", response_model=CreateAlipayOrderResponse)
@@ -89,18 +142,20 @@ async def create_alipay_order(
     db.refresh(order)
 
     try:
+        pay_return = build_payment_return_url(out_trade_no)
         pay_info = create_page_pay_order(
             out_trade_no=out_trade_no,
             amount=str(amount),
             subject=order.subject,
             body=f"order_id={order.id}",
-            return_url=build_return_url_with_order_id(order.id),
+            return_url=pay_return,
         )
         logger.info(
-            "[BILLING_CREATE_ORDER_SUCCESS] order_id=%s out_trade_no=%s amount=%s",
+            "[BILLING_CREATE_ORDER_SUCCESS] order_id=%s out_trade_no=%s amount=%s return_url_set=%s",
             order.id,
             order.out_trade_no,
             str(order.amount),
+            bool(pay_return),
         )
         return CreateAlipayOrderResponse(
             order_id=order.id,
@@ -145,8 +200,9 @@ async def alipay_notify(request: Request, db: Session = Depends(get_db)):
     payload = {k: str(v) for k, v in form.items()}
     out_trade_no = payload.get("out_trade_no")
     trade_status = payload.get("trade_status")
+    trade_no = payload.get("trade_no")
     logger.info(
-        "[BILLING_NOTIFY_RECEIVED] out_trade_no=%s trade_status=%s",
+        "[ALIPAY_NOTIFY_RECEIVED] out_trade_no=%s trade_status=%s",
         out_trade_no,
         trade_status,
     )
@@ -154,37 +210,64 @@ async def alipay_notify(request: Request, db: Session = Depends(get_db)):
     try:
         verified = verify_notify(payload)
     except Exception:
-        logger.exception("[BILLING_NOTIFY_HANDLER_ERROR]")
+        logger.exception("[ALIPAY_NOTIFY_VERIFY_FAILED] handler_exception out_trade_no=%s", out_trade_no)
         return Response(content="fail", media_type="text/plain")
     if not verified:
-        logger.warning("[BILLING_NOTIFY_VERIFY_FAILED] out_trade_no=%s", out_trade_no)
+        logger.warning("[ALIPAY_NOTIFY_VERIFY_FAILED] out_trade_no=%s", out_trade_no)
         return Response(content="fail", media_type="text/plain")
-    logger.info("[BILLING_NOTIFY_VERIFY_SUCCESS] out_trade_no=%s", out_trade_no)
+    logger.info("[ALIPAY_NOTIFY_VERIFY_SUCCESS] out_trade_no=%s", out_trade_no)
 
     order = db.query(PaymentOrder).filter(PaymentOrder.out_trade_no == out_trade_no).first()
     if not order:
         logger.warning("[BILLING_NOTIFY_ORDER_NOT_FOUND] out_trade_no=%s", out_trade_no)
         return Response(content="fail", media_type="text/plain")
 
-    logger.info("[BILLING_NOTIFY_TRADE_STATUS] order_id=%s trade_status=%s", order.id, trade_status)
     order.raw_notify = json.dumps(payload, ensure_ascii=False)
 
     if trade_status in {"TRADE_SUCCESS", "TRADE_FINISHED"}:
+        if order.status == "paid":
+            if trade_no and not order.alipay_trade_no:
+                order.alipay_trade_no = trade_no
+            db.add(order)
+            db.commit()
+            logger.info(
+                "[ALIPAY_ORDER_PAID] idempotent_skip order_id=%s out_trade_no=%s",
+                order.id,
+                out_trade_no,
+            )
+            return Response(content="success", media_type="text/plain")
+
+        if not verify_total_amount(payload.get("total_amount"), Decimal(str(order.amount))):
+            logger.warning(
+                "[ALIPAY_NOTIFY_VERIFY_FAILED] amount_mismatch order_id=%s expected=%s got=%s",
+                order.id,
+                order.amount,
+                payload.get("total_amount"),
+            )
+            db.add(order)
+            db.commit()
+            return Response(content="fail", media_type="text/plain")
+
+        if trade_no:
+            order.alipay_trade_no = trade_no
         order.status = "paid"
         order.paid_at = datetime.now(timezone.utc)
         user = db.query(User).filter(User.id == order.user_id).first()
         if user:
-            user.subscription_status = "active"
-            user.subscription_plan = order.plan_code
-            db.add(user)
+            apply_paid_subscription_to_user(db, order=order, user=user)
             logger.info(
-                "[BILLING_SUBSCRIPTION_UPDATED] user_id=%s status=%s plan=%s",
+                "[ALIPAY_ORDER_PAID] order_id=%s user_id=%s plan=%s period=%s",
+                order.id,
                 user.id,
-                user.subscription_status,
-                user.subscription_plan,
+                order.plan_code,
+                order.period,
             )
+        else:
+            logger.error("[ALIPAY_ORDER_PAID] user_missing order_id=%s user_id=%s", order.id, order.user_id)
     elif trade_status == "TRADE_CLOSED":
-        order.status = "cancelled"
+        if order.status == "pending":
+            order.status = "cancelled"
+            logger.info("[ALIPAY_NOTIFY_TRADE_CLOSED] order_id=%s", order.id)
     else:
         logger.info(
             "[BILLING_NOTIFY_TRADE_STATUS_IGNORED] order_id=%s trade_status=%s current_status=%s",
@@ -199,23 +282,109 @@ async def alipay_notify(request: Request, db: Session = Depends(get_db)):
     return Response(content="success", media_type="text/plain")
 
 
-@router.get("/orders/{order_id}", response_model=BillingOrderResponse)
-async def get_order(
-    order_id: int,
+def _order_to_detail(order: PaymentOrder) -> OrderDetailResponse:
+    return OrderDetailResponse(
+        order_id=order.id,
+        out_trade_no=order.out_trade_no,
+        status=_api_order_status(order.status),
+        plan_code=order.plan_code,
+        period=order.period,
+        amount=_amount_str(order.amount),
+        paid_at=order.paid_at,
+        created_at=order.created_at,
+    )
+
+
+@router.get("/orders/{order_ref}", response_model=OrderDetailResponse)
+async def get_order_by_ref(
+    order_ref: str,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    order = db.query(PaymentOrder).filter(PaymentOrder.id == order_id).first()
+    if order_ref.isdigit():
+        order = db.query(PaymentOrder).filter(PaymentOrder.id == int(order_ref)).first()
+    else:
+        order = db.query(PaymentOrder).filter(PaymentOrder.out_trade_no == order_ref).first()
     if not order:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Order not found")
     if order.user_id != current_user.id:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Forbidden")
-    return BillingOrderResponse(
-        order_id=order.id,
-        out_trade_no=order.out_trade_no,
-        status=order.status,
-        plan_code=order.plan_code,
-        period=order.period,
-        amount=float(order.amount),
-        paid_at=order.paid_at,
+    return _order_to_detail(order)
+
+
+@router.get("/me", response_model=BillingMeResponse)
+async def billing_me(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    logger.info("[BILLING_ME_LOADED] user_id=%s", current_user.id)
+
+    acc = db.query(UserCreditAccount).filter(UserCreditAccount.user_id == current_user.id).first()
+    balance = int(acc.current_balance or 0) if acc else 0
+
+    sub_status = getattr(current_user, "subscription_status", None) or "inactive"
+    plan = getattr(current_user, "subscription_plan", None)
+    period = getattr(current_user, "subscription_period", None)
+    renews = getattr(current_user, "subscription_current_period_end", None)
+
+    if sub_status == "active" and plan in {"basic", "standard", "pro"}:
+        api_plan = plan
+        api_sub = "active"
+        monthly = PLAN_MONTHLY_CREDITS.get(plan)
+    else:
+        api_plan = "free"
+        api_sub = "not_subscribed" if sub_status == "inactive" else sub_status
+        monthly = None
+
+    txns = (
+        db.query(UserCreditTransaction)
+        .filter(UserCreditTransaction.user_id == current_user.id)
+        .order_by(UserCreditTransaction.id.desc())
+        .limit(50)
+        .all()
+    )
+    credit_records = [
+        CreditRecordOut(
+            id=t.id,
+            transaction_type=t.transaction_type,
+            amount=int(t.amount),
+            balance_after=int(t.balance_after),
+            note=t.note,
+            created_at=t.created_at,
+        )
+        for t in txns
+    ]
+
+    orders = (
+        db.query(PaymentOrder)
+        .filter(PaymentOrder.user_id == current_user.id)
+        .order_by(PaymentOrder.id.desc())
+        .limit(50)
+        .all()
+    )
+    payment_orders = [
+        PaymentOrderListItem(
+            order_id=o.id,
+            out_trade_no=o.out_trade_no,
+            status=_api_order_status(o.status),
+            plan_code=o.plan_code,
+            period=o.period,
+            amount=_amount_str(o.amount),
+            paid_at=o.paid_at,
+            created_at=o.created_at,
+        )
+        for o in orders
+    ]
+
+    return BillingMeResponse(
+        current_subscription=CurrentSubscriptionOut(
+            plan=api_plan,
+            status=api_sub,
+            billing_period=period,
+            renews_at=renews,
+            monthly_credits=monthly,
+        ),
+        current_credits_balance=balance,
+        credit_records=credit_records,
+        payment_orders=payment_orders,
     )

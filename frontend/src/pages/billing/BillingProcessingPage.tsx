@@ -32,7 +32,7 @@ export function BillingProcessingPage() {
           });
           return;
         }
-        if (order.status === 'failed' || order.status === 'cancelled') {
+        if (order.status === 'failed' || order.status === 'cancelled' || order.status === 'closed') {
           navigate(`/billing/failed?reason=${order.status}&order_id=${order.order_id}`, { replace: true });
           return;
         }

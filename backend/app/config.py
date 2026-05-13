@@ -30,6 +30,8 @@ class Settings(BaseSettings):
     ALIPAY_GATEWAY: str = Field(default="https://openapi.alipay.com/gateway.do", env="ALIPAY_GATEWAY")
     ALIPAY_NOTIFY_URL: Optional[str] = Field(default=None, env="ALIPAY_NOTIFY_URL")
     ALIPAY_RETURN_URL: Optional[str] = Field(default=None, env="ALIPAY_RETURN_URL")
+    #: Public API origin for Alipay notify_url when ALIPAY_NOTIFY_URL is unset, e.g. https://api.vibeclip.cn
+    BACKEND_PUBLIC_BASE_URL: Optional[str] = Field(default=None, env="BACKEND_PUBLIC_BASE_URL")
     ALIPAY_SIGN_TYPE: str = Field(default="RSA2", env="ALIPAY_SIGN_TYPE")
 
     # X AI API Configuration

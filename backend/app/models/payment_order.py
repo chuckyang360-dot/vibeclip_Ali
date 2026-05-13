@@ -17,6 +17,7 @@ class PaymentOrder(Base):
     payment_provider = Column(String, nullable=False, default="alipay")
     status = Column(String, nullable=False, default="pending")  # pending/paid/failed/cancelled
     subject = Column(String, nullable=False)
+    alipay_trade_no = Column(String, nullable=True, index=True)
     raw_notify = Column(Text, nullable=True)
     paid_at = Column(DateTime(timezone=True), nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())

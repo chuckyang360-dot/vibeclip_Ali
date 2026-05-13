@@ -11,6 +11,11 @@ export interface AuthUser {
   role?: string;
   status?: string;
   created_at: string;
+  subscription_status?: string;
+  subscription_plan?: string | null;
+  subscription_period?: string | null;
+  subscription_started_at?: string | null;
+  subscription_current_period_end?: string | null;
 }
 
 export interface LoginResponse {

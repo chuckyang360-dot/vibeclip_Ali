@@ -15,11 +15,47 @@ export type CreateAlipayOrderResponse = {
 export type BillingOrderResponse = {
   order_id: number;
   out_trade_no: string;
-  status: 'pending' | 'paid' | 'failed' | 'cancelled' | string;
+  status: string;
   plan_code: string;
   period: string;
-  amount: number;
+  amount: string | number;
   paid_at: string | null;
+  created_at?: string | null;
+};
+
+export type CurrentSubscriptionDto = {
+  plan: string;
+  status: string;
+  billing_period: string | null;
+  renews_at: string | null;
+  monthly_credits: number | null;
+};
+
+export type CreditRecordDto = {
+  id: number;
+  transaction_type: string;
+  amount: number;
+  balance_after: number;
+  note: string | null;
+  created_at: string | null;
+};
+
+export type PaymentOrderListItemDto = {
+  order_id: number;
+  out_trade_no: string;
+  status: string;
+  plan_code: string;
+  period: string;
+  amount: string;
+  paid_at: string | null;
+  created_at: string | null;
+};
+
+export type BillingMeResponse = {
+  current_subscription: CurrentSubscriptionDto;
+  current_credits_balance: number;
+  credit_records: CreditRecordDto[];
+  payment_orders: PaymentOrderListItemDto[];
 };
 
 function authHeaders() {
@@ -31,6 +67,14 @@ function authHeaders() {
     'Content-Type': 'application/json',
     Authorization: `Bearer ${token}`,
   };
+}
+
+function bearerOnly() {
+  const token = getToken();
+  if (!token) {
+    throw new Error('请先登录');
+  }
+  return { Authorization: `Bearer ${token}` };
 }
 
 export async function createAlipayOrder(plan_code: PlanCode, period: BillingPeriod): Promise<CreateAlipayOrderResponse> {
@@ -46,16 +90,28 @@ export async function createAlipayOrder(plan_code: PlanCode, period: BillingPeri
   return response.json();
 }
 
-export async function getBillingOrder(orderId: number): Promise<BillingOrderResponse> {
-  const response = await fetch(`${API_BASE_URL}/api/billing/orders/${orderId}`, {
+/** Numeric order id or merchant out_trade_no (e.g. VC…). */
+export async function getBillingOrder(orderRef: string | number): Promise<BillingOrderResponse> {
+  const ref = encodeURIComponent(typeof orderRef === 'number' ? String(orderRef) : orderRef);
+  const response = await fetch(`${API_BASE_URL}/api/billing/orders/${ref}`, {
     method: 'GET',
-    headers: {
-      Authorization: authHeaders().Authorization,
-    },
+    headers: bearerOnly(),
   });
   if (!response.ok) {
     const error = await response.json().catch(() => ({}));
     throw new Error(error.detail || '获取订单状态失败');
+  }
+  return response.json();
+}
+
+export async function fetchBillingMe(): Promise<BillingMeResponse> {
+  const response = await fetch(`${API_BASE_URL}/api/billing/me`, {
+    method: 'GET',
+    headers: bearerOnly(),
+  });
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({}));
+    throw new Error(error.detail || '加载账单数据失败');
   }
   return response.json();
 }

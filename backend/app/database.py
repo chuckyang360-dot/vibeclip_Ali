@@ -430,6 +430,66 @@ def _ensure_user_admin_columns() -> None:
         logger.exception("Migration for users admin columns failed")
 
 
+def _ensure_billing_columns() -> None:
+    """Payment orders + subscription period columns for Alipay notify / billing UI."""
+    try:
+        insp = inspect(engine)
+        dialect = engine.dialect.name
+        if insp.has_table("payment_orders"):
+            cols = {c["name"] for c in insp.get_columns("payment_orders")}
+            alters: list[str] = []
+            if "alipay_trade_no" not in cols:
+                if dialect == "postgresql":
+                    alters.append(
+                        "ALTER TABLE payment_orders ADD COLUMN IF NOT EXISTS alipay_trade_no VARCHAR"
+                    )
+                else:
+                    alters.append("ALTER TABLE payment_orders ADD COLUMN alipay_trade_no VARCHAR")
+            if alters:
+                with engine.begin() as conn:
+                    for stmt in alters:
+                        conn.execute(text(stmt))
+                logger.info("Migration: payment_orders columns added (%s): %s", dialect, alters)
+        if insp.has_table("users"):
+            cols = {c["name"] for c in insp.get_columns("users")}
+            alters: list[str] = []
+            if "subscription_period" not in cols:
+                if dialect == "postgresql":
+                    alters.append(
+                        "ALTER TABLE users ADD COLUMN IF NOT EXISTS subscription_period VARCHAR"
+                    )
+                else:
+                    alters.append("ALTER TABLE users ADD COLUMN subscription_period VARCHAR")
+            if "subscription_started_at" not in cols:
+                if dialect == "postgresql":
+                    alters.append(
+                        "ALTER TABLE users ADD COLUMN IF NOT EXISTS subscription_started_at TIMESTAMP WITH TIME ZONE"
+                    )
+                else:
+                    alters.append("ALTER TABLE users ADD COLUMN subscription_started_at TIMESTAMP")
+            if "subscription_current_period_end" not in cols:
+                if dialect == "postgresql":
+                    alters.append(
+                        "ALTER TABLE users ADD COLUMN IF NOT EXISTS subscription_current_period_end TIMESTAMP WITH TIME ZONE"
+                    )
+                else:
+                    alters.append(
+                        "ALTER TABLE users ADD COLUMN subscription_current_period_end TIMESTAMP"
+                    )
+            if alters:
+                with engine.begin() as conn:
+                    for stmt in alters:
+                        try:
+                            conn.execute(text(stmt))
+                        except Exception as e:
+                            if "duplicate column name" in str(e).lower():
+                                continue
+                            raise
+                logger.info("Migration: users subscription period columns added (%s): %s", dialect, alters)
+    except Exception:
+        logger.exception("Migration for billing columns failed")
+
+
 def _ensure_api_call_log_columns() -> None:
     """Add api_call_logs v1 extension columns used by admin analytics."""
     table_name = "api_call_logs"
@@ -470,6 +530,7 @@ def init_db():
     """Initialize database tables - models must be imported before calling this"""
     Base.metadata.create_all(bind=engine)
     _ensure_user_admin_columns()
+    _ensure_billing_columns()
     _ensure_api_call_log_columns()
     _sqlite_ensure_render_job_columns()
     _ensure_short_drama_project_step_columns()

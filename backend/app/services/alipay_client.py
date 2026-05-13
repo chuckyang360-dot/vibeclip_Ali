@@ -44,6 +44,32 @@ def generate_out_trade_no(user_id: int) -> str:
     return f"VC{user_id}{int(time.time())}{uuid.uuid4().hex[:8].upper()}"
 
 
+def build_payment_return_url(out_trade_no: str) -> str | None:
+    """Browser return after Alipay pay: {frontend}/billing/result?out_trade_no=..."""
+    base = (settings.FRONTEND_URL or settings.FRONTEND_ORIGIN or "").strip().rstrip("/")
+    if base:
+        return f"{base}/billing/result?{urlencode({'out_trade_no': out_trade_no})}"
+    legacy = (settings.ALIPAY_RETURN_URL or "").strip()
+    if not legacy:
+        return None
+    if "/billing/result" in legacy:
+        sep = "&" if "?" in legacy else "?"
+        return f"{legacy}{sep}{urlencode({'out_trade_no': out_trade_no})}"
+    legacy_base = legacy.split("?")[0].rstrip("/")
+    return f"{legacy_base}/billing/result?{urlencode({'out_trade_no': out_trade_no})}"
+
+
+def resolve_alipay_notify_url() -> str | None:
+    """Async notify URL; prefer explicit ALIPAY_NOTIFY_URL, else BACKEND_PUBLIC_BASE_URL + path."""
+    u = (settings.ALIPAY_NOTIFY_URL or "").strip()
+    if u:
+        return u
+    base = (settings.BACKEND_PUBLIC_BASE_URL or "").strip().rstrip("/")
+    if base:
+        return f"{base}/api/billing/alipay/notify"
+    return None
+
+
 def create_page_pay_order(
     *,
     out_trade_no: str,
@@ -53,13 +79,14 @@ def create_page_pay_order(
     return_url: str | None = None,
 ) -> dict[str, str]:
     alipay_client = _build_client()
+    notify_url = resolve_alipay_notify_url() or settings.ALIPAY_NOTIFY_URL
     order_string = alipay_client.api_alipay_trade_page_pay(
         out_trade_no=out_trade_no,
         total_amount=amount,
         subject=subject,
         body=body,
         return_url=return_url or settings.ALIPAY_RETURN_URL,
-        notify_url=settings.ALIPAY_NOTIFY_URL,
+        notify_url=notify_url,
     )
     gateway = (settings.ALIPAY_GATEWAY or "https://openapi.alipay.com/gateway.do").rstrip("?")
     pay_url = f"{gateway}?{order_string}"
@@ -72,7 +99,7 @@ def verify_notify(data: dict[str, Any]) -> bool:
         try:
             alipay_client = _build_client()
         except Exception:
-            logger.exception("[BILLING_ALIPAY_NOTIFY_CLIENT_INIT_FAILED]")
+            logger.exception("[ALIPAY_NOTIFY_VERIFY_FAILED] client_init")
             return False
         sign = str(data.get("sign") or "")
         if not sign:
@@ -83,10 +110,10 @@ def verify_notify(data: dict[str, Any]) -> bool:
         try:
             return bool(alipay_client.verify(payload, sign))
         except Exception:
-            logger.exception("[BILLING_ALIPAY_NOTIFY_VERIFY_ERROR]")
+            logger.exception("[ALIPAY_NOTIFY_VERIFY_FAILED] verify_error")
             return False
     except Exception:
-        logger.exception("[BILLING_ALIPAY_NOTIFY_VERIFY_UNEXPECTED]")
+        logger.exception("[ALIPAY_NOTIFY_VERIFY_FAILED] unexpected")
         return False
 
 

@@ -26,6 +26,9 @@ class User(Base):
     # Subscription related fields (minimal billing loop)
     subscription_status = Column(String, nullable=False, default="inactive")
     subscription_plan = Column(String, nullable=True)
+    subscription_period = Column(String, nullable=True)
+    subscription_started_at = Column(DateTime(timezone=True), nullable=True)
+    subscription_current_period_end = Column(DateTime(timezone=True), nullable=True)
 
     def set_password(self, password: str):
         """设置密码哈希"""

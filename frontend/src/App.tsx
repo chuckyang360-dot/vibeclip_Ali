@@ -29,6 +29,7 @@ import { BillingSuccessPage } from './pages/billing/BillingSuccessPage';
 import { BillingFailedPage } from './pages/billing/BillingFailedPage';
 import { BillingProcessingPage } from './pages/billing/BillingProcessingPage';
 import { BillingCreditsPage } from './pages/billing/BillingCreditsPage';
+import { BillingResultPage } from './pages/billing/BillingResultPage';
 import { SimplePlaceholderPage } from './pages/placeholders/SimplePlaceholderPage';
 import { PricingPage } from './pages/pricing/PricingPage';
 import { CaseDemoPage } from './pages/cases/CaseDemoPage';
@@ -67,6 +68,7 @@ export function App() {
         <Route path="/billing/success" element={<BillingSuccessPage />} />
         <Route path="/billing/failed" element={<BillingFailedPage />} />
         <Route path="/billing/processing" element={<BillingProcessingPage />} />
+        <Route path="/billing/result" element={<BillingResultPage />} />
         <Route path="/billing/credits" element={<BillingCreditsPage />} />
         <Route path="/help" element={<SimplePlaceholderPage title="帮助文档" />} />
         <Route path="/tutorials" element={<SimplePlaceholderPage title="使用教程" />} />
