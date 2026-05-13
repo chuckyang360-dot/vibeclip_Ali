@@ -55,18 +55,9 @@ export const CREDIT_PACKS: { id: CreditPackId; price: number; points: number }[]
   { id: 'p199', price: 199, points: 3500 },
 ];
 
-/** 年付应付金额与 backend/app/routes/billing.py PLAN_PRICE yearly 一致（以后端为准）。 */
-const BACKEND_YEARLY_PAYABLE_BY_MONTHLY: Record<number, number> = {
-  79: 758,
-  209: 2006,
-  529: 5078,
-};
-
 export function yearlyTotals(monthlyPrice: number) {
   const fullYear = monthlyPrice * 12;
-  const payable =
-    BACKEND_YEARLY_PAYABLE_BY_MONTHLY[monthlyPrice] ??
-    Math.round(fullYear * 0.8 * 100) / 100;
-  const saved = Math.round((fullYear - payable) * 100) / 100;
-  return { subtotal: fullYear, payable, saved };
+  const discounted = Math.round(fullYear * 0.8 * 100) / 100;
+  const saved = Math.round((fullYear - discounted) * 100) / 100;
+  return { subtotal: fullYear, payable: discounted, saved };
 }

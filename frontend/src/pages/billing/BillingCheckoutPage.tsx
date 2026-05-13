@@ -1,7 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { PaymentModal, type PaymentMethod } from '../../components/billing/PaymentModal';
-import { createAlipayOrder } from '../../api/billingApi';
 import {
   CREDIT_PACKS,
   SUBSCRIPTION_PLANS,
@@ -33,8 +32,6 @@ export function BillingCheckoutPage() {
   const [period, setPeriodState] = useState<BillingPeriod>(() => parsePeriod(searchParams.get('period')));
   const [payMethod, setPayMethod] = useState<PaymentMethod>('alipay');
   const [modalOpen, setModalOpen] = useState(false);
-  const [creatingOrder, setCreatingOrder] = useState(false);
-  const [payError, setPayError] = useState<string | null>(null);
 
   useEffect(() => {
     setPeriodState(parsePeriod(searchParams.get('period')));
@@ -55,45 +52,7 @@ export function BillingCheckoutPage() {
   const amountNumber = isCredits ? validPack.price : period === 'monthly' ? subMeta.monthlyPrice : y.payable;
   const amountLabel = `¥${amountNumber}`;
 
-  const submitPaymentFormHtml = (paymentFormHtml: string) => {
-    const wrap = document.createElement('div');
-    wrap.style.display = 'none';
-    wrap.innerHTML = paymentFormHtml;
-    document.body.appendChild(wrap);
-    const form = wrap.querySelector('form');
-    if (!form) {
-      throw new Error('支付表单无效');
-    }
-    form.submit();
-  };
-
-  const openPay = async () => {
-    if (isCredits) {
-      setPayError('当前仅支持支付宝订阅支付，积分包支付暂未开通。');
-      setModalOpen(true);
-      return;
-    }
-    setPayError(null);
-    setModalOpen(true);
-    setCreatingOrder(true);
-    try {
-      const order = await createAlipayOrder(planKey, period);
-      if (order.pay_url) {
-        window.location.href = order.pay_url;
-        return;
-      }
-      if (order.payment_form_html) {
-        submitPaymentFormHtml(order.payment_form_html);
-        return;
-      }
-      navigate(`/billing/processing?order_id=${order.order_id}`);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : '创建支付订单失败，请稍后重试';
-      setPayError(message);
-    } finally {
-      setCreatingOrder(false);
-    }
-  };
+  const openPay = () => setModalOpen(true);
 
   return (
     <ShortDramaLayout headerMode="landing">
@@ -184,9 +143,30 @@ export function BillingCheckoutPage() {
                     <span className="text-[20px] font-bold text-[#1677FF]">支</span>
                     <div className="flex-1">
                       <p className="text-[14px] font-semibold text-[#1D1D1F]">支付宝</p>
-                      <p className="text-[11px] text-[#8E8E93]">跳转支付宝收银台完成支付</p>
+                      <p className="text-[11px] text-[#8E8E93]">扫码或跳转完成支付</p>
                     </div>
                     {payMethod === 'alipay' ? <span className="text-[#7B61FF]">✓</span> : null}
+                  </label>
+                  <label
+                    className={`flex cursor-pointer items-center gap-3 rounded-xl border-2 px-4 py-3 transition-colors ${
+                      payMethod === 'wechat'
+                        ? 'border-[#7B61FF] bg-[rgba(123,97,255,0.06)]'
+                        : 'border-[#EAEAEA] hover:border-[#D0D0D0]'
+                    }`}
+                  >
+                    <input
+                      type="radio"
+                      name="pay"
+                      className="sr-only"
+                      checked={payMethod === 'wechat'}
+                      onChange={() => setPayMethod('wechat')}
+                    />
+                    <span className="text-[20px] font-bold text-[#07C160]">微</span>
+                    <div className="flex-1">
+                      <p className="text-[14px] font-semibold text-[#1D1D1F]">微信支付</p>
+                      <p className="text-[11px] text-[#8E8E93]">使用微信扫码完成支付</p>
+                    </div>
+                    {payMethod === 'wechat' ? <span className="text-[#7B61FF]">✓</span> : null}
                   </label>
                 </div>
               </section>
@@ -294,12 +274,15 @@ export function BillingCheckoutPage() {
 
       <PaymentModal
         open={modalOpen}
+        method={payMethod}
         amountLabel={amountLabel}
         titleLine={titleLine}
-        loading={creatingOrder}
-        errorMessage={payError}
         onClose={() => setModalOpen(false)}
-        onRetry={openPay}
+        onSwitchPayment={() => setModalOpen(false)}
+        onCompletePay={() => {
+          setModalOpen(false);
+          navigate('/billing/processing');
+        }}
       />
     </ShortDramaLayout>
   );

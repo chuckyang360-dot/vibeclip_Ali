@@ -23,9 +23,6 @@ class User(Base):
 
     # OAuth相关字段
     google_id = Column(String, unique=True, nullable=True)
-    # Subscription related fields (minimal billing loop)
-    subscription_status = Column(String, nullable=False, default="inactive")
-    subscription_plan = Column(String, nullable=True)
 
     def set_password(self, password: str):
         """设置密码哈希"""

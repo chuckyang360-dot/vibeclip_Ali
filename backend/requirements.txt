@@ -17,4 +17,3 @@ requests
 python-dotenv
 bcrypt
 psycopg2-binary
-alipay-sdk-python

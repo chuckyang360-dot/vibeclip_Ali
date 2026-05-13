@@ -1,59 +1,7 @@
-import { useEffect, useMemo, useState } from 'react';
-import { Link, useNavigate, useSearchParams } from 'react-router-dom';
-import { getBillingOrder } from '../../api/billingApi';
+import { Link } from 'react-router-dom';
 import { ShortDramaLayout } from '../short-drama/components/ShortDramaLayout';
 
 export function BillingProcessingPage() {
-  const [searchParams] = useSearchParams();
-  const navigate = useNavigate();
-  const [error, setError] = useState<string | null>(null);
-  const orderId = useMemo(() => {
-    const raw = Number(searchParams.get('order_id') || 0);
-    return Number.isFinite(raw) && raw > 0 ? raw : 0;
-  }, [searchParams]);
-
-  useEffect(() => {
-    if (!orderId) {
-      setError('缺少订单号，请返回结算页重新支付。');
-      return;
-    }
-    let cancelled = false;
-    let pollTimer: number | null = null;
-    const timeoutAt = Date.now() + 2 * 60 * 1000;
-
-    const poll = async () => {
-      if (cancelled) return;
-      try {
-        const order = await getBillingOrder(orderId);
-        if (cancelled) return;
-        if (order.status === 'paid') {
-          navigate(`/billing/success?plan=${encodeURIComponent(order.plan_code)}&order_id=${order.order_id}`, {
-            replace: true,
-          });
-          return;
-        }
-        if (order.status === 'failed' || order.status === 'cancelled') {
-          navigate(`/billing/failed?reason=${order.status}&order_id=${order.order_id}`, { replace: true });
-          return;
-        }
-        if (Date.now() >= timeoutAt) {
-          navigate(`/billing/failed?reason=timeout&order_id=${order.order_id}`, { replace: true });
-          return;
-        }
-        pollTimer = window.setTimeout(poll, 3000);
-      } catch (e) {
-        if (cancelled) return;
-        setError(e instanceof Error ? e.message : '查询订单状态失败');
-      }
-    };
-
-    poll();
-    return () => {
-      cancelled = true;
-      if (pollTimer) window.clearTimeout(pollTimer);
-    };
-  }, [navigate, orderId]);
-
   return (
     <ShortDramaLayout headerMode="landing">
       <div className="min-h-screen bg-[#F7F8FA] px-6 py-16">
@@ -66,16 +14,14 @@ export function BillingProcessingPage() {
           <p className="mt-2 text-[13px] leading-relaxed text-[#8E8E93]">
             如果长时间未更新，可前往账单页面查看订单状态。
           </p>
-          {error ? (
-            <p className="mt-3 text-[13px] leading-relaxed text-[#DC2626]">{error}</p>
-          ) : null}
           <div className="mt-8 flex flex-col gap-3 sm:flex-row sm:justify-center">
-            <Link
-              to={`/billing/processing?order_id=${orderId}`}
-              className="rounded-xl border border-[#EAEAEA] bg-[#F7F8FA] px-6 py-3 text-[14px] font-semibold text-[#444444] hover:bg-white"
+            <button
+              type="button"
+              className="cursor-default rounded-xl border border-[#EAEAEA] bg-[#F7F8FA] px-6 py-3 text-[14px] font-semibold text-[#AEAEB2]"
+              disabled
             >
               刷新状态
-            </Link>
+            </button>
             <Link
               to="/billing"
               className="rounded-xl bg-[#1D1D1F] px-6 py-3 text-[14px] font-semibold text-white hover:bg-[#374151]"

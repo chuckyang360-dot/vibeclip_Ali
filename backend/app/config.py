@@ -23,15 +23,6 @@ class Settings(BaseSettings):
     GOOGLE_CLIENT_SECRET: Optional[str] = None
     GOOGLE_REDIRECT_URI: Optional[str] = None
 
-    # Alipay Configuration
-    ALIPAY_APP_ID: Optional[str] = Field(default=None, env="ALIPAY_APP_ID")
-    ALIPAY_PRIVATE_KEY: Optional[str] = Field(default=None, env="ALIPAY_PRIVATE_KEY")
-    ALIPAY_PUBLIC_KEY: Optional[str] = Field(default=None, env="ALIPAY_PUBLIC_KEY")
-    ALIPAY_GATEWAY: str = Field(default="https://openapi.alipay.com/gateway.do", env="ALIPAY_GATEWAY")
-    ALIPAY_NOTIFY_URL: Optional[str] = Field(default=None, env="ALIPAY_NOTIFY_URL")
-    ALIPAY_RETURN_URL: Optional[str] = Field(default=None, env="ALIPAY_RETURN_URL")
-    ALIPAY_SIGN_TYPE: str = Field(default="RSA2", env="ALIPAY_SIGN_TYPE")
-
     # X AI API Configuration
     XAI_API_KEY: Optional[str] = None
     XAI_API_URL: str = "https://api.x.ai/v1"

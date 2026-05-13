@@ -16,7 +16,5 @@ def public_user_dict(user: User) -> dict[str, Any]:
         "is_active": user.is_active,
         "role": getattr(user, "role", None) or "user",
         "status": getattr(user, "account_status", None) or "normal",
-        "subscription_status": getattr(user, "subscription_status", None) or "inactive",
-        "subscription_plan": getattr(user, "subscription_plan", None),
         "created_at": user.created_at,
     }

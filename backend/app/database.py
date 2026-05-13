@@ -406,20 +406,6 @@ def _ensure_user_admin_columns() -> None:
                 )
             else:
                 alters.append("ALTER TABLE users ADD COLUMN status VARCHAR NOT NULL DEFAULT 'normal'")
-        if "subscription_status" not in cols:
-            if dialect == "postgresql":
-                alters.append(
-                    "ALTER TABLE users ADD COLUMN IF NOT EXISTS subscription_status VARCHAR NOT NULL DEFAULT 'inactive'"
-                )
-            else:
-                alters.append(
-                    "ALTER TABLE users ADD COLUMN subscription_status VARCHAR NOT NULL DEFAULT 'inactive'"
-                )
-        if "subscription_plan" not in cols:
-            if dialect == "postgresql":
-                alters.append("ALTER TABLE users ADD COLUMN IF NOT EXISTS subscription_plan VARCHAR")
-            else:
-                alters.append("ALTER TABLE users ADD COLUMN subscription_plan VARCHAR")
         if not alters:
             return
         with engine.begin() as conn:
