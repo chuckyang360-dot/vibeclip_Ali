@@ -24,7 +24,7 @@ def _normalize_pem(value: str | None) -> str | None:
 
 def _build_client() -> Any:
     if AliPay is None:
-        raise RuntimeError("alipay-sdk-python is not installed")
+        raise RuntimeError("python-alipay-sdk is not installed")
     app_id = settings.ALIPAY_APP_ID
     private_key = _normalize_pem(settings.ALIPAY_PRIVATE_KEY)
     public_key = _normalize_pem(settings.ALIPAY_PUBLIC_KEY)
