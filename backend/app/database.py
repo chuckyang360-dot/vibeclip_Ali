@@ -445,6 +445,13 @@ def _ensure_billing_columns() -> None:
                     )
                 else:
                     alters.append("ALTER TABLE payment_orders ADD COLUMN alipay_trade_no VARCHAR")
+            if "wechat_transaction_id" not in cols:
+                if dialect == "postgresql":
+                    alters.append(
+                        "ALTER TABLE payment_orders ADD COLUMN IF NOT EXISTS wechat_transaction_id VARCHAR"
+                    )
+                else:
+                    alters.append("ALTER TABLE payment_orders ADD COLUMN wechat_transaction_id VARCHAR")
             if alters:
                 with engine.begin() as conn:
                     for stmt in alters:

@@ -12,6 +12,14 @@ export type CreateAlipayOrderResponse = {
   status: 'pending' | 'paid' | 'failed' | 'cancelled' | string;
 };
 
+export type CreateWechatOrderResponse = {
+  order_id: number;
+  out_trade_no: string;
+  amount: string;
+  code_url: string;
+  status: string;
+};
+
 export type BillingOrderResponse = {
   order_id: number;
   out_trade_no: string;
@@ -19,6 +27,9 @@ export type BillingOrderResponse = {
   plan_code: string;
   period: string;
   amount: string | number;
+  payment_provider?: string | null;
+  alipay_trade_no?: string | null;
+  wechat_transaction_id?: string | null;
   paid_at: string | null;
   created_at?: string | null;
 };
@@ -52,6 +63,9 @@ export type PaymentOrderListItemDto = {
   plan_code: string;
   period: string;
   amount: string;
+  payment_provider?: string;
+  alipay_trade_no?: string | null;
+  wechat_transaction_id?: string | null;
   paid_at: string | null;
   created_at: string | null;
 };
@@ -82,6 +96,16 @@ function bearerOnly() {
   return { Authorization: `Bearer ${token}` };
 }
 
+function formatBillingErrorDetail(raw: unknown, fallback: string): string {
+  if (raw == null) return fallback;
+  if (typeof raw === 'string') return raw;
+  if (Array.isArray(raw)) {
+    const first = raw[0] as { msg?: string } | undefined;
+    return first?.msg ?? fallback;
+  }
+  return fallback;
+}
+
 export async function createAlipayOrder(plan_code: PlanCode, period: BillingPeriod): Promise<CreateAlipayOrderResponse> {
   const response = await fetch(`${API_BASE_URL}/api/billing/alipay/create-order`, {
     method: 'POST',
@@ -90,12 +114,25 @@ export async function createAlipayOrder(plan_code: PlanCode, period: BillingPeri
   });
   if (!response.ok) {
     const error = await response.json().catch(() => ({}));
-    throw new Error(error.detail || '创建支付订单失败');
+    throw new Error(formatBillingErrorDetail((error as { detail?: unknown }).detail, '创建支付订单失败'));
   }
   return response.json();
 }
 
-/** Numeric order id or merchant out_trade_no (e.g. VC…). */
+export async function createWechatOrder(plan_code: PlanCode, period: BillingPeriod): Promise<CreateWechatOrderResponse> {
+  const response = await fetch(`${API_BASE_URL}/api/billing/wechat/create-order`, {
+    method: 'POST',
+    headers: authHeaders(),
+    body: JSON.stringify({ plan_code, period }),
+  });
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({}));
+    throw new Error(formatBillingErrorDetail((error as { detail?: unknown }).detail, '创建支付订单失败'));
+  }
+  return response.json();
+}
+
+/** Numeric order id or merchant out_trade_no (e.g. VC… / WX…). */
 export async function getBillingOrder(orderRef: string | number): Promise<BillingOrderResponse> {
   const ref = encodeURIComponent(typeof orderRef === 'number' ? String(orderRef) : orderRef);
   const response = await fetch(`${API_BASE_URL}/api/billing/orders/${ref}`, {
@@ -104,7 +141,7 @@ export async function getBillingOrder(orderRef: string | number): Promise<Billin
   });
   if (!response.ok) {
     const error = await response.json().catch(() => ({}));
-    throw new Error(error.detail || '获取订单状态失败');
+    throw new Error(formatBillingErrorDetail((error as { detail?: unknown }).detail, '获取订单状态失败'));
   }
   return response.json();
 }
@@ -116,7 +153,7 @@ export async function fetchBillingMe(): Promise<BillingMeResponse> {
   });
   if (!response.ok) {
     const error = await response.json().catch(() => ({}));
-    throw new Error(error.detail || '加载账单数据失败');
+    throw new Error(formatBillingErrorDetail((error as { detail?: unknown }).detail, '加载账单数据失败'));
   }
   return response.json();
 }

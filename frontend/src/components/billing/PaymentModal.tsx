@@ -1,4 +1,4 @@
-export type PaymentMethod = 'alipay';
+export type PaymentMethod = 'alipay' | 'wechat';
 
 type PaymentModalProps = {
   open: boolean;

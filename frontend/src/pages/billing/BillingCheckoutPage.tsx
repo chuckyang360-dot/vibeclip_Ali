@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
-import { createAlipayOrder } from '../../api/billingApi';
+import { createAlipayOrder, createWechatOrder } from '../../api/billingApi';
 import { PaymentModal, type PaymentMethod } from '../../components/billing/PaymentModal';
+import { WechatNativePayModal } from '../../components/billing/WechatNativePayModal';
 import {
   CREDIT_PACKS,
   SUBSCRIPTION_PLANS,
@@ -31,10 +32,16 @@ export function BillingCheckoutPage() {
   const validPack = CREDIT_PACKS.find((x) => x.id === rawPack) ?? CREDIT_PACKS[0];
 
   const [period, setPeriodState] = useState<BillingPeriod>(() => parsePeriod(searchParams.get('period')));
-  const [payMethod] = useState<PaymentMethod>('alipay');
+  const [payMethod, setPayMethod] = useState<PaymentMethod>('alipay');
   const [modalOpen, setModalOpen] = useState(false);
   const [creatingOrder, setCreatingOrder] = useState(false);
   const [payError, setPayError] = useState<string | null>(null);
+
+  const [wechatModalOpen, setWechatModalOpen] = useState(false);
+  const [wechatCreating, setWechatCreating] = useState(false);
+  const [wechatError, setWechatError] = useState<string | null>(null);
+  const [wechatCodeUrl, setWechatCodeUrl] = useState<string | null>(null);
+  const [wechatOutTradeNo, setWechatOutTradeNo] = useState<string | null>(null);
 
   useEffect(() => {
     setPeriodState(parsePeriod(searchParams.get('period')));
@@ -67,10 +74,40 @@ export function BillingCheckoutPage() {
     form.submit();
   };
 
+  const resetWechatModal = () => {
+    setWechatModalOpen(false);
+    setWechatCreating(false);
+    setWechatError(null);
+    setWechatCodeUrl(null);
+    setWechatOutTradeNo(null);
+  };
+
+  const startWechatPay = async () => {
+    setWechatError(null);
+    setWechatCodeUrl(null);
+    setWechatOutTradeNo(null);
+    setWechatModalOpen(true);
+    setWechatCreating(true);
+    try {
+      const order = await createWechatOrder(planKey, period);
+      setWechatCodeUrl(order.code_url);
+      setWechatOutTradeNo(order.out_trade_no);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : '创建微信支付订单失败，请稍后重试';
+      setWechatError(message);
+    } finally {
+      setWechatCreating(false);
+    }
+  };
+
   const openPay = async () => {
     if (isCredits) {
       setPayError('当前仅支持支付宝订阅支付，积分包支付暂未开通。');
       setModalOpen(true);
+      return;
+    }
+    if (payMethod === 'wechat') {
+      await startWechatPay();
       return;
     }
     setPayError(null);
@@ -182,7 +219,7 @@ export function BillingCheckoutPage() {
                       name="pay"
                       className="sr-only"
                       checked={payMethod === 'alipay'}
-                      readOnly
+                      onChange={() => setPayMethod('alipay')}
                     />
                     <span className="text-[20px] font-bold text-[#1677FF]">支</span>
                     <div className="flex-1">
@@ -190,6 +227,27 @@ export function BillingCheckoutPage() {
                       <p className="text-[11px] text-[#8E8E93]">跳转支付宝收银台完成支付</p>
                     </div>
                     {payMethod === 'alipay' ? <span className="text-[#7B61FF]">✓</span> : null}
+                  </label>
+                  <label
+                    className={`flex cursor-pointer items-center gap-3 rounded-xl border-2 px-4 py-3 transition-colors ${
+                      payMethod === 'wechat'
+                        ? 'border-[#7B61FF] bg-[rgba(123,97,255,0.06)]'
+                        : 'border-[#EAEAEA] hover:border-[#D0D0D0]'
+                    }`}
+                  >
+                    <input
+                      type="radio"
+                      name="pay"
+                      className="sr-only"
+                      checked={payMethod === 'wechat'}
+                      onChange={() => setPayMethod('wechat')}
+                    />
+                    <span className="text-[20px] font-bold text-[#07C160]">微</span>
+                    <div className="flex-1">
+                      <p className="text-[14px] font-semibold text-[#1D1D1F]">微信支付</p>
+                      <p className="text-[11px] text-[#8E8E93]">电脑端微信扫码支付（Native）</p>
+                    </div>
+                    {payMethod === 'wechat' ? <span className="text-[#7B61FF]">✓</span> : null}
                   </label>
                 </div>
               </section>
@@ -303,6 +361,22 @@ export function BillingCheckoutPage() {
         errorMessage={payError}
         onClose={() => setModalOpen(false)}
         onRetry={openPay}
+      />
+
+      <WechatNativePayModal
+        open={wechatModalOpen}
+        creating={wechatCreating}
+        errorMessage={wechatError}
+        codeUrl={wechatCodeUrl}
+        outTradeNo={wechatOutTradeNo}
+        amountLabel={amountLabel}
+        titleLine={titleLine}
+        onClose={resetWechatModal}
+        onRetry={() => void startWechatPay()}
+        onPaid={(ref) => {
+          resetWechatModal();
+          navigate(`/billing/result?out_trade_no=${encodeURIComponent(ref)}`);
+        }}
       />
     </ShortDramaLayout>
   );

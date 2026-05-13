@@ -39,6 +39,16 @@ function orderStatusLabel(s: string): string {
   return s;
 }
 
+function paymentMethodLabel(provider: string | undefined): string {
+  if (provider === 'wechat') return '微信支付';
+  return '支付宝';
+}
+
+function providerTxnDisplay(o: PaymentOrderListItemDto): string {
+  if (o.payment_provider === 'wechat') return o.wechat_transaction_id?.trim() || '—';
+  return o.alipay_trade_no?.trim() || '—';
+}
+
 function creditTxnLabel(t: CreditRecordDto): string {
   if (t.transaction_type === 'subscription_grant') return '订阅积分发放';
   if (t.transaction_type === 'admin_grant') return '管理员发放';
@@ -228,7 +238,9 @@ export function BillingPage() {
                   <table className="w-full text-left text-[13px]">
                     <thead>
                       <tr className="text-[#8E8E93] border-b border-[#F0F0F5]">
+                        <th className="py-2 pr-3 font-medium">支付方式</th>
                         <th className="py-2 pr-3 font-medium">商户订单号</th>
+                        <th className="py-2 pr-3 font-medium">交易号</th>
                         <th className="py-2 pr-3 font-medium">套餐</th>
                         <th className="py-2 pr-3 font-medium">周期</th>
                         <th className="py-2 pr-3 font-medium">金额</th>
@@ -239,7 +251,9 @@ export function BillingPage() {
                     <tbody className="text-[#444444]">
                       {data.payment_orders.map((o: PaymentOrderListItemDto) => (
                         <tr key={o.order_id} className="border-b border-[#F7F7FA]">
+                          <td className="py-2.5 pr-3 whitespace-nowrap">{paymentMethodLabel(o.payment_provider)}</td>
                           <td className="py-2.5 pr-3 font-mono text-[12px]">{o.out_trade_no}</td>
+                          <td className="py-2.5 pr-3 font-mono text-[12px]">{providerTxnDisplay(o)}</td>
                           <td className="py-2.5 pr-3">{planDisplayName(o.plan_code)}</td>
                           <td className="py-2.5 pr-3">{o.period === 'yearly' ? '年付' : '月付'}</td>
                           <td className="py-2.5 pr-3">¥{o.amount}</td>

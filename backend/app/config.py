@@ -34,6 +34,16 @@ class Settings(BaseSettings):
     BACKEND_PUBLIC_BASE_URL: Optional[str] = Field(default=None, env="BACKEND_PUBLIC_BASE_URL")
     ALIPAY_SIGN_TYPE: str = Field(default="RSA2", env="ALIPAY_SIGN_TYPE")
 
+    # WeChat Pay API v3 (Native QR, PC Web)
+    WECHAT_PAY_ENABLED: bool = Field(default=False, env="WECHAT_PAY_ENABLED")
+    WECHAT_PAY_APPID: Optional[str] = Field(default=None, env="WECHAT_PAY_APPID")
+    WECHAT_PAY_MCHID: Optional[str] = Field(default=None, env="WECHAT_PAY_MCHID")
+    WECHAT_PAY_API_V3_KEY: Optional[str] = Field(default=None, env="WECHAT_PAY_API_V3_KEY")
+    WECHAT_PAY_MCH_SERIAL_NO: Optional[str] = Field(default=None, env="WECHAT_PAY_MCH_SERIAL_NO")
+    #: PEM PKCS8; env may use literal \\n for newlines
+    WECHAT_PAY_PRIVATE_KEY: Optional[str] = Field(default=None, env="WECHAT_PAY_PRIVATE_KEY")
+    WECHAT_PAY_NOTIFY_URL: Optional[str] = Field(default=None, env="WECHAT_PAY_NOTIFY_URL")
+
     # X AI API Configuration
     XAI_API_KEY: Optional[str] = None
     XAI_API_URL: str = "https://api.x.ai/v1"

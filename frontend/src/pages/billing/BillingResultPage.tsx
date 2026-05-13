@@ -101,7 +101,7 @@ export function BillingResultPage() {
     phase === 'paid'
       ? '订阅已生效，积分已按套餐发放。'
       : phase === 'polling' || phase === 'loading'
-        ? '支付已提交，正在等待支付宝确认（以后台异步通知为准）。'
+        ? '支付已提交，正在等待支付渠道确认（以后台异步通知为准）。'
         : message;
 
   return (
