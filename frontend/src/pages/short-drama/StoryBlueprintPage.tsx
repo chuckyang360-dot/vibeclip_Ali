@@ -18,6 +18,9 @@ import { workflowNavProjectName } from './utils/workflowProjectName';
 import { withProjectQuery } from './utils/shortDramaRoutes';
 import { touchShortDramaProjectStep } from '@/services/shortDramaApi';
 
+/** 本地调试 Creative Blueprint v2 摘要；正式与默认页面须保持 false。 */
+const SHOW_CREATIVE_BLUEPRINT_DEBUG = false;
+
 const EMPTY_VM = storyBlueprintDtoToPageView(null);
 
 /**
@@ -59,6 +62,7 @@ export function ShortDramaStoryBlueprintPage() {
 
   const blueprintRaw = pipeline?.story_blueprint?.blueprint;
   const creativeBlueprintV2Debug = useMemo(() => {
+    if (!SHOW_CREATIVE_BLUEPRINT_DEBUG) return null;
     if (!blueprintRaw) return null;
     const hasSpecs =
       Array.isArray(blueprintRaw.asset_generation_specs) && blueprintRaw.asset_generation_specs.length > 0;
@@ -72,7 +76,7 @@ export function ShortDramaStoryBlueprintPage() {
       asset_generation_specs: n(blueprintRaw.asset_generation_specs),
       video_generation_specs: n(blueprintRaw.video_generation_specs),
     };
-  }, [blueprintRaw]);
+  }, [blueprintRaw, SHOW_CREATIVE_BLUEPRINT_DEBUG]);
 
   const storyRegenerateLocked = isStoryPipelineLockedForRegenerate(pipeline);
 

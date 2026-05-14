@@ -213,18 +213,9 @@ export function ShortDramaProjectsPage() {
         ) : (
           <>
         <div className="mb-6">
-          <div className="flex items-center justify-between gap-3">
-            <div>
+          <div>
             <h1 className="text-2xl font-black text-[#1D1D1F]" style={{ fontFamily: "'Syne', sans-serif" }}>VibeClip 项目</h1>
             <p className="mt-1 text-[13px] text-[#8E8E93]">继续编辑草稿、处理中和已完成的商品营销短视频项目。</p>
-            </div>
-            <button
-              type="button"
-              onClick={() => navigate('/short-drama/create')}
-              className="rounded-lg bg-[#1D1D1F] px-4 py-2 text-[13px] font-semibold text-white"
-            >
-              创建项目
-            </button>
           </div>
         </div>
         {loading ? <div className="text-[13px] text-[#8E8E93]">加载中...</div> : null}

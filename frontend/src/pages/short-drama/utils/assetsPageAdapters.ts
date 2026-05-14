@@ -146,6 +146,59 @@ function cleanDisplayText(input: string): string {
   return raw;
 }
 
+/** UI-only: strip trailing purpose suffixes (参考 / reference image / …) from asset titles; does not touch prompts. */
+const ASSET_DISPLAY_NAME_SUFFIXES_DESC: string[] = [
+  'character reference',
+  'scene reference',
+  'product reference',
+  'reference image',
+  'asset reference',
+  '参考图',
+  '资产参考',
+  '参考',
+];
+
+export function normalizeAssetDisplayName(input: string): string {
+  const original = String(input || '').trim();
+  if (!original) return '';
+  let s = original;
+  for (let iter = 0; iter < 24; iter++) {
+    const before = s;
+    for (const suf of ASSET_DISPLAY_NAME_SUFFIXES_DESC) {
+      const hasCjk = /[\u4e00-\u9fff]/.test(suf);
+      if (hasCjk) {
+        if (s.endsWith(suf)) {
+          s = s.slice(0, -suf.length).replace(/\s+$/u, '');
+          break;
+        }
+      } else {
+        const esc = suf.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        const tail = new RegExp(`\\s*${esc}\\s*$`, 'i');
+        if (tail.test(s)) {
+          s = s.replace(tail, '').replace(/\s+$/u, '');
+          break;
+        }
+      }
+    }
+    if (s !== before) continue;
+    const m = s.match(/^(.*?)(\s+)reference$/i);
+    if (m && m[1] && m[1].trim()) {
+      s = m[1].replace(/\s+$/u, '');
+      continue;
+    }
+    break;
+  }
+  s = s.trim();
+  return s || original;
+}
+
+function resolveAssetCardDisplayName(rawPick: string, fallbackDefault: string): string {
+  const raw = String(rawPick || '').trim();
+  const cleaned = cleanDisplayText(raw);
+  const normalized = normalizeAssetDisplayName(cleaned || raw);
+  return normalized || cleaned || raw || fallbackDefault;
+}
+
 function tagsFromMeta(meta: Record<string, unknown>, fallback: string[]): string[] {
   const t = meta['tags'] ?? meta['trait_tags'] ?? meta['traitTags'];
   if (Array.isArray(t) && t.length) return t.map(String).filter(Boolean).slice(0, 8);
@@ -160,7 +213,10 @@ export function characterAssetDtoToViewModel(row: PipelineCharacterAssetDto): As
     pickString(meta, ['voice_style', 'voiceStyle', 'voice']) ||
     (row.role_type?.includes('主') ? '未指定（主角）' : '未指定');
   const visual = (row.visual_prompt ?? '').trim();
-  const displayName = cleanDisplayText(pickString(meta, ['display_name'])) || cleanDisplayText(row.name?.trim() || '') || '东南亚通勤青年主角';
+  const displayName = resolveAssetCardDisplayName(
+    pickString(meta, ['display_name']) || row.name?.trim() || '',
+    '东南亚通勤青年主角',
+  );
   const displayDesc = cleanDisplayText(pickString(meta, ['display_description'])) || cleanDisplayText((row.description ?? '').trim()) || '一位生活在东南亚城市的年轻通勤者，注重穿搭和日常便利。';
   return {
     id: row.id,
@@ -180,7 +236,10 @@ export function sceneAssetDtoToViewModel(row: PipelineSceneAssetDto): AssetsPage
   const src = getAssetThumbnailUrl(row);
   const visual = (row.visual_prompt ?? '').trim();
   const type = (row.scene_type ?? '').trim() || pickString(meta, ['sceneType', 'type']) || '场景';
-  const displayName = cleanDisplayText(pickString(meta, ['display_name'])) || cleanDisplayText(row.name?.trim() || '') || '清晨地铁站通勤走廊';
+  const displayName = resolveAssetCardDisplayName(
+    pickString(meta, ['display_name']) || row.name?.trim() || '',
+    '清晨地铁站通勤走廊',
+  );
   const displayDesc = cleanDisplayText(pickString(meta, ['display_description'])) || cleanDisplayText((row.description ?? '').trim()) || '暂无描述';
   return {
     id: row.id,
@@ -205,7 +264,10 @@ export function productAssetDtoToViewModel(row: PipelineProductAssetDto): Assets
     visual.length > 0 ? (visual.length > 120 ? `${visual.slice(0, 120)}…` : visual) : '见视觉 Prompt / 描述';
   return {
     id: row.id,
-    name: cleanDisplayText(pickString(meta, ['display_name'])) || cleanDisplayText(row.name?.trim() || '') || 'iPhone透明支架手机壳',
+    name: resolveAssetCardDisplayName(
+      pickString(meta, ['display_name']) || row.name?.trim() || '',
+      'iPhone透明支架手机壳',
+    ),
     placement,
     cameraHint,
     desc,

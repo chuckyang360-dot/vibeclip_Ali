@@ -24,6 +24,8 @@ export type ShortDramaProjectDto = {
   last_active_step?: 'step_0' | 'step_1' | 'step_2' | 'step_3' | 'step_4' | 'overview' | null;
   step_status?: Record<string, string>;
   overall_status?: 'draft' | 'stale' | 'generating' | 'completed' | 'failed' | null;
+  /** 若后端在 pipeline 中透出运行锁，优先用于 S3 生成中判断（可选）。 */
+  task_running?: boolean | null;
   current_stage?: string | null;
   failed_stage?: string | null;
   error_message?: string | null;

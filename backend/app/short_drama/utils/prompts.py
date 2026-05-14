@@ -151,6 +151,8 @@ Hard rules:
 - shot_plan may list multiple planned shots per segment for readability, but S4 execution consumes ONLY video_generation_specs; do not treat shot_plan as an execution contract for video rows.
 - video_generation_specs MUST exist; EVERY row needs non-empty video_prompt and duration_sec > 0. reference_asset_keys MUST reference asset_generation_specs[].asset_key only.
 - linked_entity_key on each asset_generation_specs row MUST match characters[].character_key OR scenes[].scene_key OR product_assets[].product_asset_key per asset_kind.
+- asset_generation_specs[].display_name must be a clean user-facing asset name only: do NOT include purpose suffixes such as 参考, 参考图, reference, reference image, asset reference, character reference, scene reference, product reference (reference_role already encodes character_reference / scene_reference / product_reference; display_name must not repeat that meaning).
+- Good display_name examples: 主角Alex, 阳光公园场景, 绿色华为手机壳. Bad: 主角Alex参考, 阳光公园场景参考, 绿色华为手机壳产品参考, Character Reference.
 - negative_prompt and immutable_constraints on each asset row must be meaningful (non-empty when possible).
 - Legacy fields may be brief, but v2 fields must be complete and strictly typed.
 

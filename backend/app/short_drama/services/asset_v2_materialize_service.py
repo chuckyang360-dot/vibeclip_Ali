@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 
 from sqlalchemy.orm import Session
 
@@ -26,6 +27,46 @@ from ..schemas.story import (
 logger = logging.getLogger(__name__)
 
 CREATIVE_BLUEPRINT_V2_SCHEMA_VERSION = "creative_blueprint_v2"
+
+# UI-facing name only; do not apply to image_prompt / negative_prompt / immutable_constraints.
+_ASSET_DISPLAY_NAME_SUFFIXES: tuple[str, ...] = (
+    "character reference",
+    "scene reference",
+    "product reference",
+    "reference image",
+    "asset reference",
+    "参考图",
+    "资产参考",
+    "参考",
+)
+
+
+def normalize_asset_display_name(raw: str) -> str:
+    """Strip trailing purpose suffixes from S2 display_name (non-creative normalization for DB name)."""
+    s = str(raw or "").strip()
+    if not s:
+        return ""
+    original = s
+    for _ in range(24):
+        before = s
+        for suf in sorted(_ASSET_DISPLAY_NAME_SUFFIXES, key=len, reverse=True):
+            if any("\u4e00" <= c <= "\u9fff" for c in suf):
+                if s.endswith(suf):
+                    s = s[: -len(suf)].rstrip()
+                    break
+            else:
+                pat = rf"(?i)\s*{re.escape(suf)}\s*$"
+                if re.search(pat, s):
+                    s = re.sub(pat, "", s).rstrip()
+                    break
+        else:
+            m = re.search(r"(?i)(.+?)(\s+)reference\s*$", s)
+            if m and m.group(1).strip():
+                s = m.group(1).rstrip()
+        if s == before:
+            break
+    s = s.strip()
+    return s if s else original
 
 
 def is_creative_blueprint_v2_project(blueprint: StoryBlueprintSchema) -> bool:
@@ -209,7 +250,7 @@ def build_v2_asset_specs_bundle(*, project_id: int, blueprint: StoryBlueprintSch
         kind = str(spec.asset_kind or "").strip().lower()
         ak = str(spec.asset_key or "").strip()
         lk = str(spec.linked_entity_key or "").strip()
-        display = str(spec.display_name or "").strip() or ak
+        display = normalize_asset_display_name(str(spec.display_name or "").strip()) or ak
         ip = str(spec.image_prompt or "").strip()
         np = str(spec.negative_prompt or "").strip()
         ic = list(spec.immutable_constraints or [])

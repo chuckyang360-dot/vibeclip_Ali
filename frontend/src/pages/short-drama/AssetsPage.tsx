@@ -5,8 +5,8 @@ import { AssetLightbox, type LightboxItem } from './components/AssetLightbox';
 import { AssetInteractionModal, type AssetEditorPayload, type AssetInteractionEntity, type AssetKind } from './components/AssetInteractionModal';
 import { useEffectiveShortDramaProjectId } from './hooks/useEffectiveShortDramaProjectId';
 import { ShortDramaApiError, analyzeShortDramaAssetReferenceImage, createShortDramaAssetFromImage, createShortDramaAssetLibrary, generateShortDramaAssetImages, generateShortDramaAssetSpecs, getShortDramaAssetLibraryDetail, getShortDramaPipeline, listShortDramaAssetLibrary, regenerateShortDramaAssetLibrary, touchShortDramaProjectStep, updateShortDramaAssetLibrary } from '@/services/shortDramaApi';
-import type { AssetImageDto, AssetLibraryItemDto, PipelineSummaryDto } from '@/types/shortDramaApi';
-import { getAssetThumbnailUrl, resolveAssetImageUrl } from './utils/assetsPageAdapters';
+import type { AssetImageDto, AssetLibraryItemDto, PipelineSummaryDto, ShortDramaProjectDto } from '@/types/shortDramaApi';
+import { getAssetThumbnailUrl, normalizeAssetDisplayName, resolveAssetImageUrl } from './utils/assetsPageAdapters';
 import { withProjectQuery } from './utils/shortDramaRoutes';
 import { buildRawStructureSnapshot, buildStructureSummary, resolveAssetRoleLabel, resolveAssetSourceLabel, resolveNarrativeFunctionLabel, resolveTypeFields, resolveVisualAnchorImageId } from './utils/assetSpecDisplay';
 import { getCachedShortDramaPipeline, setCachedShortDramaPipeline } from './utils/shortDramaPipelineCache';
@@ -18,6 +18,259 @@ type AddDraft = { name: string; prompt: string };
 const SUPPORTED_IMAGE_TYPES = new Set(['image/jpeg', 'image/png', 'image/webp']);
 const SUPPORTED_IMAGE_ACCEPT = 'image/jpeg,image/png,image/webp';
 const UNSUPPORTED_IMAGE_MESSAGE = '当前图片格式暂不支持，请上传 JPG、PNG 或 WebP 图片。';
+
+const S3_ASSET_PIPELINE_STAGES = new Set(['s3_assets', 's3_images']);
+
+function readProjectTaskRunning(project: ShortDramaProjectDto | undefined): boolean {
+  if (!project) return false;
+  if (typeof project.task_running === 'boolean') return project.task_running;
+  return false;
+}
+
+function isS3AssetPipelineStage(stage: string): boolean {
+  return S3_ASSET_PIPELINE_STAGES.has(stage.trim().toLowerCase());
+}
+
+function inferS3AssetGeneratingFromPipeline(params: {
+  rawStatus: string;
+  effectiveStatus: string;
+  currentStage: string;
+  projectTaskRunning: boolean;
+  overallStatus: string;
+}): boolean {
+  const raw = params.rawStatus.trim().toLowerCase();
+  const eff = params.effectiveStatus.trim().toLowerCase();
+  const stage = params.currentStage.trim().toLowerCase();
+  const s3 = isS3AssetPipelineStage(stage);
+  const overall = params.overallStatus.trim().toLowerCase();
+  if (eff === 'assets_rendering') return true;
+  if (params.projectTaskRunning && s3) return true;
+  if (s3 && (raw === 'processing' || eff === 'processing')) return true;
+  if (overall === 'generating' && s3) return true;
+  return false;
+}
+
+function failedStageLooksLikeS3Assets(failedStage: string): boolean {
+  const s = failedStage.trim().toLowerCase();
+  if (!s) return false;
+  if (s.includes('s4')) return false;
+  return isS3AssetPipelineStage(s) || s.includes('s3_assets') || s.includes('s3_images') || (s.includes('s3') && s.includes('asset'));
+}
+
+/** 项目已进入/超过 S3 相关路径：有剧本蓝图、已到 step_3+、或 effective 已过 story 等 */
+function pipelineProjectAtOrPastS3Entry(params: {
+  lastActiveStep: string;
+  hasStoryBlueprint: boolean;
+  effectiveStatus: string;
+  stepStatus: Record<string, string>;
+  currentStage: string;
+}): boolean {
+  const las = (params.lastActiveStep || '').trim().toLowerCase();
+  if (las === 'step_3' || las === 'step_4' || las === 'overview') return true;
+  if (params.hasStoryBlueprint) return true;
+  const eff = (params.effectiveStatus || '').trim().toLowerCase();
+  const postStory = new Set([
+    'story_generated',
+    'asset_specs_generated',
+    'assets_rendering',
+    'assets_ready',
+    'segments_generated',
+    'segment_scripts_generated',
+    'video_rendering',
+    'completed',
+  ]);
+  if (postStory.has(eff)) return true;
+  if (isS3AssetPipelineStage(String(params.currentStage || '').trim().toLowerCase())) return true;
+  const s3 = String(params.stepStatus.step_3 || '').trim().toLowerCase();
+  if (s3 === 'generating' || s3 === 'completed' || s3 === 'stale' || s3 === 'failed') return true;
+  return false;
+}
+
+/**
+ * S3 资产网格区 UI：仅此函数决策 waiting / ready / empty / failed，优先级固定。
+ * 1) 当前 tab 有行 → ready
+ * 2) 已确认 pipeline 失败 → failed
+ * 3) 项目已进入/超过 S3 且当前 tab 无行 → waiting（含生成中、同步延迟；不含已确认失败）
+ * 4) 其余 → empty（未进入 S3 或尚无剧本进度等）
+ */
+export type S3AssetGridUiState = 'waiting' | 'ready' | 'empty' | 'failed';
+
+export function getS3AssetUiState(input: {
+  currentTabRowCount: number;
+  confirmedS3PipelineFailure: boolean;
+  atOrPastS3: boolean;
+}): S3AssetGridUiState {
+  if (input.currentTabRowCount > 0) return 'ready';
+  if (input.confirmedS3PipelineFailure) return 'failed';
+  if (input.atOrPastS3) return 'waiting';
+  return 'empty';
+}
+
+/** 轮询与资产卡封面「生成中」：仅供数据刷新与行内封面态，不参与网格四态分支。 */
+function computeS3PipelineWorkInProgress(input: {
+  listedAssetTotal: number;
+  pipelineAssetRowsTotal: number;
+  pipelineRawStatus: string;
+  pipelineEffectiveStatus: string;
+  pipelineCurrentStage: string;
+  pipelineTaskRunning: boolean;
+  pipelineOverallStatus: string;
+  autoPhase: Step3AutoPhase;
+}): boolean {
+  const pipelineGen = inferS3AssetGeneratingFromPipeline({
+    rawStatus: input.pipelineRawStatus,
+    effectiveStatus: input.pipelineEffectiveStatus,
+    currentStage: input.pipelineCurrentStage,
+    projectTaskRunning: input.pipelineTaskRunning,
+    overallStatus: input.pipelineOverallStatus,
+  });
+  const listed0 = input.listedAssetTotal === 0;
+  const autoBootstrap =
+    listed0
+    && (input.autoPhase === 'checking' || input.autoPhase === 'generating_specs' || input.autoPhase === 'generating_images');
+  const listSyncHint =
+    listed0
+    && input.pipelineAssetRowsTotal > 0
+    && (input.pipelineRawStatus.trim().toLowerCase() === 'processing'
+      || input.pipelineEffectiveStatus.trim().toLowerCase() === 'processing');
+  return pipelineGen || autoBootstrap || listSyncHint;
+}
+
+/** 连续 pipeline 快照均满足时才累计 streak；与 computeS3PipelineWorkInProgress 互斥，避免误判 */
+const S3_PIPELINE_FAILURE_STREAK_THRESHOLD = 3;
+
+function isS3PipelineFailureStreakCandidate(params: {
+  listedAssetTotal: number;
+  pipelineAssetRowsTotal: number;
+  pipelineTaskRunning: boolean;
+  pipelineFailedStage: string;
+  pipelineRawStatus: string;
+  pipelineEffectiveStatus: string;
+  pipelineCurrentStage: string;
+  pipelineOverallStatus: string;
+  pipelineStepStatus: Record<string, string>;
+}): boolean {
+  if (params.listedAssetTotal > 0 || params.pipelineAssetRowsTotal > 0) return false;
+  if (params.pipelineTaskRunning) return false;
+  if (!failedStageLooksLikeS3Assets(params.pipelineFailedStage)) return false;
+  const raw = params.pipelineRawStatus.trim().toLowerCase();
+  const eff = params.pipelineEffectiveStatus.trim().toLowerCase();
+  const step3Failed =
+    String(params.pipelineStepStatus.step_3 || '').toLowerCase() === 'failed'
+    || String(params.pipelineStepStatus.assets || '').toLowerCase() === 'failed';
+  const statusFailed = raw === 'failed' || eff === 'failed';
+  if (!statusFailed && !step3Failed) return false;
+  if (
+    inferS3AssetGeneratingFromPipeline({
+      rawStatus: params.pipelineRawStatus,
+      effectiveStatus: params.pipelineEffectiveStatus,
+      currentStage: params.pipelineCurrentStage,
+      projectTaskRunning: params.pipelineTaskRunning,
+      overallStatus: params.pipelineOverallStatus,
+    })
+  ) {
+    return false;
+  }
+  return true;
+}
+
+function bumpS3PipelineFailureStreak(
+  p: PipelineSummaryDto,
+  listedTotal: number,
+  streakRef: { current: number },
+  setConfirmed: (v: boolean) => void,
+  confirmedRef: { current: boolean },
+): void {
+  const rows = Number(p.asset_rows_total || 0);
+  const taskRunning = readProjectTaskRunning(p.project);
+  const failedStage = String(p.project?.failed_stage || '');
+  const raw = String(p.project?.status || '');
+  const eff = String(p.project?.effective_status || p.project?.suggested_status || p.project?.status || '');
+  const stage = String(p.project?.current_stage || '');
+  const overall = String(p.project?.overall_status || '');
+  const stepStatus = (p.project?.step_status || {}) as Record<string, string>;
+  if (listedTotal > 0 || rows > 0 || taskRunning) {
+    streakRef.current = 0;
+    confirmedRef.current = false;
+    setConfirmed(false);
+    return;
+  }
+  const candidate = isS3PipelineFailureStreakCandidate({
+    listedAssetTotal: listedTotal,
+    pipelineAssetRowsTotal: rows,
+    pipelineTaskRunning: taskRunning,
+    pipelineFailedStage: failedStage,
+    pipelineRawStatus: raw,
+    pipelineEffectiveStatus: eff,
+    pipelineCurrentStage: stage,
+    pipelineOverallStatus: overall,
+    pipelineStepStatus: stepStatus,
+  });
+  if (candidate) {
+    streakRef.current += 1;
+    if (streakRef.current >= S3_PIPELINE_FAILURE_STREAK_THRESHOLD) {
+      confirmedRef.current = true;
+      setConfirmed(true);
+    }
+  } else {
+    streakRef.current = 0;
+    confirmedRef.current = false;
+    setConfirmed(false);
+  }
+}
+
+function shouldContinuePipelinePolling(
+  p: PipelineSummaryDto,
+  opts: {
+    listedTotalRef: { current: number };
+    autoPhaseRef: { current: Step3AutoPhase };
+    confirmedFailureRef: { current: boolean };
+  },
+): boolean {
+  const listed = opts.listedTotalRef.current;
+  const rows = Number(p.asset_rows_total || 0);
+  const snap = {
+    rawStatus: String(p.project?.status || ''),
+    effectiveStatus: String(p.project?.effective_status || p.project?.suggested_status || p.project?.status || ''),
+    currentStage: String(p.project?.current_stage || ''),
+    projectTaskRunning: readProjectTaskRunning(p.project),
+    overallStatus: String(p.project?.overall_status || ''),
+  };
+  if (inferS3AssetGeneratingFromPipeline(snap)) return true;
+  if (listed === 0 && rows > 0) {
+    const rawLo = snap.rawStatus.trim().toLowerCase();
+    const effLo = snap.effectiveStatus.trim().toLowerCase();
+    if (rawLo === 'processing' || effLo === 'processing') return true;
+  }
+  const ap = opts.autoPhaseRef.current;
+  if (listed === 0 && (ap === 'checking' || ap === 'generating_specs' || ap === 'generating_images')) return true;
+  if (opts.confirmedFailureRef.current) return false;
+  if (listed > 0 || rows > 0) return false;
+  const effTerminal = String(p.project?.effective_status || p.project?.suggested_status || p.project?.status || '').trim().toLowerCase();
+  const pipelineTerminalS3 = ['assets_ready', 'segments_generated', 'completed'].includes(effTerminal);
+  const atPastSnapshot = pipelineProjectAtOrPastS3Entry({
+    lastActiveStep: String(p.project?.last_active_step || ''),
+    hasStoryBlueprint: Boolean(p.has_story_blueprint),
+    effectiveStatus: String(p.project?.effective_status || p.project?.suggested_status || p.project?.status || ''),
+    stepStatus: (p.project?.step_status || {}) as Record<string, string>,
+    currentStage: String(p.project?.current_stage || ''),
+  });
+  if (!opts.confirmedFailureRef.current && listed === 0 && rows === 0 && atPastSnapshot && !pipelineTerminalS3) {
+    return true;
+  }
+  if (readProjectTaskRunning(p.project)) return false;
+  const failedStage = String(p.project?.failed_stage || '');
+  if (!failedStageLooksLikeS3Assets(failedStage)) return false;
+  const rawLo = snap.rawStatus.trim().toLowerCase();
+  const effLo = snap.effectiveStatus.trim().toLowerCase();
+  const step = (p.project?.step_status || {}) as Record<string, string>;
+  const stepFail =
+    String(step.step_3 || '').toLowerCase() === 'failed'
+    || String(step.assets || '').toLowerCase() === 'failed';
+  if (!(rawLo === 'failed' || effLo === 'failed' || stepFail)) return false;
+  if (inferS3AssetGeneratingFromPipeline(snap)) return false;
+  return true;
+}
 
 const toKind = (assetType: string): AssetKind => (assetType === 'scene' ? 'scene' : assetType === 'product' ? 'product' : 'character');
 const tabToKind = (tab: TabType): AssetKind => (tab === 'scenes' ? 'scene' : tab === 'assets' ? 'product' : 'character');
@@ -123,16 +376,21 @@ const SCENE_PLOT_STATE_TERMS = [
 ];
 
 function displayAssetName(row: AssetLibraryItemDto): string {
-  if (row.asset_type !== 'scene') return normalizeSceneDisplayName(row.name);
+  const finalize = (inner: string) => {
+    const t = String(inner || '').trim();
+    const n = normalizeAssetDisplayName(t);
+    return n || t;
+  };
+  if (row.asset_type !== 'scene') return finalize(normalizeSceneDisplayName(row.name));
   const identity = row.extra && typeof row.extra === 'object' ? (row.extra as Record<string, unknown>).location_identity || (row.extra as Record<string, unknown>).asset_identity : null;
-  if (typeof identity === 'string' && identity.trim()) return identity.trim();
+  if (typeof identity === 'string' && identity.trim()) return finalize(identity.trim());
   let out = row.name || '';
   for (const term of SCENE_PLOT_STATE_TERMS) {
     out = out.replace(new RegExp(`\\b${term}\\b`, 'gi'), ' ').replace(new RegExp(term, 'g'), ' ');
   }
   out = out.replace(/\s+/g, ' ').trim();
-  if (/home\s+gym/i.test(`${row.name} ${row.description ?? ''}`) || `${row.name} ${row.description ?? ''}`.includes('健身房')) return '家庭健身房';
-  return normalizeSceneDisplayName(out || '场景');
+  if (/home\s+gym/i.test(`${row.name} ${row.description ?? ''}`) || `${row.name} ${row.description ?? ''}`.includes('健身房')) return finalize('家庭健身房');
+  return finalize(normalizeSceneDisplayName(out || '场景'));
 }
 
 function assetCoverImageClass(row: AssetLibraryItemDto): string {
@@ -314,7 +572,7 @@ function pipelineAssetsToCachedCards(pipeline: PipelineSummaryDto): Record<TabTy
     characters: assets.characters.map((c, idx) => ({
       id: c.id,
       asset_type: 'character',
-      name: c.name,
+      name: normalizeAssetDisplayName(String(c.name || '').trim()) || c.name,
       description: c.description,
       base_prompt: c.visual_prompt,
       ...base,
@@ -325,7 +583,7 @@ function pipelineAssetsToCachedCards(pipeline: PipelineSummaryDto): Record<TabTy
     scenes: assets.scenes.map((s, idx) => ({
       id: s.id,
       asset_type: 'scene',
-      name: s.name,
+      name: normalizeAssetDisplayName(String(s.name || '').trim()) || s.name,
       description: s.description,
       base_prompt: s.visual_prompt,
       ...base,
@@ -336,7 +594,7 @@ function pipelineAssetsToCachedCards(pipeline: PipelineSummaryDto): Record<TabTy
     assets: assets.products.map((p, idx) => ({
       id: p.id,
       asset_type: 'product',
-      name: p.name,
+      name: normalizeAssetDisplayName(String(p.name || '').trim()) || p.name,
       description: p.description,
       base_prompt: p.visual_prompt,
       ...base,
@@ -370,9 +628,12 @@ export function ShortDramaAssetsPage() {
   const [pipelineOverallStatus, setPipelineOverallStatus] = useState<string>('');
   const [pipelineCurrentStage, setPipelineCurrentStage] = useState<string>('');
   const [pipelineTaskRunning, setPipelineTaskRunning] = useState(false);
+  const [pipelineFailedStage, setPipelineFailedStage] = useState('');
   const [pipelineAssetRowsTotal, setPipelineAssetRowsTotal] = useState(0);
   const [pipelineImageUrlFilled, setPipelineImageUrlFilled] = useState(0);
   const [pipelineStepStatus, setPipelineStepStatus] = useState<Record<string, string>>({});
+  const [pipelineLastActiveStep, setPipelineLastActiveStep] = useState<string>('');
+  const [pipelineHasStoryBlueprint, setPipelineHasStoryBlueprint] = useState(false);
   const [imageLoadFailedIds, setImageLoadFailedIds] = useState<Set<number>>(() => new Set());
   const [imageGenerationFailedIds, setImageGenerationFailedIds] = useState<Set<number>>(() => new Set());
   const [analyzingAssetIds, setAnalyzingAssetIds] = useState<Set<number>>(() => new Set());
@@ -383,6 +644,25 @@ export function ShortDramaAssetsPage() {
   const autoRunProjectRef = useRef<number | null>(null);
   const pipelinePollFailureRef = useRef(0);
   const pipelinePollAbortRef = useRef<AbortController | null>(null);
+  const pipelinePollIntervalRef = useRef(0);
+  /** 连续若干次 pipeline 快照均满足「S3 资产阶段失败候选」才展示失败卡，避免短暂 failed 误判 */
+  const s3FailureStreakRef = useRef(0);
+  const [confirmedS3PipelineFailure, setConfirmedS3PipelineFailure] = useState(false);
+  const listedAssetTotalRef = useRef(0);
+  const confirmedS3PipelineFailureRef = useRef(false);
+  const autoPhaseRef = useRef<Step3AutoPhase>(autoPhase);
+  useEffect(() => {
+    autoPhaseRef.current = autoPhase;
+  }, [autoPhase]);
+  useEffect(() => {
+    confirmedS3PipelineFailureRef.current = confirmedS3PipelineFailure;
+  }, [confirmedS3PipelineFailure]);
+  useEffect(() => {
+    if (!toPositiveInt(effectiveProjectId)) return;
+    s3FailureStreakRef.current = 0;
+    confirmedS3PipelineFailureRef.current = false;
+    setConfirmedS3PipelineFailure(false);
+  }, [effectiveProjectId]);
 
   const hasVisibleAssets = useMemo(
     () => data.characters.length > 0 || data.scenes.length > 0 || data.assets.length > 0,
@@ -406,11 +686,19 @@ export function ShortDramaAssetsPage() {
         listShortDramaAssetLibrary(effectiveProjectId, 'scene'),
         listShortDramaAssetLibrary(effectiveProjectId, 'product'),
       ]);
-      setData({
+      const nextData = {
         characters: characters.assets.map(normalizeLibraryItem).filter((x): x is AssetLibraryItemDto => x !== null),
         scenes: scenes.assets.map(normalizeLibraryItem).filter((x): x is AssetLibraryItemDto => x !== null),
         assets: products.assets.map(normalizeLibraryItem).filter((x): x is AssetLibraryItemDto => x !== null),
-      });
+      };
+      const total = nextData.characters.length + nextData.scenes.length + nextData.assets.length;
+      listedAssetTotalRef.current = total;
+      if (total > 0) {
+        s3FailureStreakRef.current = 0;
+        confirmedS3PipelineFailureRef.current = false;
+        setConfirmedS3PipelineFailure(false);
+      }
+      setData(nextData);
       setImageLoadFailedIds(new Set());
     } catch (e) {
       setError(e instanceof Error ? e.message : '加载失败');
@@ -418,6 +706,21 @@ export function ShortDramaAssetsPage() {
       if (!background) setInitialLoading(false);
     }
   }, [effectiveProjectId]);
+
+  const applyPipelineSnapshot = useCallback((p: PipelineSummaryDto) => {
+    const pr = p.project;
+    setPipelineEffectiveStatus(String(pr?.effective_status || pr?.suggested_status || pr?.status || ''));
+    setPipelineRawStatus(String(pr?.status || ''));
+    setPipelineOverallStatus(String(pr?.overall_status || ''));
+    setPipelineStepStatus((pr?.step_status || {}) as Record<string, string>);
+    setPipelineCurrentStage(String(pr?.current_stage || ''));
+    setPipelineTaskRunning(readProjectTaskRunning(pr));
+    setPipelineFailedStage(String(pr?.failed_stage || ''));
+    setPipelineAssetRowsTotal(Number(p.asset_rows_total || 0));
+    setPipelineImageUrlFilled(Number(p.image_url_filled || 0));
+    setPipelineLastActiveStep(String(pr?.last_active_step || ''));
+    setPipelineHasStoryBlueprint(Boolean(p.has_story_blueprint));
+  }, []);
 
   useEffect(() => {
     const projectId = toPositiveInt(effectiveProjectId);
@@ -435,15 +738,8 @@ export function ShortDramaAssetsPage() {
       if (hasExisting) return prev;
       return pipelineAssetsToCachedCards(cached);
     });
-    setPipelineEffectiveStatus(String(cached.project?.effective_status || cached.project?.suggested_status || cached.project?.status || ''));
-    setPipelineRawStatus(String(cached.project?.status || ''));
-    setPipelineOverallStatus(String(cached.project?.overall_status || ''));
-    setPipelineStepStatus((cached.project?.step_status || {}) as Record<string, string>);
-    setPipelineCurrentStage(String(cached.project?.current_stage || ''));
-    setPipelineTaskRunning(Boolean(cached.project?.current_stage));
-    setPipelineAssetRowsTotal(Number(cached.asset_rows_total || 0));
-    setPipelineImageUrlFilled(Number(cached.image_url_filled || 0));
-  }, [effectiveProjectId]);
+    applyPipelineSnapshot(cached);
+  }, [effectiveProjectId, applyPipelineSnapshot, hasVisibleAssets]);
 
   useEffect(() => {
     const run = async () => {
@@ -465,14 +761,7 @@ export function ShortDramaAssetsPage() {
         setCachedShortDramaPipeline(projectId, pipeline);
         console.info('[CACHE_PIPELINE_REFRESH_SUCCESS]', { projectId, sourcePage: 'step3', durationMs: Math.round(performance.now() - startedAt) });
         setInitialLoading(false);
-        setPipelineEffectiveStatus(String(pipeline.project?.effective_status || pipeline.project?.suggested_status || pipeline.project?.status || ''));
-        setPipelineRawStatus(String(pipeline.project?.status || ''));
-        setPipelineOverallStatus(String(pipeline.project?.overall_status || ''));
-        setPipelineStepStatus((pipeline.project?.step_status || {}) as Record<string, string>);
-        setPipelineCurrentStage(String(pipeline.project?.current_stage || ''));
-        setPipelineTaskRunning(Boolean(pipeline.project?.current_stage));
-        setPipelineAssetRowsTotal(Number(pipeline.asset_rows_total || 0));
-        setPipelineImageUrlFilled(Number(pipeline.image_url_filled || 0));
+        applyPipelineSnapshot(pipeline);
         console.info('[S3_EFFECTIVE_STATUS_CHECK]', {
           project_id: projectId,
           status: String(pipeline.project?.status || ''),
@@ -500,14 +789,7 @@ export function ShortDramaAssetsPage() {
 
         let pipelineAfterSpecs = await getShortDramaPipeline(projectId);
         setCachedShortDramaPipeline(projectId, pipelineAfterSpecs);
-        setPipelineEffectiveStatus(String(pipelineAfterSpecs.project?.effective_status || pipelineAfterSpecs.project?.suggested_status || pipelineAfterSpecs.project?.status || ''));
-        setPipelineRawStatus(String(pipelineAfterSpecs.project?.status || ''));
-        setPipelineOverallStatus(String(pipelineAfterSpecs.project?.overall_status || ''));
-        setPipelineStepStatus((pipelineAfterSpecs.project?.step_status || {}) as Record<string, string>);
-        setPipelineCurrentStage(String(pipelineAfterSpecs.project?.current_stage || ''));
-        setPipelineTaskRunning(Boolean(pipelineAfterSpecs.project?.current_stage));
-        setPipelineAssetRowsTotal(Number(pipelineAfterSpecs.asset_rows_total || 0));
-        setPipelineImageUrlFilled(Number(pipelineAfterSpecs.image_url_filled || 0));
+        applyPipelineSnapshot(pipelineAfterSpecs);
         const effectiveAfterSpecs = String(
           pipelineAfterSpecs.project?.effective_status || pipelineAfterSpecs.project?.suggested_status || pipelineAfterSpecs.project?.status || '',
         );
@@ -519,26 +801,20 @@ export function ShortDramaAssetsPage() {
           setImageGenerationFailedIds(extractFailedAssetIds(imageResult.errors));
           pipelineAfterSpecs = await getShortDramaPipeline(projectId);
           setCachedShortDramaPipeline(projectId, pipelineAfterSpecs);
-          setPipelineEffectiveStatus(String(pipelineAfterSpecs.project?.effective_status || pipelineAfterSpecs.project?.suggested_status || pipelineAfterSpecs.project?.status || ''));
-          setPipelineRawStatus(String(pipelineAfterSpecs.project?.status || ''));
-          setPipelineOverallStatus(String(pipelineAfterSpecs.project?.overall_status || ''));
-          setPipelineStepStatus((pipelineAfterSpecs.project?.step_status || {}) as Record<string, string>);
-          setPipelineCurrentStage(String(pipelineAfterSpecs.project?.current_stage || ''));
-          setPipelineTaskRunning(Boolean(pipelineAfterSpecs.project?.current_stage));
-          setPipelineAssetRowsTotal(Number(pipelineAfterSpecs.asset_rows_total || 0));
-          setPipelineImageUrlFilled(Number(pipelineAfterSpecs.image_url_filled || 0));
+          applyPipelineSnapshot(pipelineAfterSpecs);
         }
 
         const effectiveAfterImages = String(
           pipelineAfterSpecs.project?.effective_status || pipelineAfterSpecs.project?.suggested_status || pipelineAfterSpecs.project?.status || '',
         );
-        if (effectiveAfterImages === 'assets_rendering' || (effectiveAfterImages === 'processing' && String(pipelineAfterSpecs.project?.current_stage || '') === 's3_images')) {
+        const stageAfterImages = String(pipelineAfterSpecs.project?.current_stage || '');
+        if (effectiveAfterImages === 'assets_rendering' || (effectiveAfterImages === 'processing' && isS3AssetPipelineStage(stageAfterImages))) {
           setAutoPhase('generating_images');
           setAutoHint('资产图片生成中，正在同步进度…');
         }
 
         await reload({ background: true, reason: 'auto_flow' });
-        if (effectiveAfterImages === 'assets_rendering' || (effectiveAfterImages === 'processing' && String(pipelineAfterSpecs.project?.current_stage || '') === 's3_images')) {
+        if (effectiveAfterImages === 'assets_rendering' || (effectiveAfterImages === 'processing' && isS3AssetPipelineStage(stageAfterImages))) {
           setAutoPhase('generating_images');
         } else {
           setAutoPhase('ready');
@@ -551,13 +827,16 @@ export function ShortDramaAssetsPage() {
         });
         setAutoPhase('error');
         setAutoHint('资产自动生成失败，请点击重试或刷新页面。');
+        s3FailureStreakRef.current = 0;
+        confirmedS3PipelineFailureRef.current = false;
+        setConfirmedS3PipelineFailure(false);
         await reload({ background: true, reason: 'auto_flow_error_fallback' });
       } finally {
         if (autoRunProjectRef.current === projectId) autoRunProjectRef.current = null;
       }
     };
     void run();
-  }, [effectiveProjectId, reload]);
+  }, [effectiveProjectId, reload, applyPipelineSnapshot]);
 
   const openDetail = useCallback(async (rawAssetId: unknown, cardRow?: AssetLibraryItemDto) => {
     const projectId = toPositiveInt(effectiveProjectId);
@@ -694,14 +973,63 @@ export function ShortDramaAssetsPage() {
 
   const createLabel = activeTab === 'characters' ? '添加角色' : activeTab === 'scenes' ? '添加场景' : '添加产品';
   const currentRows = data[activeTab];
-  const isAssetGenerationRunning =
-    pipelineEffectiveStatus === 'assets_rendering'
-    || (pipelineRawStatus === 'processing' && pipelineCurrentStage === 's3_images' && pipelineTaskRunning);
-  const isAssetGenerationFailed =
-    autoPhase === 'error'
-    || pipelineOverallStatus === 'failed'
-    || String(pipelineStepStatus.step_3 || '').toLowerCase() === 'failed'
+  const listedAssetTotal = data.characters.length + data.scenes.length + data.assets.length;
+
+  const workInProgress = computeS3PipelineWorkInProgress({
+    listedAssetTotal,
+    pipelineAssetRowsTotal,
+    pipelineRawStatus,
+    pipelineEffectiveStatus,
+    pipelineCurrentStage,
+    pipelineTaskRunning,
+    pipelineOverallStatus,
+    autoPhase,
+  });
+
+  const step3Failed =
+    String(pipelineStepStatus.step_3 || '').toLowerCase() === 'failed'
     || String(pipelineStepStatus.assets || '').toLowerCase() === 'failed';
+  const rawFailedHint = pipelineRawStatus.trim().toLowerCase() === 'failed';
+  const effFailedHint = pipelineEffectiveStatus.trim().toLowerCase() === 'failed';
+
+  const pipelineFailureWatchActive =
+    !confirmedS3PipelineFailure
+    && listedAssetTotal === 0
+    && pipelineAssetRowsTotal === 0
+    && failedStageLooksLikeS3Assets(pipelineFailedStage)
+    && (rawFailedHint || effFailedHint || step3Failed);
+
+  const effLower = pipelineEffectiveStatus.trim().toLowerCase();
+  const atOrPastS3Story = pipelineProjectAtOrPastS3Entry({
+    lastActiveStep: pipelineLastActiveStep,
+    hasStoryBlueprint: pipelineHasStoryBlueprint,
+    effectiveStatus: pipelineEffectiveStatus,
+    stepStatus: pipelineStepStatus,
+    currentStage: pipelineCurrentStage,
+  });
+
+  const pipelineS3AssetsTerminal = ['assets_ready', 'segments_generated', 'completed'].includes(effLower);
+
+  const shouldPollPipeline =
+    Boolean(toPositiveInt(effectiveProjectId))
+    && (
+      workInProgress
+      || pipelineFailureWatchActive
+      || (listedAssetTotal === 0 && pipelineAssetRowsTotal > 0 && !confirmedS3PipelineFailure)
+      || (
+        listedAssetTotal === 0
+        && !confirmedS3PipelineFailure
+        && atOrPastS3Story
+        && !pipelineS3AssetsTerminal
+      )
+    );
+
+  const s3AssetGridUi = getS3AssetUiState({
+    currentTabRowCount: currentRows.length,
+    confirmedS3PipelineFailure,
+    atOrPastS3: atOrPastS3Story,
+  });
+
   const hasVisibleAssetImages = useMemo(() => {
     const tabsRows = [...data.characters, ...data.scenes, ...data.assets];
     return tabsRows.some((row) => {
@@ -710,11 +1038,7 @@ export function ShortDramaAssetsPage() {
       return activeRenderableImages(row).length > 0;
     });
   }, [data]);
-  const shouldShowGeneratingCard = isAssetGenerationRunning && !hasVisibleAssetImages && currentRows.length === 0;
-  const showSpecSkeletonCards = shouldShowGeneratingCard;
-  const showFailureCard = isAssetGenerationFailed && currentRows.length === 0;
-  const showEmptyStateCard = !showSpecSkeletonCards && !showFailureCard && currentRows.length === 0;
-  const showAddCard = !showSpecSkeletonCards && !showFailureCard;
+
   const tabs = useMemo(() => ([
     { key: 'characters' as const, label: '角色', count: data.characters.length, icon: 'ri-user-star-line' },
     { key: 'scenes' as const, label: '场景', count: data.scenes.length, icon: 'ri-landscape-line' },
@@ -723,97 +1047,106 @@ export function ShortDramaAssetsPage() {
 
   useEffect(() => {
     const projectId = toPositiveInt(effectiveProjectId);
-    const shouldPoll = Boolean(projectId) && isAssetGenerationRunning;
     console.info('[S3_POLLING_DECISION]', {
       projectId: projectId ?? null,
-      effectiveStatus: pipelineEffectiveStatus,
-      rawStatus: pipelineRawStatus,
-      currentStage: pipelineCurrentStage,
-      taskRunning: pipelineTaskRunning,
-      isAssetGenerationRunning,
-      shouldPoll,
+      shouldPollPipeline,
+      workInProgress,
+      pipelineFailureWatchActive,
     });
-    if (!projectId || !isAssetGenerationRunning) {
+    if (!projectId || !shouldPollPipeline) {
+      if (pipelinePollIntervalRef.current) {
+        window.clearInterval(pipelinePollIntervalRef.current);
+        pipelinePollIntervalRef.current = 0;
+      }
       console.info('[S3_POLLING_STOP]', {
         projectId: projectId ?? null,
         reason: !projectId ? 'no_project' : 'should_poll_false',
       });
-      return;
+      return undefined;
     }
+
+    const pollOpts = {
+      listedTotalRef: listedAssetTotalRef,
+      autoPhaseRef,
+      confirmedFailureRef: confirmedS3PipelineFailureRef,
+    };
+
+    const tick = async (): Promise<boolean> => {
+      try {
+        pipelinePollAbortRef.current?.abort();
+        const ctrl = new AbortController();
+        pipelinePollAbortRef.current = ctrl;
+        const p = await getShortDramaPipeline(projectId, { signal: ctrl.signal, lightweight: true });
+        setCachedShortDramaPipeline(projectId, p);
+        applyPipelineSnapshot(p);
+        pipelinePollFailureRef.current = 0;
+
+        await reload({ background: true, reason: 'polling' });
+        bumpS3PipelineFailureStreak(p, listedAssetTotalRef.current, s3FailureStreakRef, setConfirmedS3PipelineFailure, confirmedS3PipelineFailureRef);
+
+        console.info('[S3_EFFECTIVE_STATUS_CHECK]', {
+          project_id: projectId,
+          status: String(p.project?.status || ''),
+          effective_status: String(p.project?.effective_status || p.project?.suggested_status || p.project?.status || ''),
+          current_stage: String(p.project?.current_stage || ''),
+          status_recoverable: Boolean(p.project?.status_recoverable),
+          asset_rows_total: p.asset_rows_total ?? null,
+          image_url_filled: p.image_url_filled ?? null,
+        });
+
+        const done =
+          p.project?.effective_status === 'assets_ready'
+          || p.project?.effective_status === 'segments_generated'
+          || p.project?.effective_status === 'completed';
+        if (done) setAutoPhase('ready');
+
+        return shouldContinuePipelinePolling(p, pollOpts);
+      } catch {
+        pipelinePollFailureRef.current += 1;
+        if (pipelinePollFailureRef.current >= 5) {
+          console.warn('[S3_PIPELINE_POLL_NETWORK]', { projectId, streak: pipelinePollFailureRef.current });
+        }
+        return true;
+      }
+    };
+
     pipelinePollFailureRef.current = 0;
     console.info('[S3_POLLING_START]', { projectId });
-    const timer = window.setInterval(() => {
-      void (async () => {
-        try {
-          pipelinePollAbortRef.current?.abort();
-          const ctrl = new AbortController();
-          pipelinePollAbortRef.current = ctrl;
-          const p = await getShortDramaPipeline(projectId, { signal: ctrl.signal, lightweight: true });
-          setCachedShortDramaPipeline(projectId, p);
-          setPipelineEffectiveStatus(String(p.project?.effective_status || p.project?.suggested_status || p.project?.status || ''));
-          setPipelineRawStatus(String(p.project?.status || ''));
-          setPipelineOverallStatus(String(p.project?.overall_status || ''));
-          setPipelineStepStatus((p.project?.step_status || {}) as Record<string, string>);
-          setPipelineCurrentStage(String(p.project?.current_stage || ''));
-          setPipelineTaskRunning(Boolean(p.project?.current_stage));
-          setPipelineAssetRowsTotal(Number(p.asset_rows_total || 0));
-          setPipelineImageUrlFilled(Number(p.image_url_filled || 0));
-          pipelinePollFailureRef.current = 0;
-          const runningNow =
-            String(p.project?.effective_status || p.project?.suggested_status || p.project?.status || '') === 'assets_rendering'
-            || (String(p.project?.status || '') === 'processing' && String(p.project?.current_stage || '') === 's3_images' && Boolean(p.project?.current_stage));
-          if (!runningNow) {
-            window.clearInterval(timer);
-            console.info('[S3_POLLING_STOP]', { projectId, reason: 'stage_settled' });
-            return;
+
+    let cancelled = false;
+    void (async () => {
+      const keep = await tick();
+      if (cancelled) return;
+      if (!keep) {
+        console.info('[S3_POLLING_STOP]', { projectId, reason: 'first_tick_done' });
+        return;
+      }
+      pipelinePollIntervalRef.current = window.setInterval(() => {
+        void (async () => {
+          const k = await tick();
+          if (!k && pipelinePollIntervalRef.current) {
+            window.clearInterval(pipelinePollIntervalRef.current);
+            pipelinePollIntervalRef.current = 0;
+            console.info('[S3_POLLING_STOP]', { projectId, reason: 'pipeline_idle' });
           }
-          await reload({ background: true, reason: 'polling' });
-          console.info('[S3_EFFECTIVE_STATUS_CHECK]', {
-            project_id: projectId,
-            status: String(p.project?.status || ''),
-            effective_status: String(p.project?.effective_status || p.project?.suggested_status || p.project?.status || ''),
-            current_stage: String(p.project?.current_stage || ''),
-            status_recoverable: Boolean(p.project?.status_recoverable),
-            asset_rows_total: p.asset_rows_total ?? null,
-            image_url_filled: p.image_url_filled ?? null,
-          });
-          const done =
-            p.project?.effective_status === 'assets_ready'
-            || p.project?.effective_status === 'segments_generated'
-            || p.project?.effective_status === 'completed';
-          if (done) {
-            setAutoPhase('ready');
-          }
-        } catch {
-          pipelinePollFailureRef.current += 1;
-          if (pipelinePollFailureRef.current >= 3) {
-            window.clearInterval(timer);
-            console.info('[S3_POLLING_STOP]', { projectId, reason: 'polling_error_3x' });
-            setAutoPhase('error');
-            setAutoHint('pipeline 轮询连续失败，已自动停止，请稍后重试。');
-          }
-        }
-      })();
-    }, 3000);
+        })();
+      }, 3000);
+    })();
+
     return () => {
-      window.clearInterval(timer);
+      cancelled = true;
+      if (pipelinePollIntervalRef.current) {
+        window.clearInterval(pipelinePollIntervalRef.current);
+        pipelinePollIntervalRef.current = 0;
+      }
       console.info('[S3_POLLING_STOP]', { projectId, reason: 'effect_cleanup' });
       pipelinePollAbortRef.current?.abort();
       pipelinePollAbortRef.current = null;
     };
-  }, [
-    effectiveProjectId,
-    isAssetGenerationRunning,
-    pipelineCurrentStage,
-    pipelineEffectiveStatus,
-    pipelineRawStatus,
-    pipelineTaskRunning,
-    reload,
-  ]);
+  }, [effectiveProjectId, shouldPollPipeline, reload]);
 
   useEffect(() => {
     const projectId = toPositiveInt(effectiveProjectId);
-    const shouldPoll = Boolean(projectId) && isAssetGenerationRunning;
     console.info('[S3_ASSET_RENDER_STATE]', {
       projectId: projectId ?? null,
       rawStatus: pipelineRawStatus,
@@ -823,9 +1156,9 @@ export function ShortDramaAssetsPage() {
       assetRowsTotal: pipelineAssetRowsTotal,
       imageUrlFilled: pipelineImageUrlFilled,
       hasVisibleAssets: hasVisibleAssetImages,
-      isAssetGenerationRunning,
-      shouldShowGeneratingCard,
-      shouldPoll,
+      workInProgress,
+      s3AssetGridUi,
+      shouldPollPipeline,
     });
   }, [
     effectiveProjectId,
@@ -836,8 +1169,9 @@ export function ShortDramaAssetsPage() {
     pipelineAssetRowsTotal,
     pipelineImageUrlFilled,
     hasVisibleAssetImages,
-    isAssetGenerationRunning,
-    shouldShowGeneratingCard,
+    workInProgress,
+    s3AssetGridUi,
+    shouldPollPipeline,
   ]);
 
   const submitAdd = useCallback(async () => {
@@ -933,14 +1267,16 @@ export function ShortDramaAssetsPage() {
           </div>
         </div>
         <div className="px-6 lg:px-10 py-7">
-          {initialLoading && !hasVisibleAssets ? <div className="text-[13px] text-[#8E8E93]">加载中…</div> : null}
+          {initialLoading && !hasVisibleAssets && s3AssetGridUi !== 'waiting' && !error ? (
+            <div className="mb-3 text-[12px] text-[#8E8E93]">加载中…</div>
+          ) : null}
           {error ? <div className="mb-4 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-[13px] text-red-700">{error}</div> : null}
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-5">
             {currentRows.map((row) => {
               const visualAnchor = getAssetThumbnailUrl(row);
               const roleLabel = resolveAssetRoleLabel(row);
               const imageLoadFailed = imageLoadFailedIds.has(row.id);
-              const isImageGenerating = isAssetGenerationRunning && !visualAnchor && !imageLoadFailed;
+              const isImageGenerating = workInProgress && !visualAnchor && !imageLoadFailed;
               const hasFailedImage =
                 !visualAnchor &&
                 (imageGenerationFailedIds.has(row.id) || (row.images ?? []).some((img) => String(img.status || '').toLowerCase() === 'failed'));
@@ -1044,42 +1380,55 @@ export function ShortDramaAssetsPage() {
                 </div>
               );
             })}
-            {showSpecSkeletonCards ? (
-              Array.from({ length: 3 }).map((_, idx) => (
-                <div key={`spec-skeleton-${idx}`} className="flex h-full min-h-[340px] flex-col overflow-hidden rounded-2xl" style={{ background: '#fff', border: '1px solid #EAEAEA' }}>
-                  <div className="flex h-48 items-center justify-center bg-[#ECEDEF]">
-                    <div className="text-center text-[12px] text-[#6E6E73]">
-                      <i className="ri-loader-4-line mb-1 block animate-spin text-[18px]" aria-hidden />
-                      资产规范生成中…
-                    </div>
-                  </div>
-                  <div className="flex flex-1 flex-col p-4">
-                    <div className="h-5 w-2/3 animate-pulse rounded bg-[#ECEDEF]" />
-                    <div className="mt-3 h-4 w-full animate-pulse rounded bg-[#F1F2F4]" />
-                    <div className="mt-2 h-4 w-4/5 animate-pulse rounded bg-[#F1F2F4]" />
-                    <div className="mt-auto pt-3 text-[12px] text-[#6E6E73]">正在准备资产卡片…</div>
-                  </div>
+            {s3AssetGridUi === 'waiting' ? (
+              <div
+                className="flex h-full flex-col self-start overflow-hidden rounded-2xl"
+                style={{ background: '#fff', border: '1px solid #EAEAEA', boxShadow: '0 4px 14px rgba(0,0,0,0.06)' }}
+              >
+                <div className="relative flex h-48 shrink-0 flex-col items-center justify-center overflow-hidden bg-[#ECEDEF] px-4">
+                  <i className="ri-loader-4-line mb-2 block animate-spin text-[22px] text-[#6E6E73]" aria-hidden />
+                  <span className="text-[11px] font-medium text-[#8E8E93]">生成中</span>
                 </div>
-              ))
+                <div className="flex flex-1 flex-col p-4">
+                  <h3
+                    className="text-[14px] font-bold leading-[1.35] text-[#1D1D1F]"
+                    style={{
+                      display: '-webkit-box',
+                      WebkitLineClamp: 2,
+                      WebkitBoxOrient: 'vertical',
+                      overflow: 'hidden',
+                    }}
+                  >
+                    正在生成角色与场景资产
+                  </h3>
+                  <p className="mt-2 text-[12px] leading-relaxed text-[#6E6E73]">
+                    系统正在根据剧本大纲生成角色、场景和产品资产，请稍候。
+                  </p>
+                </div>
+              </div>
             ) : null}
-            {showFailureCard ? (
-              <div className="flex h-full min-h-[340px] flex-col overflow-hidden rounded-2xl" style={{ background: '#fff', border: '1px solid #FECACA' }}>
-                <div className="flex h-48 items-center justify-center bg-[#FEF2F2]">
+            {s3AssetGridUi === 'failed' ? (
+              <div className="flex h-full flex-col self-start overflow-hidden rounded-2xl" style={{ background: '#fff', border: '1px solid #FECACA' }}>
+                <div className="relative flex h-48 shrink-0 flex-col items-center justify-center overflow-hidden bg-[#FEF2F2] px-4">
                   <div className="text-center text-[12px] text-[#B91C1C]">
                     <i className="ri-error-warning-line mb-1 block text-[18px]" aria-hidden />
                     资产生成失败，可重试
                   </div>
                 </div>
                 <div className="flex flex-1 flex-col p-4">
-                  <p className="text-[12px] text-[#B91C1C]">请点击刷新或返回上一步重试生成。</p>
+                  <p className="text-[12px] text-[#B91C1C]">请点击刷新或返回上一步重新生成。</p>
                 </div>
               </div>
             ) : null}
-            {showEmptyStateCard ? (
-              <div className="flex h-full min-h-[340px] flex-col items-center justify-center rounded-2xl border border-[#EAEAEA] bg-[#FAFAFB] p-6 text-center">
-                <i className="ri-inbox-archive-line text-[24px] text-[#8E8E93]" />
-                <div className="mt-2 text-[14px] font-semibold text-[#1D1D1F]">暂无资产</div>
-                <div className="mt-1 text-[12px] text-[#8E8E93]">当前没有可展示资产。若系统正在生成请稍候；若无任务请点击“添加”创建资产。</div>
+            {s3AssetGridUi === 'empty' ? (
+              <div className="flex h-full flex-col self-start overflow-hidden rounded-2xl border border-[#EAEAEA] bg-[#FAFAFB] p-4">
+                <div className="flex h-48 shrink-0 flex-col items-center justify-center px-3">
+                  <i className="ri-inbox-archive-line text-[22px] text-[#8E8E93]" />
+                </div>
+                <div className="flex flex-1 flex-col">
+                  <div className="text-[14px] font-semibold text-[#1D1D1F]">暂无资产</div>
+                  <div className="mt-2 text-[12px] leading-relaxed text-[#8E8E93]">当前没有可展示资产。若系统正在生成请稍候；若无任务请点击「添加」创建资产。</div>
+                </div>
               </div>
             ) : null}
             {addPending?.tab === activeTab ? (
@@ -1097,17 +1446,15 @@ export function ShortDramaAssetsPage() {
                 </div>
               </div>
             ) : null}
-            {showAddCard ? (
-              <button
-                type="button"
-                className="flex h-full min-h-[340px] flex-col items-center justify-center rounded-2xl border border-dashed border-[#D1D1D6] bg-[#FAFAFB] p-6 text-center"
-                onClick={() => setShowCreate(true)}
-              >
-                <i className="ri-add-circle-line text-[26px] text-[#6E6E73]" />
-                <div className="mt-2 text-[14px] font-semibold text-[#1D1D1F]">{createLabel}</div>
-                <div className="mt-1 text-[12px] text-[#8E8E93]">文字输入或图片上传（二选一）</div>
-              </button>
-            ) : null}
+            <button
+              type="button"
+              className="flex h-full min-h-[340px] flex-col items-center justify-center rounded-2xl border border-dashed border-[#D1D1D6] bg-[#FAFAFB] p-6 text-center"
+              onClick={() => setShowCreate(true)}
+            >
+              <i className="ri-add-circle-line text-[26px] text-[#6E6E73]" />
+              <div className="mt-2 text-[14px] font-semibold text-[#1D1D1F]">{createLabel}</div>
+              <div className="mt-1 text-[12px] text-[#8E8E93]">文字输入或图片上传（二选一）</div>
+            </button>
           </div>
           <div className="flex items-center justify-between mt-10 pt-6" style={{ borderTop: '1px solid #EAEAEA' }}>
             <button type="button" onClick={() => navigate(withProjectQuery('/short-drama/story-blueprint', effectiveProjectId))} className="flex items-center gap-2 px-5 py-3 rounded-xl text-[13.5px]" style={{ background: '#F7F8FA', color: '#444', border: '1px solid #EAEAEA' }}><i className="ri-arrow-left-line text-[13px]" />上一步</button>
