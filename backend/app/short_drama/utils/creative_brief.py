@@ -100,55 +100,6 @@ def segment_count_for_duration(duration_sec: int) -> int:
     return 6
 
 
-CONTENT_FORM_MATRIX = {
-    "single_ad": ["problem_solution_ad", "aida", "pas", "product_demo_ad", "brand_seeding_ad"],
-    "series_short_video": ["episode_arc", "recurring_character_story", "serial_problem_solution"],
-    "ugc_review": ["unboxing_review", "usage_review", "comparison_review"],
-    "product_showcase": ["feature_demo", "benefit_demo", "scenario_demo"],
-}
-
-SCRIPT_TYPE_DISPLAY = {
-    "problem_solution_ad": "问题解决型广告",
-    "aida": "品牌种草型广告",
-    "pas": "痛点解决型广告",
-    "product_demo_ad": "产品演示型广告",
-    "brand_seeding_ad": "品牌种草型广告",
-    "episode_arc": "单集剧情型短视频",
-    "recurring_character_story": "固定角色连续短剧",
-    "serial_problem_solution": "连续问题解决短剧",
-    "unboxing_review": "开箱测评型内容",
-    "usage_review": "使用体验型内容",
-    "comparison_review": "对比测评型内容",
-    "feature_demo": "功能展示型内容",
-    "benefit_demo": "利益点展示型内容",
-    "scenario_demo": "场景演示型内容",
-}
-
-STRUCTURE_MATRIX = {
-    "aida": ["注意", "兴趣", "欲望", "行动"],
-    "pas": ["问题", "放大", "解决", "行动"],
-    "problem_solution_ad": ["生活困扰", "影响放大", "产品介入", "结果证明"],
-    "product_demo_ad": ["产品亮相", "功能细节", "使用场景", "购买理由"],
-    "brand_seeding_ad": ["生活场景", "轻微困扰", "产品自然出现", "记忆点"],
-    "episode_arc": ["人物状态", "本集问题", "产品/主题介入", "情绪推进", "收束钩子"],
-    "recurring_character_story": ["固定角色", "日常困扰", "习惯动作", "产品记忆", "下集期待"],
-    "serial_problem_solution": ["连续问题", "本集挑战", "解决尝试", "结果反馈", "下一问题"],
-    "unboxing_review": ["开箱亮相", "外观细节", "上手体验", "真实评价"],
-    "usage_review": ["使用前", "使用过程", "细节体验", "结果反馈"],
-    "comparison_review": ["旧方案", "对比点", "产品优势", "选择理由"],
-    "feature_demo": ["功能亮相", "结构细节", "操作演示", "结果展示"],
-    "benefit_demo": ["用户需求", "核心利益", "场景证明", "购买理由"],
-    "scenario_demo": ["真实场景", "使用动作", "结果变化", "记忆点"],
-}
-
-EMOTION_MATRIX = {
-    "light_conflict": ["小困扰", "好奇", "安心", "满足"],
-    "healing": ["平静", "被理解", "被陪伴", "放松"],
-    "light_comedy": ["尴尬", "反差", "解决", "轻松"],
-    "suspense_twist": ["疑问", "紧张", "反转", "释放"],
-    "emotional_resonance": ["压抑", "共鸣", "理解", "行动"],
-}
-
 VISUAL_WORLD_MATRIX = {
     "realistic_cinematic": {
         "display": "写实电影感",
@@ -209,56 +160,6 @@ def _market_key(raw: Any) -> str:
     if "southeast asia" in lower or "东南亚" in value:
         return "Southeast Asia"
     return "North America"
-
-
-def _choose_script_type(content_form: str, product: ProductContextSchema) -> str:
-    candidates = CONTENT_FORM_MATRIX.get(content_form, CONTENT_FORM_MATRIX["single_ad"])
-    category = f"{product.product_category} {product.product_form}".lower()
-    if content_form == "single_ad":
-        if any(x in category for x in ("case", "壳", "配件", "accessory", "hardware")):
-            return "aida"
-        return candidates[0]
-    return candidates[0]
-
-
-def _fit_stages(base: list[str], count: int) -> list[str]:
-    if count <= len(base):
-        return base[:count]
-    additions = ["细节证明", "使用反馈", "品牌记忆", "购买理由"]
-    out = [*base]
-    for item in additions:
-        if len(out) >= count:
-            break
-        if item not in out:
-            out.insert(max(1, len(out) - 1), item)
-    while len(out) < count:
-        out.insert(max(1, len(out) - 1), f"推进{len(out)}")
-    return out[:count]
-
-
-def _exposure_curve(count: int) -> list[str]:
-    base = ["轻露出", "明确展示", "场景使用", "强转化"]
-    if count <= len(base):
-        return base[:count]
-    return ["轻露出", "明确展示", *["场景使用"] * (count - 3), "强转化"]
-
-
-def _asset_requirements(stages: list[str], product: ProductContextSchema) -> list[dict[str, Any]]:
-    assets = []
-    for idx, stage in enumerate(stages):
-        required = ["主角", "核心生活场景"]
-        if idx >= 1:
-            required.append(product.product_name or "主商品")
-        assets.append({"stage_name": stage, "required_assets": required})
-    return assets
-
-
-def _stage_display_reason(script_type_display: str, stages: list[str], product_name: str) -> str:
-    flow = " → ".join(stages)
-    return (
-        f"选择“{script_type_display}”，因为当前内容需要在短时间内完成从注意到兴趣、从场景到购买理由的转化。"
-        f"结构节奏为“{flow}”，先让用户进入真实使用情境，再让{product_name or '产品'}自然出现并形成记忆点。"
-    )
 
 
 def legacy_creative_intent_summary(project_config: dict[str, Any]) -> str:

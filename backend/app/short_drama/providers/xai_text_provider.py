@@ -13,6 +13,7 @@ from .xai_client import (
     XAIClient,
     effective_xai_text_model,
     extract_assistant_text,
+    extract_responses_api_model,
     summarize_output_message_content_types,
 )
 
@@ -28,6 +29,44 @@ def _preview(text: str, *, max_len: int = 500) -> str:
     if len(cleaned) <= max_len:
         return cleaned
     return cleaned[:max_len] + "…"
+
+
+def _log_s2_json_output_invalid(
+    *,
+    project_id: int,
+    model_requested: str,
+    model_returned: str,
+    system_prompt_len: int,
+    user_payload_chars: int,
+    max_output_tokens: int,
+    assistant_text_len: int,
+    incomplete_details: Any,
+    finish_reason: Any,
+    repair_attempts: int,
+    error_stage: str,
+    assistant_text_preview: str,
+) -> None:
+    logger.warning(
+        "[S2_JSON_OUTPUT_INVALID] %s",
+        json.dumps(
+            {
+                "project_id": project_id,
+                "model_requested": model_requested,
+                "model_returned": model_returned,
+                "system_prompt_len": system_prompt_len,
+                "user_payload_chars": user_payload_chars,
+                "max_output_tokens": max_output_tokens,
+                "assistant_text_len": assistant_text_len,
+                "assistant_text_preview": assistant_text_preview[:400],
+                "incomplete_details": incomplete_details,
+                "finish_reason": finish_reason,
+                "repair_attempts": repair_attempts,
+                "error_stage": error_stage,
+            },
+            ensure_ascii=False,
+            default=str,
+        ),
+    )
 
 
 def _build_user_content_parts(user_text: str, image_urls: list[str] | None) -> list[dict[str, Any]]:
@@ -57,10 +96,13 @@ class XAITextProvider:
         expected_schema_name: str,
         stage: str,
         max_output_tokens: int = 8192,
+        model: str | None = None,
     ) -> dict[str, Any]:
-        model = effective_xai_text_model()
+        model = model or effective_xai_text_model()
         user_text = json.dumps(user_payload, ensure_ascii=False)
         user_content = _build_user_content_parts(user_text, image_urls)
+        system_prompt_len = len(system_prompt or "")
+        user_payload_chars = len(user_text)
 
         t0 = time.perf_counter()
         try:
@@ -79,6 +121,7 @@ class XAITextProvider:
                 },
             )
             text = extract_assistant_text(raw)
+            model_returned = extract_responses_api_model(raw)
             if stage == "STORY_GENERATION":
                 _trace(
                     "S2_RAW_RESPONSE",
@@ -86,8 +129,12 @@ class XAITextProvider:
                         "project_id": project_id,
                         "service_name": service_name,
                         "request_id": request_id,
-                        "raw_response": raw,
-                        "assistant_text": text,
+                        "model_requested": model,
+                        "model_returned": model_returned,
+                        "response_status": raw.get("status"),
+                        "incomplete_details": raw.get("incomplete_details"),
+                        "assistant_text_len": len(text or ""),
+                        "assistant_text_preview": _preview(text, max_len=240),
                     },
                 )
             extracted_text_len = len(text or "")
@@ -126,6 +173,21 @@ class XAITextProvider:
                     )
             duration_ms = int((time.perf_counter() - t0) * 1000)
             if _is_empty_or_too_short_structured_text(text):
+                if stage == "STORY_GENERATION":
+                    _log_s2_json_output_invalid(
+                        project_id=project_id,
+                        model_requested=model,
+                        model_returned=model_returned,
+                        system_prompt_len=system_prompt_len,
+                        user_payload_chars=user_payload_chars,
+                        max_output_tokens=max_output_tokens,
+                        assistant_text_len=extracted_text_len,
+                        incomplete_details=response_incomplete_details,
+                        finish_reason=raw.get("finish_reason") or raw.get("stop_reason"),
+                        repair_attempts=0,
+                        error_stage="empty_or_too_short",
+                        assistant_text_preview=_preview(text, max_len=400),
+                    )
                 logger.warning(
                     "[STRUCTURED_OUTPUT_EMPTY_OR_TOO_SHORT] project_id=%s service_name=%s stage=%s extracted_text_len=%s extracted_text_preview=%s",
                     project_id,
@@ -144,6 +206,11 @@ class XAITextProvider:
                 request_id=request_id,
                 duration_ms=duration_ms,
                 expected_schema_name=expected_schema_name,
+                system_prompt_len=system_prompt_len,
+                user_payload_chars=user_payload_chars,
+                max_output_tokens=max_output_tokens,
+                raw_primary=raw,
+                model_returned_primary=model_returned,
             )
             log_ai_response(
                 logger,
@@ -186,9 +253,32 @@ class XAITextProvider:
         request_id: str,
         duration_ms: int,
         expected_schema_name: str,
+        system_prompt_len: int,
+        user_payload_chars: int,
+        max_output_tokens: int,
+        raw_primary: dict[str, Any],
+        model_returned_primary: str,
     ) -> dict[str, Any]:
         """Original output + up to 2 repair passes (3 model outputs total for JSON text)."""
+        incomplete_primary = raw_primary.get("incomplete_details")
+        finish_primary = raw_primary.get("finish_reason") or raw_primary.get("stop_reason")
+
         if _is_empty_or_too_short_structured_text(text):
+            if stage == "STORY_GENERATION":
+                _log_s2_json_output_invalid(
+                    project_id=project_id,
+                    model_requested=model,
+                    model_returned=model_returned_primary,
+                    system_prompt_len=system_prompt_len,
+                    user_payload_chars=user_payload_chars,
+                    max_output_tokens=max_output_tokens,
+                    assistant_text_len=len(text or ""),
+                    incomplete_details=incomplete_primary,
+                    finish_reason=finish_primary,
+                    repair_attempts=0,
+                    error_stage="empty_or_too_short",
+                    assistant_text_preview=_preview(text, max_len=400),
+                )
             logger.warning(
                 "[STRUCTURED_OUTPUT_EMPTY_OR_TOO_SHORT] project_id=%s service_name=%s stage=%s extracted_text_len=%s extracted_text_preview=%s",
                 project_id,
@@ -199,7 +289,26 @@ class XAITextProvider:
             )
             raise ShortDramaInvalidModelOutputError("structured output empty or too short")
         parsed = try_parse_json_object(text)
-        if parsed is not None and parsed.get("error") != "unrecoverable":
+        if parsed is not None:
+            if parsed.get("error") == "unrecoverable":
+                if stage == "STORY_GENERATION":
+                    _log_s2_json_output_invalid(
+                        project_id=project_id,
+                        model_requested=model,
+                        model_returned=model_returned_primary,
+                        system_prompt_len=system_prompt_len,
+                        user_payload_chars=user_payload_chars,
+                        max_output_tokens=max_output_tokens,
+                        assistant_text_len=len(text or ""),
+                        incomplete_details=incomplete_primary,
+                        finish_reason=finish_primary,
+                        repair_attempts=0,
+                        error_stage="primary_unrecoverable_marker",
+                        assistant_text_preview=_preview(text, max_len=400),
+                    )
+                raise ShortDramaInvalidModelOutputError(
+                    "model output contained JSON repair refusal marker (unrecoverable)"
+                )
             if stage == "STORY_GENERATION":
                 _trace(
                     "S2_JSON_REPAIR_SKIPPED",
@@ -208,6 +317,7 @@ class XAITextProvider:
             return parsed
 
         current = text
+        repair_tokens = 8192 if stage == "STORY_GENERATION" else 4096
         for repair_attempt in (1, 2):
             repair_user = _truncate_for_repair(current)
             if stage == "STORY_GENERATION":
@@ -217,8 +327,7 @@ class XAITextProvider:
                         "project_id": project_id,
                         "service_name": service_name,
                         "repair_attempt": repair_attempt,
-                        "system_prompt": JSON_REPAIR_SYSTEM_PROMPT,
-                        "user_payload": repair_user,
+                        "repair_input_chars": len(repair_user),
                     },
                 )
             repair_content = [{"type": "input_text", "text": repair_user}]
@@ -227,7 +336,7 @@ class XAITextProvider:
                 system_prompt=JSON_REPAIR_SYSTEM_PROMPT,
                 user_content=repair_content,
                 store=False,
-                max_output_tokens=4096,
+                max_output_tokens=repair_tokens,
                 log_context={
                     "project_id": project_id,
                     "service_name": service_name,
@@ -239,6 +348,7 @@ class XAITextProvider:
                 },
             )
             text2 = extract_assistant_text(raw2)
+            model_ret2 = extract_responses_api_model(raw2)
             if stage == "STORY_GENERATION":
                 _trace(
                     "S2_JSON_REPAIR_RESPONSE",
@@ -247,17 +357,50 @@ class XAITextProvider:
                         "service_name": service_name,
                         "repair_attempt": repair_attempt,
                         "request_id": req2,
-                        "raw_response": raw2,
-                        "assistant_text": text2,
+                        "model_returned": model_ret2,
+                        "assistant_text_len": len(text2 or ""),
+                        "assistant_text_preview": _preview(text2, max_len=240),
                     },
                 )
             current = text2
             parsed = try_parse_json_object(text2)
             if parsed is not None:
                 if parsed.get("error") == "unrecoverable":
-                    continue
+                    if stage == "STORY_GENERATION":
+                        _log_s2_json_output_invalid(
+                            project_id=project_id,
+                            model_requested=model,
+                            model_returned=model_ret2 or model_returned_primary,
+                            system_prompt_len=system_prompt_len,
+                            user_payload_chars=user_payload_chars,
+                            max_output_tokens=max_output_tokens,
+                            assistant_text_len=len(text2 or ""),
+                            incomplete_details=raw2.get("incomplete_details"),
+                            finish_reason=raw2.get("finish_reason") or raw2.get("stop_reason"),
+                            repair_attempts=repair_attempt,
+                            error_stage="repair_unrecoverable",
+                            assistant_text_preview=_preview(text2, max_len=400),
+                        )
+                    raise ShortDramaInvalidModelOutputError(
+                        f"JSON repair attempt {repair_attempt} returned unrecoverable for {service_name}"
+                    )
                 return parsed
 
+        if stage == "STORY_GENERATION":
+            _log_s2_json_output_invalid(
+                project_id=project_id,
+                model_requested=model,
+                model_returned=model_returned_primary,
+                system_prompt_len=system_prompt_len,
+                user_payload_chars=user_payload_chars,
+                max_output_tokens=max_output_tokens,
+                assistant_text_len=len(current or ""),
+                incomplete_details=incomplete_primary,
+                finish_reason=finish_primary,
+                repair_attempts=2,
+                error_stage="repair_exhausted",
+                assistant_text_preview=_preview(current, max_len=400),
+            )
         raise ShortDramaInvalidModelOutputError(
             f"JSON repair exhausted after 2 attempts for {service_name} (schema={expected_schema_name})"
         )

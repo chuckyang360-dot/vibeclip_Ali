@@ -17,6 +17,18 @@ from ..utils.prompts import ASSET_SPEC_SYSTEM_PROMPT
 logger = logging.getLogger(__name__)
 
 
+def _reject_if_creative_blueprint_v2(blueprint: StoryBlueprintSchema, *, message: str, code: str) -> None:
+    """Hard guard: S3 v2 must only use asset_generation_specs / build_v2_asset_specs_bundle."""
+    from .asset_v2_materialize_service import is_creative_blueprint_v2_project
+
+    if is_creative_blueprint_v2_project(blueprint):
+        raise ShortDramaInvalidModelOutputError(
+            message,
+            code=code,
+            missing_fields=["asset_generation_specs"],
+        )
+
+
 def _trace(tag: str, payload: dict[str, Any]) -> None:
     logger.info("[AI_CHAIN_TRACE][%s] %s", tag, json.dumps(payload, ensure_ascii=False, default=str))
 
@@ -1583,6 +1595,11 @@ class AssetSpecService:
         blueprint: StoryBlueprintSchema,
         project_config: Dict[str, Any] | None = None,
     ) -> AssetSpecsBundleSchema:
+        _reject_if_creative_blueprint_v2(
+            blueprint,
+            message="creative_blueprint_v2 must not use asset_spec_service.generate; use S3 v2 asset_generation_specs path.",
+            code="s3_v2_legacy_asset_spec_generate_forbidden",
+        )
         config = project_config or {}
         bundle = self._provider.build_specs(project_id, product, blueprint, config)
         constraints = _extract_market_constraints(blueprint, config, product)
@@ -1652,23 +1669,23 @@ def asset_bundle_from_story_requirements(
     product: ProductContextSchema | None = None,
     project_config: Dict[str, Any] | None = None,
 ) -> AssetSpecsBundleSchema | None:
+    _reject_if_creative_blueprint_v2(
+        blueprint,
+        message="creative_blueprint_v2 must not use asset_bundle_from_story_requirements; use asset_generation_specs.",
+        code="s3_v2_legacy_asset_bundle_forbidden",
+    )
     req = blueprint.asset_requirements if isinstance(blueprint.asset_requirements, dict) else {}
     chars_raw = req.get("characters") if isinstance(req.get("characters"), list) else []
     scenes_raw = req.get("scenes") if isinstance(req.get("scenes"), list) else []
     products_raw = req.get("products") if isinstance(req.get("products"), list) else []
     if not chars_raw and not scenes_raw and not products_raw:
-        required_names: list[str] = []
-        for segment in blueprint.segment_plan or []:
-            for name in [*segment.required_assets, *segment.expected_assets]:
-                text = str(name or "").strip()
-                if text and text not in required_names:
-                    required_names.append(text)
-        if not required_names:
-            return None
-        product_name = product.product_name if product else "主商品"
-        chars_raw = [{"name": next((x for x in required_names if "主角" in x or "角色" in x), "主角"), "role": "main"}]
-        scenes_raw = [{"name": next((x for x in required_names if "场景" in x or "空间" in x), "核心生活场景"), "location": "核心生活场景"}]
-        products_raw = [{"name": product_name, "product_role": "hero", "visual_features": product.visual_features if product else []}]
+        pid = (project_config or {}).get("project_id")
+        logger.warning("[S3_ASSET_SPEC_MISSING] project_id=%s missing_field=asset_requirements", pid)
+        raise ShortDramaInvalidModelOutputError(
+            "S2 blueprint has no usable asset_requirements (characters/scenes/products); regenerate S2.",
+            code="s3_asset_spec_missing",
+            missing_fields=["asset_requirements"],
+        )
 
     def _as_list(v: Any) -> list[str]:
         return [str(x).strip() for x in (v or []) if str(x).strip()] if isinstance(v, list) else []

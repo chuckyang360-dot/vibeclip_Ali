@@ -57,6 +57,10 @@ class Settings(BaseSettings):
     # Short Drama / xAI text (Responses API); base URL falls back to XAI_API_URL when unset
     XAI_BASE_URL: Optional[str] = Field(default=None, env="XAI_BASE_URL")
     XAI_TEXT_MODEL: Optional[str] = Field(default=None, env="XAI_TEXT_MODEL")
+    #: S2 Story Planner only; empty → same as global text model (effective_xai_text_model)
+    XAI_STORY_MODEL: Optional[str] = Field(default=None, env="XAI_STORY_MODEL")
+    #: S2 Story Planner max output tokens (Responses API); S1/S3/S4 unchanged
+    XAI_STORY_MAX_OUTPUT_TOKENS: int = Field(default=16384, env="XAI_STORY_MAX_OUTPUT_TOKENS")
     SHORT_DRAMA_XAI_TEXT_TIMEOUT_SECONDS: int = Field(default=180, env="SHORT_DRAMA_XAI_TEXT_TIMEOUT_SECONDS")
     SHORT_DRAMA_SEGMENT_DIRECTOR_MAX_OUTPUT_TOKENS: int = Field(
         default=16384, env="SHORT_DRAMA_SEGMENT_DIRECTOR_MAX_OUTPUT_TOKENS"

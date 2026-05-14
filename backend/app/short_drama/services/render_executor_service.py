@@ -379,6 +379,7 @@ class RenderExecutorService:
                 products=products,
                 project_aspect_ratio=project_ar,
                 resolved_character_assets=resolved_character_assets,
+                project_id=project_id,
             )
             logger.info("[S4_EXECUTION_INPUT] project_id=%s input=%s", project_id, plan.execution_input)
             logger.info(
@@ -593,9 +594,7 @@ class RenderExecutorService:
                     "project_id": project_id,
                     "segment_id": segment_id,
                     "final_prompt": plan.segment_video_prompt,
-                    "prompt_source": "ai_shot_video_prompt_merge"
-                    if (plan.execution_input or {}).get("manual_video_prompt_used") or (plan.execution_input or {}).get("shot_ids")
-                    else "builder_fallback",
+                    "prompt_source": "ai_shot_video_prompt",
                     "reference_image_urls": ref_for_api,
                     "provider": self._provider_label(),
                     "model": model_name,

@@ -7,17 +7,102 @@ from typing import Any, Dict, Protocol
 
 from ...config import settings
 from ..exceptions import ShortDramaInvalidModelOutputError
+from ..providers.xai_client import effective_xai_story_max_output_tokens, effective_xai_story_model
 from ..providers.xai_text_provider import XAITextProvider, get_xai_text_provider
 from ..schemas.product import ProductContextSchema
-from ..schemas.story import SegmentPlanItemSchema, StoryBlueprintSchema
+from ..schemas.story import (
+    SegmentPlanItemSchema,
+    StoryBlueprintSchema,
+    default_creative_blueprint_v2_attachment,
+    parse_story_blueprint_json,
+)
 from ..utils.creative_brief import build_creative_brief
 from ..utils.prompts import STORY_PLANNER_SYSTEM_PROMPT
 
 logger = logging.getLogger(__name__)
 
+CREATIVE_BLUEPRINT_V2_SCHEMA = "creative_blueprint_v2"
+
 
 def _trace(tag: str, payload: dict[str, Any]) -> None:
     logger.info("[AI_CHAIN_TRACE][%s] %s", tag, json.dumps(payload, ensure_ascii=False, default=str))
+
+
+def _visual_requirements_as_str_list(v: Any) -> list[str]:
+    """Normalize only for duration/aspect hints; Grok may emit list or string."""
+    if isinstance(v, list):
+        return list(dict.fromkeys([str(x).strip() for x in v if str(x or "").strip()]))
+    if isinstance(v, str) and v.strip():
+        return [v.strip()]
+    return []
+
+
+_STORY_PROJECT_KEYS = (
+    "project_id",
+    "duration",
+    "format",
+    "style",
+    "visual_style",
+    "aspect_ratio",
+    "target_market",
+    "marketing_goal",
+    "target_audience",
+    "brand_tone",
+    "creative_intent",
+    "creative_brief",
+    "workflow_language",
+    "video_language",
+    "content_form",
+    "narrative_style",
+)
+
+
+def _compact_project_config_for_story(project_config: Dict[str, Any]) -> Dict[str, Any]:
+    out: Dict[str, Any] = {}
+    for k in _STORY_PROJECT_KEYS:
+        if k in project_config and project_config[k] is not None and project_config[k] != "":
+            out[k] = project_config[k]
+    return out
+
+
+def _compact_creative_context_for_story(project_config: Dict[str, Any]) -> Dict[str, Any]:
+    cbd = project_config.get("creative_brief_data")
+    if not isinstance(cbd, dict):
+        return {}
+    keep: Dict[str, Any] = {}
+    for k in ("market_context", "visual_constraints", "creative_strategy", "project_constraints"):
+        if k in cbd:
+            keep[k] = cbd[k]
+    pf = cbd.get("product_facts")
+    if isinstance(pf, dict):
+        slim = {kk: pf[kk] for kk in ("name", "product_visual_features", "category", "brand") if kk in pf}
+        if slim:
+            keep["product_facts"] = slim
+    return keep
+
+
+_PRODUCT_STORY_FIELDS = (
+    "product_name",
+    "product_category",
+    "product_summary",
+    "core_selling_points",
+    "target_users",
+    "usage_scenarios",
+    "visual_features",
+    "emotional_value",
+    "suitable_story_angles",
+    "user_pain_points",
+    "visual_risk_notes",
+    "immutable_structure_constraints",
+    "product_form",
+    "key_functions",
+    "consistency_notes",
+)
+
+
+def _compact_product_for_story(product: ProductContextSchema) -> Dict[str, Any]:
+    d = product.model_dump()
+    return {k: d[k] for k in _PRODUCT_STORY_FIELDS if k in d}
 
 
 def _collect_non_empty_overwrites(before: dict[str, Any], after: dict[str, Any]) -> list[dict[str, Any]]:
@@ -46,68 +131,6 @@ _SCRIPT_STRUCTURE_TYPES = {
     "scene_pain_solution",
     "twist_reveal",
 }
-_SCRIPT_STRUCTURE_BY_GOAL = {
-    "brand_seeding": "scene_pain_solution",
-    "pain_point_conversion": "problem_solution_ad",
-    "product_demo": "product_demo_ad",
-    "trust_building": "aida",
-    "comparison": "before_after_bridge",
-    "promotion": "aida",
-    "corporate_promo": "aida",
-    "series_story": "story_drama",
-}
-_FRAMEWORK_FALLBACK_ZH = {
-    "brand_seeding": "品牌种草型",
-    "pain_point_conversion": "痛点转化型",
-    "product_demo": "产品展示型",
-    "trust_building": "信任背书型",
-    "comparison": "对比测评型",
-    "promotion": "活动促销型",
-    "corporate_promo": "企业宣传型",
-    "series_story": "系列短剧型",
-}
-_FRAMEWORK_DEFS = {
-    "brand_seeding": {
-        "name": "品牌种草型",
-        "structure": ["生活场景", "情绪共鸣", "产品自然出现", "氛围强化", "记忆点"],
-        "segment_names": ["生活场景", "情绪共鸣", "产品自然出现", "氛围强化", "记忆点收束"],
-    },
-    "pain_point_conversion": {
-        "name": "痛点转化型",
-        "structure": ["痛点暴露", "风险放大", "产品介入", "结果证明", "行动号召"],
-        "segment_names": ["痛点暴露", "风险放大", "产品介入", "结果证明", "行动号召"],
-    },
-    "product_demo": {
-        "name": "产品展示型",
-        "structure": ["产品亮相", "功能细节", "使用场景", "效果展示", "购买理由"],
-        "segment_names": ["产品亮相", "功能细节演示", "使用场景", "效果展示", "购买理由"],
-    },
-    "trust_building": {
-        "name": "信任背书型",
-        "structure": ["问题背景", "专业能力", "使用证据", "用户信任", "品牌记忆"],
-        "segment_names": ["问题背景", "专业能力", "使用证据", "用户信任", "品牌记忆"],
-    },
-    "comparison": {
-        "name": "对比测评型",
-        "structure": ["普通方案", "问题暴露", "产品对比", "优势证明", "选择理由"],
-        "segment_names": ["普通方案", "问题暴露", "产品对比", "优势证明", "选择理由"],
-    },
-    "promotion": {
-        "name": "活动促销型",
-        "structure": ["限时机会", "产品价值", "使用场景", "优惠理由", "CTA"],
-        "segment_names": ["限时机会", "产品价值", "使用场景", "优惠理由", "CTA"],
-    },
-    "corporate_promo": {
-        "name": "企业宣传型",
-        "structure": ["行业问题", "企业能力", "真实场景", "结果价值", "品牌信任"],
-        "segment_names": ["行业问题", "企业能力", "真实场景", "结果价值", "品牌信任"],
-    },
-    "series_story": {
-        "name": "系列短剧型",
-        "structure": ["人物设定", "世界观", "本集冲突", "产品/主题植入", "悬念钩子"],
-        "segment_names": ["人物设定", "世界观", "本集冲突", "产品/主题植入", "悬念钩子"],
-    },
-}
 _BRAND_SEEDING_BANNED_TERMS = (
     "摔坏",
     "易损",
@@ -127,14 +150,6 @@ _BRAND_SEEDING_BANNED_TERMS = (
 _FRAMEWORK_ALIGNMENT_ALERT_TERMS = ("摔坏", "风险", "立即购买", "痛点", "焦虑", "损坏")
 _STORY_STYLE_ALIASES = {"conflict": "light_conflict"}
 _ALLOWED_STORY_STYLES = {"light_conflict", "healing", "comedy", "suspense", "emotional"}
-_BRAND_SEEDING_REWRITE = {
-    "hook": "生活方式切片开场，让产品在目标用户日常中自然入镜。",
-    "conflict": "在城市节奏与个人表达之间寻找贴合自我的细节与质感。",
-    "twist": "产品在真实使用场景中自然露出并增强整体氛围。",
-    "resolution": "以光线与材质记忆点收束，强化品牌印象与轻种草心智。",
-}
-
-
 class StoryPlannerProvider(Protocol):
     def plan(
         self,
@@ -160,6 +175,8 @@ class MockStoryPlannerProvider:
         angle = (product.suitable_story_angles[0] if product.suitable_story_angles else "场景代入型")
         emotion = (product.emotional_value[0] if product.emotional_value else "获得感")
         points = [p for p in product.core_selling_points if p][:3]
+        if not points:
+            points = ["示例卖点A", "示例卖点B", "示例卖点C"]
         marketing_goal = str(project_config.get("marketing_goal") or "brand_seeding")
         brief = str(project_config.get("creative_brief") or "").strip()
         conflict_text = f"信任与试错成本（叙事角度：{angle}）"
@@ -167,6 +184,63 @@ class MockStoryPlannerProvider:
             conflict_text = f"高频痛点反复出现，必须快速验证解决方案（叙事角度：{angle}）"
         elif marketing_goal == "corporate_promo":
             conflict_text = f"品牌认知不足，需要通过企业实力建立信任（叙事角度：{angle}）"
+        v2_layers: Dict[str, Any] = dict(default_creative_blueprint_v2_attachment(product_name=pname))
+        v2_layers["video_generation_specs"] = [
+            {
+                "spec_key": "vid_seg_1",
+                "segment_id": "seg_1",
+                "shot_id": "seg_1_shot_1",
+                "video_prompt": (
+                    "Single continuous vertical 9:16 segment: commuter morning hook in one flowing beat from "
+                    "establishing lifestyle tension through natural blocking to a clear emotional turn."
+                ),
+                "reference_asset_keys": ["asset_char_main", "asset_scene_main", "asset_prod_main"],
+                "duration_sec": 8.0,
+                "aspect_ratio": "9:16",
+                "camera": "handheld medium",
+                "visual_action": "establish commuter tension and morning routine beat",
+                "audio_notes": "ambient city morning; light foley",
+                "dialogue_or_voiceover_ref": "dov_1",
+                "must_show": [pname],
+                "must_avoid": ["medical claims", "before/after skin", "guaranteed results"],
+            },
+            {
+                "spec_key": "vid_seg_2",
+                "segment_id": "seg_2",
+                "shot_id": "seg_2_shot_1",
+                "video_prompt": (
+                    "Full segment two vertical 9:16: one continuous product-in-context trial beat with smooth "
+                    "handheld rhythm, natural gestures, and clear readable hero SKU without splitting into per-cut specs."
+                ),
+                "reference_asset_keys": ["asset_char_main", "asset_scene_main", "asset_prod_main"],
+                "duration_sec": 8.0,
+                "aspect_ratio": "9:16",
+                "camera": "handheld close and medium",
+                "visual_action": "demo handling and feature read; steady reveal",
+                "audio_notes": "",
+                "dialogue_or_voiceover_ref": "",
+                "must_show": [pname],
+                "must_avoid": ["medical claims", "before/after skin", "guaranteed results"],
+            },
+            {
+                "spec_key": "vid_seg_3",
+                "segment_id": "seg_3",
+                "shot_id": "seg_3_shot_1",
+                "video_prompt": (
+                    "Full segment three vertical 9:16: payoff and soft CTA in one uninterrupted beat with warm "
+                    "lighting, calm pacing, and a clear packshot integrated into the segment arc."
+                ),
+                "reference_asset_keys": ["asset_char_main", "asset_scene_main", "asset_prod_main"],
+                "duration_sec": 8.0,
+                "aspect_ratio": "9:16",
+                "camera": "slow push toward label",
+                "visual_action": "resolution calm; product rest moment",
+                "audio_notes": "",
+                "dialogue_or_voiceover_ref": "dov_2",
+                "must_show": [pname],
+                "must_avoid": ["medical claims", "before/after skin", "guaranteed results"],
+            },
+        ]
         bp = StoryBlueprintSchema(
             title=f"{pname} · 都市轻喜剧短片",
             script_title=f"{pname} · 都市轻喜剧短片",
@@ -184,39 +258,60 @@ class MockStoryPlannerProvider:
             segment_plan=[
                 SegmentPlanItemSchema(
                     segment_id="seg_1",
+                    stage_name="开场",
+                    title="第一段：建立共鸣",
+                    segment_title="第一段：建立共鸣",
+                    segment_goal="建立共鸣与悬念",
                     goal="建立共鸣与悬念",
                     duration_seconds=12.0,
                     story_beat="hook",
                     summary="快节奏生活切片，抛出痛点",
+                    transition_to_next="自然过渡到产品体验段。",
                     product_exposure_mode="none_or_blurred",
-                    source_selling_point=points[0] if points else "",
-                    product_feature_to_show=(product.visual_features[0] if product.visual_features else ""),
+                    source_selling_point=points[0],
+                    key_message=points[0],
+                    product_feature_to_show=(product.visual_features[0] if product.visual_features else "外观质感"),
                     target_user_trigger=users,
-                    required_visual_elements=product.visual_features[:2],
+                    required_visual_elements=list(product.visual_features[:2]) if product.visual_features else ["视觉锚点A"],
+                    required_assets=["char_ref", "scene_ref"],
                 ),
                 SegmentPlanItemSchema(
                     segment_id="seg_2",
+                    stage_name="体验",
+                    title="第二段：产品体验",
+                    segment_title="第二段：产品体验",
+                    segment_goal="引入产品与体验",
                     goal="引入产品与体验",
                     duration_seconds=15.0,
                     story_beat="build",
                     summary="产品出现与试用，展示核心特征",
+                    transition_to_next="过渡到结果收束段。",
                     product_exposure_mode="hero_demo",
-                    source_selling_point=points[1] if len(points) > 1 else (points[0] if points else ""),
-                    product_feature_to_show=(product.visual_features[1] if len(product.visual_features) > 1 else ""),
+                    source_selling_point=points[1],
+                    key_message=points[1],
+                    product_feature_to_show=(product.visual_features[1] if len(product.visual_features) > 1 else "功能细节"),
                     target_user_trigger=users,
-                    required_visual_elements=product.visual_features[:3],
+                    required_visual_elements=list(product.visual_features[:3]) if product.visual_features else ["视觉锚点B"],
+                    required_assets=["char_ref", "scene_ref", "product_ref"],
                 ),
                 SegmentPlanItemSchema(
                     segment_id="seg_3",
+                    stage_name="收束",
+                    title="第三段：反转收尾",
+                    segment_title="第三段：反转收尾",
+                    segment_goal="反转收尾与 CTA",
                     goal="反转收尾与 CTA",
                     duration_seconds=18.0,
                     story_beat="resolution",
                     summary="结果验证 + 轻 CTA",
+                    transition_to_next="全片结束。",
                     product_exposure_mode="logo_packshot",
-                    source_selling_point=points[2] if len(points) > 2 else (points[-1] if points else ""),
-                    product_feature_to_show=(product.visual_features[2] if len(product.visual_features) > 2 else ""),
+                    source_selling_point=points[2],
+                    key_message=points[2],
+                    product_feature_to_show=(product.visual_features[2] if len(product.visual_features) > 2 else "记忆点外观"),
                     target_user_trigger=users,
-                    required_visual_elements=product.visual_features[:2],
+                    required_visual_elements=list(product.visual_features[:2]) if product.visual_features else ["视觉锚点C"],
+                    required_assets=["char_ref", "scene_ref", "product_ref"],
                 ),
             ],
             scene_goals={"seg_1": "建立痛点", "seg_2": "展示产品卖点", "seg_3": "结果证明"},
@@ -236,6 +331,46 @@ class MockStoryPlannerProvider:
             must_show_elements=[pname, *points[:3]],
             must_avoid_elements=product.visual_risk_notes[:6],
             meta={"provider": "mock", "duration_hint": duration, "marketing_goal": marketing_goal, "creative_brief": brief},
+            shot_plan={
+                "segments": [
+                    {
+                        "id": "seg_1",
+                        "name": "开场",
+                        "shots": [
+                            {
+                                "id": "seg_1_shot_1",
+                                "video_prompt": "Vertical 9:16 cinematic segment one establishing slice-of-life pacing.",
+                            }
+                        ],
+                    },
+                    {
+                        "id": "seg_2",
+                        "name": "体验",
+                        "shots": [
+                            {
+                                "id": "seg_2_shot_1",
+                                "video_prompt": "Vertical 9:16 product demo beat with natural handheld motion.",
+                            }
+                        ],
+                    },
+                    {
+                        "id": "seg_3",
+                        "name": "收束",
+                        "shots": [
+                            {
+                                "id": "seg_3_shot_1",
+                                "video_prompt": "Vertical 9:16 payoff beat with soft lighting and clear packshot room.",
+                            }
+                        ],
+                    },
+                ]
+            },
+            asset_requirements={
+                "characters": [{"name": "MockLead", "role": "main", "image_prompt": "clean portrait"}],
+                "scenes": [{"name": "MockScene", "location": "studio", "image_prompt": "empty set"}],
+                "products": [{"name": pname, "product_role": "hero", "image_prompt": "product hero"}],
+            },
+            **v2_layers,
         )
         return _normalize_blueprint_for_execution(bp, product, project_config)
 
@@ -257,42 +392,31 @@ class XAIStoryPlannerProvider:
         try:
             s2_payload = {
                 "project_id": project_id,
-                "project_config": project_config,
-                "language_policy": project_config.get("language_policy", {}),
-                "language_prompt_rules": project_config.get("language_prompt_rules", ""),
-                "creative_context": project_config.get("creative_brief_data", {}),
-                "creative_intent": project_config.get("effective_creative_intent", ""),
-                "product_context": product.model_dump(),
-                "s1_context_for_story": {
-                    "product_name": product.product_name,
-                    "product_summary": product.product_summary,
-                    "core_selling_points": product.core_selling_points,
-                    "target_users": product.target_users,
-                    "usage_scenarios": product.usage_scenarios,
-                    "emotional_value": product.emotional_value,
-                    "suitable_story_angles": product.suitable_story_angles,
-                    "user_pain_points": product.user_pain_points,
-                    "immutable_structure_constraints": product.immutable_structure_constraints,
-                },
+                "project_config": _compact_project_config_for_story(project_config),
+                "language_policy": project_config.get("language_policy") or {},
+                "language_prompt_rules": str(project_config.get("language_prompt_rules") or ""),
+                "creative_context": _compact_creative_context_for_story(project_config),
+                "creative_intent": str(project_config.get("effective_creative_intent", "") or ""),
+                "product": _compact_product_for_story(product),
             }
             _trace(
                 "S2_INPUT_CONTEXT",
                 {
                     "project_id": project_id,
-                    "project_config": project_config,
-                    "language_policy": project_config.get("language_policy", {}),
-                    "creative_context": project_config.get("creative_brief_data", {}),
-                    "creative_intent": project_config.get("effective_creative_intent", ""),
-                    "product_context": product.model_dump(),
-                    "s1_context_for_story": s2_payload.get("s1_context_for_story"),
+                    "user_payload_keys": list(s2_payload.keys()),
+                    "user_payload_chars": len(json.dumps(s2_payload, ensure_ascii=False)),
+                    "language_policy": s2_payload.get("language_policy"),
                 },
             )
+            sp_len = len(STORY_PLANNER_SYSTEM_PROMPT)
+            up_chars = len(json.dumps(s2_payload, ensure_ascii=False))
             logger.info(
                 "[S2_PROMPT] %s",
                 json.dumps(
                     {
-                        "system_prompt": STORY_PLANNER_SYSTEM_PROMPT,
-                        "user_payload": s2_payload,
+                        "system_prompt_len": sp_len,
+                        "user_payload_chars": up_chars,
+                        "user_payload_keys": list(s2_payload.keys()),
                     },
                     ensure_ascii=False,
                 ),
@@ -301,10 +425,10 @@ class XAIStoryPlannerProvider:
                 "S2_PROMPT",
                 {
                     "project_id": project_id,
-                    "system_prompt": STORY_PLANNER_SYSTEM_PROMPT,
-                    "user_payload": s2_payload,
+                    "system_prompt_len": sp_len,
+                    "user_payload_chars": up_chars,
                     "provider": "xai_text_provider",
-                    "model": "effective_xai_text_model",
+                    "model": effective_xai_story_model(),
                 },
             )
             data = self._text.generate_structured_json(
@@ -315,10 +439,12 @@ class XAIStoryPlannerProvider:
                 image_urls=None,
                 expected_schema_name="StoryBlueprint",
                 stage="STORY_GENERATION",
+                model=effective_xai_story_model(),
+                max_output_tokens=effective_xai_story_max_output_tokens(),
             )
             logger.info("[S2_RESPONSE] %s", json.dumps(data, ensure_ascii=False))
             _trace("S2_SCHEMA_VALIDATED", {"project_id": project_id, "schema": data})
-            blueprint = StoryBlueprintSchema.model_validate(data)
+            blueprint = parse_story_blueprint_json(data)
             before_normalize = blueprint.model_dump()
             _trace("S2_BEFORE_NORMALIZE", {"project_id": project_id, "blueprint": before_normalize})
             blueprint = _normalize_blueprint_for_execution(blueprint, product, project_config)
@@ -486,13 +612,266 @@ def _warn_workflow_language_mismatch(project_id: int, blueprint: StoryBlueprintS
     )
 
 
-def _sanitize_brand_seeding_text(text: str, fallback: str) -> str:
-    candidate = (text or "").strip()
-    if not candidate:
-        return fallback
-    if _contains_terms(candidate, _BRAND_SEEDING_BANNED_TERMS):
-        return fallback
-    return candidate
+_VALID_V2_ASSET_KINDS = frozenset({"character", "scene", "product"})
+
+
+def _validate_creative_blueprint_v2(blueprint: StoryBlueprintSchema, *, project_id: Any = None) -> None:
+    """P1: full Creative Blueprint v2 must be present after S2 normalize (no backend autofill)."""
+    if blueprint.blueprint_schema_version != CREATIVE_BLUEPRINT_V2_SCHEMA:
+        return
+
+    def _fail(msg: str, *, missing_fields: list[str]) -> None:
+        logger.warning(
+            "[AI_BLUEPRINT_VALIDATE_FAILED] project_id=%s missing_field=%s",
+            project_id,
+            ",".join(missing_fields),
+        )
+        raise ShortDramaInvalidModelOutputError(
+            msg,
+            code="creative_blueprint_v2_incomplete",
+            missing_fields=missing_fields,
+        )
+
+    ov = blueprint.story_overview
+    if ov is None or not (str(ov.title or "").strip() or str(ov.premise or "").strip()):
+        _fail(
+            "S2 creative_blueprint_v2 requires story_overview with title or premise.",
+            missing_fields=["story_overview"],
+        )
+    if not blueprint.characters:
+        _fail("S2 creative_blueprint_v2 requires characters[].", missing_fields=["characters"])
+    for c in blueprint.characters:
+        if not str(c.character_key or "").strip() or not str(c.display_name or "").strip():
+            _fail(
+                "S2 creative_blueprint_v2 characters[] requires character_key and display_name.",
+                missing_fields=["characters.character_key"],
+            )
+    if not blueprint.scenes:
+        _fail("S2 creative_blueprint_v2 requires scenes[].", missing_fields=["scenes"])
+    if not blueprint.product_assets:
+        _fail("S2 creative_blueprint_v2 requires product_assets[].", missing_fields=["product_assets"])
+    if not blueprint.asset_generation_specs:
+        _fail(
+            "S2 creative_blueprint_v2 requires asset_generation_specs[].",
+            missing_fields=["asset_generation_specs"],
+        )
+    if not blueprint.video_generation_specs:
+        _fail(
+            "S2 creative_blueprint_v2 requires video_generation_specs[].",
+            missing_fields=["video_generation_specs"],
+        )
+    if not blueprint.dialogue_or_voiceover:
+        _fail(
+            "S2 creative_blueprint_v2 requires dialogue_or_voiceover[].",
+            missing_fields=["dialogue_or_voiceover"],
+        )
+    if blueprint.subtitle_strategy is None:
+        _fail("S2 creative_blueprint_v2 requires subtitle_strategy.", missing_fields=["subtitle_strategy"])
+    if not blueprint.continuity_rules:
+        _fail("S2 creative_blueprint_v2 requires continuity_rules[].", missing_fields=["continuity_rules"])
+    if not blueprint.execution_notes:
+        _fail("S2 creative_blueprint_v2 requires execution_notes[].", missing_fields=["execution_notes"])
+
+    for cr in blueprint.continuity_rules or []:
+        if str(getattr(cr, "severity", "") or "").strip().lower() == "medium":
+            logger.warning(
+                "[CONTINUITY_RULE_SEVERITY_MEDIUM] rule_key=%s applies_to=%s",
+                getattr(cr, "rule_key", ""),
+                getattr(cr, "applies_to", ""),
+            )
+
+    char_keys = {str(c.character_key).strip() for c in blueprint.characters if str(c.character_key or "").strip()}
+    scene_keys = {str(s.scene_key).strip() for s in blueprint.scenes if str(s.scene_key or "").strip()}
+    prod_keys = {str(p.product_asset_key).strip() for p in blueprint.product_assets if str(p.product_asset_key or "").strip()}
+    asset_keys: set[str] = set()
+    kinds: set[str] = set()
+    seen_asset_keys: set[str] = set()
+    for spec in blueprint.asset_generation_specs:
+        ak = str(spec.asset_key or "").strip()
+        if not ak:
+            _fail(
+                "S2 asset_generation_specs each require asset_key.",
+                missing_fields=["asset_generation_specs.asset_key"],
+            )
+        if ak in seen_asset_keys:
+            _fail(
+                f"S2 asset_generation_specs duplicate asset_key {ak!r}.",
+                missing_fields=["asset_generation_specs.asset_key"],
+            )
+        seen_asset_keys.add(ak)
+        asset_keys.add(ak)
+
+        kind = str(spec.asset_kind or "").strip()
+        if kind not in _VALID_V2_ASSET_KINDS:
+            _fail(
+                f"S2 asset_generation_specs[{ak}] invalid asset_kind {kind!r} (expected character|scene|product).",
+                missing_fields=["asset_generation_specs.asset_kind"],
+            )
+        kinds.add(kind)
+
+        disp = str(spec.display_name or "").strip()
+        img = str(spec.image_prompt or "").strip()
+        desc = str(getattr(spec, "description", "") or "").strip()
+        if not (img or desc or disp):
+            _fail(
+                f"S2 asset_generation_specs[{ak}] requires at least one of image_prompt, description, display_name.",
+                missing_fields=["asset_generation_specs.display_or_prompt"],
+            )
+
+        lk = str(spec.linked_entity_key or "").strip()
+        if spec.asset_kind == "character" and lk not in char_keys:
+            _fail(
+                f"S2 asset_generation_specs linked_entity_key {lk!r} must match characters[].character_key.",
+                missing_fields=["asset_generation_specs.linked_entity_key"],
+            )
+        if spec.asset_kind == "scene" and lk not in scene_keys:
+            _fail(
+                f"S2 asset_generation_specs linked_entity_key {lk!r} must match scenes[].scene_key.",
+                missing_fields=["asset_generation_specs.linked_entity_key"],
+            )
+        if spec.asset_kind == "product" and lk not in prod_keys:
+            _fail(
+                f"S2 asset_generation_specs linked_entity_key {lk!r} must match product_assets[].product_asset_key.",
+                missing_fields=["asset_generation_specs.linked_entity_key"],
+            )
+
+    if not {"character", "scene", "product"}.issubset(kinds):
+        _fail(
+            "S2 asset_generation_specs must include at least one character, one scene, and one product spec.",
+            missing_fields=["asset_generation_specs.asset_kind"],
+        )
+
+    seg_ids = {str(x.segment_id or "").strip() for x in blueprint.segment_plan if str(x.segment_id or "").strip()}
+    vid_rows = list(blueprint.video_generation_specs or [])
+    video_spec_segment_ids: list[str] = []
+    for vidx, vs in enumerate(vid_rows):
+        sid = str(vs.segment_id or "").strip()
+        if not sid:
+            _fail(
+                f"S2 video_generation_specs[{vidx}] requires segment_id.",
+                missing_fields=["video_generation_specs.segment_id"],
+            )
+        video_spec_segment_ids.append(sid)
+    if len(video_spec_segment_ids) != len(set(video_spec_segment_ids)):
+        _fail(
+            "S2 video_generation_specs must not repeat segment_id; at most one row per segment.",
+            missing_fields=["video_generation_specs.segment_id"],
+        )
+    spec_id_set = set(video_spec_segment_ids)
+    if spec_id_set != seg_ids:
+        missing = sorted(seg_ids - spec_id_set)
+        extra = sorted(spec_id_set - seg_ids)
+        detail_parts: list[str] = []
+        if missing:
+            detail_parts.append(f"missing segment_id coverage for {missing!r}")
+        if extra:
+            detail_parts.append(f"unknown segment_id {extra!r}")
+        _fail(
+            "S2 video_generation_specs segment_id set must exactly match segment_plan segment_id set "
+            f"({'; '.join(detail_parts)}).",
+            missing_fields=["video_generation_specs.segment_id"],
+        )
+
+    for vidx, vs in enumerate(vid_rows):
+        if not str(vs.video_prompt or "").strip():
+            _fail(
+                f"S2 video_generation_specs[{vidx}] requires video_prompt.",
+                missing_fields=["video_generation_specs.video_prompt"],
+            )
+        if float(vs.duration_sec or 0.0) <= 0:
+            _fail(
+                f"S2 video_generation_specs[{vidx}] requires duration_sec > 0.",
+                missing_fields=["video_generation_specs.duration_sec"],
+            )
+        for rk in vs.reference_asset_keys or []:
+            rks = str(rk).strip()
+            if rks and rks not in asset_keys:
+                _fail(
+                    "S2 video_generation_specs reference_asset_keys must exist in asset_generation_specs.asset_key "
+                    f"(missing {rks!r}).",
+                    missing_fields=["video_generation_specs.reference_asset_keys"],
+                )
+
+
+def _warn_brand_seeding_risk_terms(*, project_id: Any, field: str, text: str) -> None:
+    if not text or not _contains_terms(str(text), _BRAND_SEEDING_BANNED_TERMS):
+        return
+    logger.warning(
+        "[S2_BRAND_SEEDING_RISK_TERM_WARNING] project_id=%s field=%s",
+        project_id,
+        f"brand_seeding_risk_terms:{field}",
+    )
+
+
+def _validate_executable_shot_plan(
+    shot_plan: Any,
+    *,
+    segment_plan_len: int,
+    project_id: Any,
+) -> None:
+    if not isinstance(shot_plan, dict):
+        logger.warning(
+            "[AI_BLUEPRINT_VALIDATE_FAILED] project_id=%s missing_field=%s",
+            project_id,
+            "shot_plan",
+        )
+        raise ShortDramaInvalidModelOutputError(
+            "S2 blueprint must include a shot_plan object; regenerate S2 or complete the blueprint.",
+            code="ai_blueprint_validate_failed",
+            missing_fields=["shot_plan"],
+        )
+    segments = shot_plan.get("segments")
+    if not isinstance(segments, list) or len(segments) == 0:
+        logger.warning(
+            "[AI_BLUEPRINT_VALIDATE_FAILED] project_id=%s missing_field=%s",
+            project_id,
+            "shot_plan.segments",
+        )
+        raise ShortDramaInvalidModelOutputError(
+            "S2 shot_plan.segments is missing or empty; regenerate S2 or add segments with shots.",
+            code="ai_blueprint_validate_failed",
+            missing_fields=["shot_plan.segments"],
+        )
+    if len(segments) != segment_plan_len:
+        logger.warning(
+            "[AI_BLUEPRINT_VALIDATE_FAILED] project_id=%s missing_field=%s",
+            project_id,
+            "shot_plan.segments.length_mismatch",
+        )
+        raise ShortDramaInvalidModelOutputError(
+            "S2 shot_plan segment count must match segment_plan length; regenerate S2.",
+            code="ai_blueprint_validate_failed",
+            missing_fields=["shot_plan.segments.length_mismatch"],
+        )
+    for idx, seg in enumerate(segments):
+        sid = str((seg or {}).get("id") or f"seg_{idx + 1}") if isinstance(seg, dict) else f"seg_{idx + 1}"
+        if not isinstance(seg, dict):
+            logger.warning(
+                "[AI_BLUEPRINT_VALIDATE_FAILED] project_id=%s segment_id=%s missing_field=%s",
+                project_id,
+                sid,
+                "shot_plan.segments[i]",
+            )
+            raise ShortDramaInvalidModelOutputError(
+                f"S2 shot_plan segment {idx} is invalid; regenerate S2.",
+                segment_id=sid,
+                code="ai_blueprint_validate_failed",
+                missing_fields=["shot_plan.segments[i]"],
+            )
+        shots = seg.get("shots")
+        if not isinstance(shots, list) or len(shots) == 0:
+            logger.warning(
+                "[AI_BLUEPRINT_VALIDATE_FAILED] project_id=%s segment_id=%s missing_field=%s",
+                project_id,
+                sid,
+                "shots",
+            )
+            raise ShortDramaInvalidModelOutputError(
+                f"S2 shot_plan segment {sid!r} has no shots; regenerate S2 or add shots.",
+                segment_id=sid,
+                code="ai_blueprint_validate_failed",
+                missing_fields=["shots"],
+            )
 
 
 def _normalize_story_style(raw: Any) -> str:
@@ -517,6 +896,7 @@ def _market_is_japan(target_market: str) -> bool:
 
 
 def _market_visual_constraints(target_market: str, target_audience: str) -> Dict[str, Any]:
+    """legacy-only: used by _normalize_blueprint_legacy_for_execution / legacy asset_requirements merge; never for creative_blueprint_v2."""
     base = {
         "target_market": target_market or "North America",
         "target_audience": target_audience,
@@ -551,6 +931,7 @@ def _market_visual_constraints(target_market: str, target_audience: str) -> Dict
 
 
 def _visual_style_constraints(visual_style: Any, target_market: str) -> Dict[str, Any]:
+    """legacy-only: used by legacy S2 normalize; never for creative_blueprint_v2."""
     name = str(visual_style or "").strip() or "写实电影感"
     lowered = name.lower()
     if name in {"写实电影感", "cinematic"} or "real" in lowered or "cinematic" in lowered:
@@ -592,6 +973,7 @@ def _asset_requirements_with_market_constraints(
     brand_tone: str,
     creative_brief: str,
 ) -> Dict[str, Any]:
+    """legacy-only: merged into legacy-normalized blueprints; never invoked for creative_blueprint_v2."""
     req = dict(asset_requirements or {})
     req.setdefault("characters", [])
     req.setdefault("scenes", [])
@@ -672,37 +1054,6 @@ def _log_framework_alignment(
     )
 
 
-def _framework_for_goal(marketing_goal: str, workflow_language: str, product: ProductContextSchema, creative_brief: str) -> Dict[str, Any]:
-    goal = marketing_goal if marketing_goal in _FRAMEWORK_DEFS else "brand_seeding"
-    spec = _FRAMEWORK_DEFS[goal]
-    script_type = _SCRIPT_STRUCTURE_BY_GOAL.get(goal, "scene_pain_solution")
-    name = spec["name"]
-    if workflow_language.startswith("en"):
-        name = script_type.replace("_", " ").title()
-    reason_zh = f"基于项目营销目标“{_FRAMEWORK_FALLBACK_ZH.get(goal, '品牌种草型')}”、产品语境“{product.product_name}”与时长节奏，选择 {script_type} 结构。"
-    reason = reason_zh if workflow_language.startswith("zh") else (
-        f"Framework follows {script_type} and product context of {product.product_name}, aligned with creative brief."
-    )
-    return {
-        "type": script_type,
-        "marketing_goal": goal,
-        "name": name,
-        "structure": list(spec["structure"]),
-        "reason": reason if creative_brief else reason.replace("与创意说明", "与项目目标"),
-        "segment_names": list(spec["segment_names"]),
-    }
-
-
-def _safe_segment_placeholder(stage_name: str) -> dict[str, str]:
-    label = stage_name or "段落"
-    return {
-        "title": f"待补充：{label}",
-        "goal": "待补充",
-        "summary": "",
-        "transition": "待补充",
-    }
-
-
 def _validate_story_content_quality(blueprint: StoryBlueprintSchema, product: ProductContextSchema) -> None:
     product_name = str(product.product_name or "").strip()
     for segment in blueprint.segment_plan or []:
@@ -718,12 +1069,368 @@ def _validate_story_content_quality(blueprint: StoryBlueprintSchema, product: Pr
             raise ShortDramaInvalidModelOutputError("S2 segment_title is too templated")
 
 
+def _validate_segment_plan_row(
+    *,
+    idx: int,
+    item: SegmentPlanItemSchema,
+    sid: str,
+    project_id: Any,
+    is_brand_seeding: bool,
+) -> None:
+    row_label = str(getattr(item, "segment_id", None) or "").strip() or f"row_{idx + 1}"
+    if not str(getattr(item, "segment_id", None) or "").strip():
+        logger.warning(
+            "[AI_BLUEPRINT_VALIDATE_FAILED] project_id=%s segment_id=%s missing_field=%s",
+            project_id,
+            row_label,
+            "segment_id",
+        )
+        raise ShortDramaInvalidModelOutputError(
+            f"S2 segment row {idx + 1} missing segment_id; regenerate S2.",
+            segment_id=None,
+            code="ai_blueprint_validate_failed",
+            missing_fields=["segment_id"],
+        )
+
+    title = str(item.segment_title or item.title or item.stage_name or "").strip()
+    if not title:
+        logger.warning(
+            "[AI_BLUEPRINT_VALIDATE_FAILED] project_id=%s segment_id=%s missing_field=%s",
+            project_id,
+            sid,
+            "segment_title",
+        )
+        raise ShortDramaInvalidModelOutputError(
+            f"S2 segment {sid} missing segment_title/title/stage_name; regenerate S2.",
+            segment_id=sid,
+            code="ai_blueprint_validate_failed",
+            missing_fields=["segment_title"],
+        )
+    goal = str(item.segment_goal or item.goal or item.key_message or "").strip()
+    if not goal:
+        logger.warning(
+            "[AI_BLUEPRINT_VALIDATE_FAILED] project_id=%s segment_id=%s missing_field=%s",
+            project_id,
+            sid,
+            "segment_goal",
+        )
+        raise ShortDramaInvalidModelOutputError(
+            f"S2 segment {sid} missing segment_goal/goal/key_message; regenerate S2.",
+            segment_id=sid,
+            code="ai_blueprint_validate_failed",
+            missing_fields=["segment_goal"],
+        )
+    narrative = str(item.summary or item.story_beat or "").strip()
+    if not narrative:
+        logger.warning(
+            "[AI_BLUEPRINT_VALIDATE_FAILED] project_id=%s segment_id=%s missing_field=%s",
+            project_id,
+            sid,
+            "summary",
+        )
+        raise ShortDramaInvalidModelOutputError(
+            f"S2 segment {sid} missing summary/story_beat; regenerate S2.",
+            segment_id=sid,
+            code="ai_blueprint_validate_failed",
+            missing_fields=["summary"],
+        )
+    raw_duration = float(item.duration_seconds or item.duration_sec or 0.0)
+    if raw_duration <= 0:
+        logger.warning(
+            "[AI_BLUEPRINT_VALIDATE_FAILED] project_id=%s segment_id=%s missing_field=%s",
+            project_id,
+            sid,
+            "duration_seconds",
+        )
+        raise ShortDramaInvalidModelOutputError(
+            f"S2 segment {sid} missing positive duration_seconds/duration_sec; regenerate S2.",
+            segment_id=sid,
+            code="ai_blueprint_validate_failed",
+            missing_fields=["duration_seconds"],
+        )
+    asset_lists = [
+        *(item.required_assets or []),
+        *(item.expected_assets or []),
+        *(item.required_visual_elements or []),
+    ]
+    if not any(str(x or "").strip() for x in asset_lists):
+        logger.warning(
+            "[AI_BLUEPRINT_VALIDATE_FAILED] project_id=%s segment_id=%s missing_field=%s",
+            project_id,
+            sid,
+            "required_assets",
+        )
+        raise ShortDramaInvalidModelOutputError(
+            f"S2 segment {sid} missing required_assets/expected_assets/required_visual_elements; regenerate S2.",
+            segment_id=sid,
+            code="ai_blueprint_validate_failed",
+            missing_fields=["required_assets"],
+        )
+    if is_brand_seeding:
+        beat_text = str(item.stage_name or item.story_beat or item.summary or "").strip()
+        _warn_brand_seeding_risk_terms(project_id=project_id, field="summary", text=narrative)
+        _warn_brand_seeding_risk_terms(project_id=project_id, field="goal", text=goal)
+        _warn_brand_seeding_risk_terms(project_id=project_id, field="story_beat", text=beat_text)
+
+
+def _normalize_blueprint_v2_for_execution(
+    blueprint: StoryBlueprintSchema,
+    product: ProductContextSchema,
+    project_config: Dict[str, Any],
+) -> StoryBlueprintSchema:
+    """creative_blueprint_v2: engineering validation + segment timing; preserve Grok creative fields verbatim."""
+    pid = project_config.get("project_id")
+
+    def _value_type(v: Any) -> str:
+        if v is None:
+            return "null"
+        if isinstance(v, dict):
+            return "dict"
+        if isinstance(v, list):
+            return "list"
+        if isinstance(v, str):
+            return "str"
+        return type(v).__name__
+
+    for fp in (
+        "story_framework",
+        "market_visual_constraints",
+        "visual_style_constraints",
+        "story_structure",
+        "marketing_strategy",
+        "spoken_strategy",
+        "asset_requirements",
+        "scene_goals",
+        "product_selling_point_mapping",
+        "visual_requirements",
+        "must_show_elements",
+        "must_avoid_elements",
+        "dialogue_tone",
+        "target_user_expression",
+    ):
+        logger.warning(
+            "[S2_V2_NORMALIZE_CREATIVE_FIELD_PRESERVED] %s",
+            json.dumps(
+                {
+                    "project_id": pid,
+                    "field_path": fp,
+                    "value_type": _value_type(getattr(blueprint, fp, None)),
+                    "reason": "creative_blueprint_v2_preserve_ai_output",
+                },
+                ensure_ascii=False,
+                default=str,
+            ),
+        )
+
+    explicit_creative_context = isinstance(project_config.get("creative_brief_data"), dict)
+    creative_brief_data = (
+        project_config.get("creative_brief_data")
+        if explicit_creative_context
+        else build_creative_brief(project_config, product)
+    )
+    project_constraints = creative_brief_data.get("project_constraints") if isinstance(creative_brief_data.get("project_constraints"), dict) else {}
+    total = float(project_constraints.get("duration_sec") or _duration_budget_seconds(project_config.get("duration")))
+
+    plan = list(blueprint.segment_plan or [])
+    if not plan:
+        raise ShortDramaInvalidModelOutputError("S2 segment_plan is empty")
+
+    workflow_language = str((project_config.get("workflow_language") or "zh-CN")).strip() or "zh-CN"
+    legacy_marketing_goal = str((project_config.get("marketing_goal") or "brand_seeding")).strip() or "brand_seeding"
+    marketing_goal = legacy_marketing_goal
+    is_brand_seeding = marketing_goal == "brand_seeding"
+    target_market = str((project_config.get("target_market") or project_constraints.get("target_market") or "North America")).strip() or "North America"
+
+    script_type = str(blueprint.script_structure_type or "").strip()
+    script_type_display = str(blueprint.script_type_display or "").strip()
+    structure_reason_for_user = str(blueprint.structure_reason_for_user or blueprint.structure_reason or "").strip()
+
+    if not script_type or not script_type_display or not structure_reason_for_user:
+        logger.warning(
+            "[AI_BLUEPRINT_VALIDATE_FAILED] project_id=%s missing_field=%s",
+            pid,
+            "script_type_or_display_or_reason",
+        )
+        if explicit_creative_context:
+            raise ShortDramaInvalidModelOutputError(
+                "S2 provider must output script_structure_type, script_type_display, and structure_reason_for_user.",
+                code="ai_blueprint_validate_failed",
+                missing_fields=["script_structure_type"],
+            )
+        raise ShortDramaInvalidModelOutputError(
+            "S2 must output script_structure_type, script_type_display, and structure_reason_for_user; regenerate S2.",
+            code="ai_blueprint_validate_failed",
+            missing_fields=["script_type_display"],
+        )
+
+    _validate_executable_shot_plan(blueprint.shot_plan, segment_plan_len=len(plan), project_id=pid)
+
+    next_plan: list[SegmentPlanItemSchema] = []
+    for idx, item in enumerate(plan):
+        raw_sid = str(item.segment_id or "").strip()
+        if not raw_sid:
+            logger.warning(
+                "[AI_BLUEPRINT_VALIDATE_FAILED] project_id=%s segment_id=%s missing_field=%s",
+                pid,
+                f"row_{idx + 1}",
+                "segment_id",
+            )
+            raise ShortDramaInvalidModelOutputError(
+                f"S2 segment row {idx + 1} missing segment_id; regenerate S2.",
+                segment_id=None,
+                code="ai_blueprint_validate_failed",
+                missing_fields=["segment_id"],
+            )
+        sid = raw_sid
+        _validate_segment_plan_row(
+            idx=idx,
+            item=item,
+            sid=sid,
+            project_id=pid,
+            is_brand_seeding=is_brand_seeding,
+        )
+        raw_duration = float(item.duration_seconds or item.duration_sec or 0.0)
+        if raw_duration > 10.0:
+            logger.warning(
+                "[AI_BLUEPRINT_VALIDATE_FAILED] project_id=%s segment_id=%s missing_field=%s",
+                pid,
+                sid,
+                "duration_seconds_over_provider_max",
+            )
+            raise ShortDramaInvalidModelOutputError(
+                f"S2 segment {sid} duration_seconds {raw_duration} exceeds provider maximum 10.0; shorten segment or split; regenerate S2.",
+                segment_id=sid,
+                code="ai_blueprint_validate_failed",
+                missing_fields=["duration_seconds"],
+            )
+        normalized_duration = raw_duration
+        next_plan.append(
+            item.model_copy(
+                update={
+                    "segment_id": sid,
+                    "duration_seconds": normalized_duration,
+                    "duration_sec": normalized_duration,
+                }
+            )
+        )
+
+    seg_ids = [x.segment_id for x in next_plan]
+    if len(seg_ids) != len(set(seg_ids)):
+        logger.warning(
+            "[AI_BLUEPRINT_VALIDATE_FAILED] project_id=%s missing_field=%s",
+            pid,
+            "segment_id_uniqueness",
+        )
+        raise ShortDramaInvalidModelOutputError(
+            "S2 segment_id values must be unique; regenerate S2.",
+            code="ai_blueprint_validate_failed",
+            missing_fields=["segment_id"],
+        )
+
+    requested_segment_count = len(plan)
+    actual_total_duration = round(sum(float(x.duration_seconds or 0.0) for x in next_plan), 1)
+    max_segment_duration = round(max((float(x.duration_seconds or 0.0) for x in next_plan), default=0.0), 1)
+    desired_segment_count = _segment_count_for_project(total, project_config, product)
+    logger.info(
+        "[S2_SEGMENT_DURATION_SUMMARY] project_id=%s target_total_duration=%s actual_total_duration=%s segment_count=%s max_segment_duration=%s requested_segment_count=%s desired_segment_count=%s",
+        project_config.get("project_id"),
+        round(total, 1),
+        actual_total_duration,
+        len(next_plan),
+        max_segment_duration,
+        requested_segment_count,
+        desired_segment_count,
+    )
+    if total > 0 and actual_total_duration < (0.8 * total):
+        logger.warning(
+            "[S2_SEGMENT_DURATION_UNDER_TARGET] project_id=%s target_total_duration=%s actual_total_duration=%s segment_count=%s max_segment_duration=%s",
+            project_config.get("project_id"),
+            round(total, 1),
+            actual_total_duration,
+            len(next_plan),
+            max_segment_duration,
+        )
+
+    lp_in: Dict[str, str] = dict(blueprint.language_policy) if isinstance(blueprint.language_policy, dict) else {}
+    video_language = str(
+        (project_config.get("video_language") or lp_in.get("video_language") or lp_in.get("workflow_language") or workflow_language)
+    ).strip() or workflow_language
+    language_policy = {
+        "workflow_language": str(lp_in.get("workflow_language") or workflow_language).strip() or workflow_language,
+        "video_language": video_language,
+        "target_market": str(lp_in.get("target_market") or target_market).strip() or target_market,
+    }
+
+    brand_tone = str((project_config.get("brand_tone") or "natural")).strip() or "natural"
+    creative_brief = str((project_config.get("creative_brief") or "")).strip()
+    hook_text = str(blueprint.hook or "")
+    conflict_text = str(blueprint.core_conflict or "")
+    twist_text = str(blueprint.twist or "")
+    resolution_text = str(blueprint.resolution or "")
+    if is_brand_seeding:
+        _warn_brand_seeding_risk_terms(project_id=pid, field="hook", text=hook_text)
+        _warn_brand_seeding_risk_terms(project_id=pid, field="core_conflict", text=conflict_text)
+        _warn_brand_seeding_risk_terms(project_id=pid, field="twist", text=twist_text)
+        _warn_brand_seeding_risk_terms(project_id=pid, field="resolution", text=resolution_text)
+
+    meta_out = dict(blueprint.meta or {})
+    if pid is not None:
+        meta_out.setdefault("project_id", pid)
+    # normalize_execution is diagnostic-only; S3/S4 must not treat it as creative input.
+    meta_out.setdefault("schema_version", CREATIVE_BLUEPRINT_V2_SCHEMA)
+    nest_prev = meta_out.get("normalize_execution") if isinstance(meta_out.get("normalize_execution"), dict) else {}
+    nest = dict(nest_prev)
+    nest.update(
+        {
+            "marketing_goal": marketing_goal,
+            "target_audience": blueprint.target_audience,
+            "brand_tone": brand_tone,
+            "creative_brief": creative_brief,
+            "story_style": _normalize_story_style(project_config.get("style")),
+            "diagnostic_dimensions": _diagnostic_dimensions(script_type),
+        }
+    )
+    meta_out["normalize_execution"] = nest
+
+    upd: Dict[str, Any] = {
+        "blueprint_schema_version": CREATIVE_BLUEPRINT_V2_SCHEMA,
+        "segment_plan": next_plan,
+        "language_policy": language_policy,
+        "meta": meta_out,
+    }
+    return blueprint.model_copy(update=upd)
+
+
 def _normalize_blueprint_for_execution(
     blueprint: StoryBlueprintSchema,
     product: ProductContextSchema,
     project_config: Dict[str, Any],
 ) -> StoryBlueprintSchema:
-    """Fill execution-critical S2 fields so S3 consumes explicit structure, not loose prose."""
+    ver = str(getattr(blueprint, "blueprint_schema_version", None) or "").strip()
+    if ver == CREATIVE_BLUEPRINT_V2_SCHEMA:
+        normalized = _normalize_blueprint_v2_for_execution(blueprint, product, project_config)
+        _validate_creative_blueprint_v2(normalized, project_id=project_config.get("project_id"))
+        return normalized
+    logger.warning(
+        "[S2_LEGACY_NORMALIZE_PATH] %s",
+        json.dumps(
+            {
+                "project_id": project_config.get("project_id"),
+                "incoming_blueprint_schema_version": ver or None,
+            },
+            ensure_ascii=False,
+            default=str,
+        ),
+    )
+    return _normalize_blueprint_legacy_for_execution(blueprint, product, project_config)
+
+
+def _normalize_blueprint_legacy_for_execution(
+    blueprint: StoryBlueprintSchema,
+    product: ProductContextSchema,
+    project_config: Dict[str, Any],
+) -> StoryBlueprintSchema:
+    """legacy-only: pre-v2 blueprints; rewrites segment_plan and injects market/style constraints — never for creative_blueprint_v2."""
     explicit_creative_context = isinstance(project_config.get("creative_brief_data"), dict)
     creative_brief_data = (
         project_config.get("creative_brief_data")
@@ -734,13 +1441,23 @@ def _normalize_blueprint_for_execution(
     model_structure = blueprint.story_framework if isinstance(blueprint.story_framework, dict) else {}
     legacy_marketing_goal = str((project_config.get("marketing_goal") or "brand_seeding")).strip() or "brand_seeding"
     stages = [str(x).strip() for x in (model_structure.get("structure") or []) if str(x).strip()]
-    if not stages and not explicit_creative_context and legacy_marketing_goal in _FRAMEWORK_DEFS:
-        stages = [str(x).strip() for x in _FRAMEWORK_DEFS[legacy_marketing_goal].get("structure", []) if str(x).strip()]
     if not stages:
-        stages = [str(x.stage_name or x.story_beat or x.segment_title or f"段落{idx + 1}").strip() for idx, x in enumerate(blueprint.segment_plan or [])]
+        stages = [
+            str(x.segment_title or x.title or x.stage_name or x.story_beat or "").strip()
+            for x in (blueprint.segment_plan or [])
+        ]
     stages = [x for x in stages if x]
     if not stages:
-        raise ShortDramaInvalidModelOutputError("S2 provider must output story structure or segment_plan")
+        logger.warning(
+            "[AI_BLUEPRINT_VALIDATE_FAILED] project_id=%s missing_field=%s",
+            project_config.get("project_id"),
+            "story_framework.structure",
+        )
+        raise ShortDramaInvalidModelOutputError(
+            "S2 must provide story_framework.structure or segment titles on segment_plan; regenerate S2.",
+            code="ai_blueprint_validate_failed",
+            missing_fields=["story_framework.structure"],
+        )
     stage_names = stages
     total = float(project_constraints.get("duration_sec") or _duration_budget_seconds(project_config.get("duration")))
     requested_segment_count = len(blueprint.segment_plan or [])
@@ -748,9 +1465,6 @@ def _normalize_blueprint_for_execution(
     minimum_provider_safe_count = max(1, int((total + 9.999) // 10))
     segment_count = max(requested_segment_count, len(stages), desired_segment_count, minimum_provider_safe_count)
     segment_count = max(1, min(8, segment_count))
-    durations = _segment_durations(total, segment_count)
-    points = [p for p in product.core_selling_points if p]
-    visual_features = [v for v in product.visual_features if v]
     plan = list(blueprint.segment_plan or [])
     workflow_language = str((project_config.get("workflow_language") or "zh-CN")).strip() or "zh-CN"
     marketing_goal = legacy_marketing_goal
@@ -763,14 +1477,23 @@ def _normalize_blueprint_for_execution(
     structure_reason_for_user = str(
         blueprint.structure_reason_for_user or blueprint.structure_reason or model_structure.get("reason") or ""
     ).strip()
-    if (not script_type or not script_type_display or not structure_reason_for_user) and explicit_creative_context:
-        raise ShortDramaInvalidModelOutputError("S2 provider must output script type and structure reason")
-    if not script_type:
-        script_type = marketing_goal if not explicit_creative_context else "story_drama"
-    if not script_type_display:
-        script_type_display = "短视频广告"
-    if not structure_reason_for_user:
-        structure_reason_for_user = "基于已有剧本字段整理为可执行结构。"
+    if not script_type or not script_type_display or not structure_reason_for_user:
+        logger.warning(
+            "[AI_BLUEPRINT_VALIDATE_FAILED] project_id=%s missing_field=%s",
+            project_config.get("project_id"),
+            "script_type_or_display_or_reason",
+        )
+        if explicit_creative_context:
+            raise ShortDramaInvalidModelOutputError(
+                "S2 provider must output script_structure_type, script_type_display, and structure_reason_for_user.",
+                code="ai_blueprint_validate_failed",
+                missing_fields=["script_structure_type"],
+            )
+        raise ShortDramaInvalidModelOutputError(
+            "S2 must output script_structure_type, script_type_display, and structure_reason_for_user; regenerate S2.",
+            code="ai_blueprint_validate_failed",
+            missing_fields=["script_type_display"],
+        )
     framework = {
         "type": script_type,
         "marketing_goal": marketing_goal,
@@ -779,7 +1502,6 @@ def _normalize_blueprint_for_execution(
         "reason": structure_reason_for_user,
         "segment_names": stage_names,
     }
-    defaults = tuple(stage_names)
     if len(plan) != segment_count and explicit_creative_context:
         logger.warning(
             "[AI_CHAIN_TRACE][S2_SEGMENT_STRUCTURE_LENGTH_MISMATCH] %s",
@@ -801,71 +1523,85 @@ def _normalize_blueprint_for_execution(
     if not plan:
         raise ShortDramaInvalidModelOutputError("S2 segment_plan is empty")
     is_brand_seeding = marketing_goal == "brand_seeding"
+    pid = project_config.get("project_id")
+    _validate_executable_shot_plan(blueprint.shot_plan, segment_plan_len=len(plan), project_id=pid)
+    shot_plan = dict(blueprint.shot_plan or {}) if isinstance(blueprint.shot_plan, dict) else {}
+
     next_plan: list[SegmentPlanItemSchema] = []
-    mapping = dict(blueprint.product_selling_point_mapping or {})
+    mapping: dict[str, str] = (
+        dict(blueprint.product_selling_point_mapping)
+        if isinstance(blueprint.product_selling_point_mapping, dict)
+        else {}
+    )
     for idx, item in enumerate(plan):
         sid = f"seg_{idx + 1}"
-        stage_default = defaults[min(idx, len(defaults) - 1)] if defaults else f"段落{idx + 1}"
-        fallback_goal = framework["structure"][min(idx, len(framework["structure"]) - 1)]
-        selling_point = (
-            item.source_selling_point
-            or mapping.get(sid)
-            or (points[idx] if idx < len(points) else (points[-1] if points else ""))
+        _validate_segment_plan_row(
+            idx=idx,
+            item=item,
+            sid=sid,
+            project_id=pid,
+            is_brand_seeding=is_brand_seeding,
         )
-        summary = item.summary or ""
-        if idx == 0 and blueprint.hook and blueprint.hook not in summary:
-            summary = f"{blueprint.hook}；{summary}".strip("；")
-        if is_brand_seeding:
-            summary = _sanitize_brand_seeding_text(summary, fallback_goal)
-        req_visual = list(dict.fromkeys([*item.required_visual_elements, *visual_features[:3]]))
-        story_beat = stage_default
-        goal = item.segment_goal or item.goal or ""
-        if is_brand_seeding:
-            story_beat = _sanitize_brand_seeding_text(story_beat, stage_default)
-            goal = _sanitize_brand_seeding_text(goal, fallback_goal)
-        asset_req = list(item.required_assets or item.expected_assets or [])
-        placeholder = _safe_segment_placeholder(story_beat)
-        raw_duration = float(item.duration_seconds or item.duration_sec or durations[idx] or 0.0)
-        if raw_duration <= 0:
-            raw_duration = float(durations[idx] or 6.0)
+        story_beat = str(
+            item.stage_name or item.story_beat or item.segment_title or item.title or item.summary or ""
+        ).strip()
+        summary = str(item.summary or item.story_beat or "").strip()
+        goal = str(item.segment_goal or item.goal or item.key_message or "").strip()
+        selling_point = str(item.source_selling_point or mapping.get(sid, "")).strip()
+        raw_duration = float(item.duration_seconds or item.duration_sec or 0.0)
         normalized_duration = raw_duration
         if normalized_duration > 10.0:
             logger.warning(
                 "[S2_SEGMENT_DURATION_CLAMPED] project_id=%s segment_id=%s requested_duration=%s provider_max_duration=%s",
-                project_config.get("project_id"),
+                pid,
                 sid,
                 raw_duration,
                 10.0,
             )
             normalized_duration = 10.0
+        req_visual = list(dict.fromkeys([x for x in (item.required_visual_elements or []) if str(x or "").strip()]))
+        req_assets = list(item.required_assets or [])
+        exp_assets = list(item.expected_assets or [])
         next_plan.append(
             item.model_copy(
                 update={
                     "segment_id": sid,
                     "stage_name": story_beat,
-                    "title": item.title or placeholder["title"],
-                    "segment_title": item.segment_title or item.title or placeholder["title"],
-                    "segment_goal": goal or placeholder["goal"],
+                    "title": str(item.title or item.segment_title or item.stage_name or "").strip(),
+                    "segment_title": str(item.segment_title or item.title or item.stage_name or "").strip(),
+                    "segment_goal": goal,
                     "duration_seconds": normalized_duration,
                     "duration_sec": normalized_duration,
                     "story_beat": story_beat,
-                    "segment_role": item.segment_role or story_beat or fallback_goal,
-                    "goal": goal or placeholder["goal"],
+                    "segment_role": str(item.segment_role or "").strip(),
+                    "goal": goal,
                     "summary": summary,
-                    "emotional_state": item.emotional_state or "",
-                    "product_exposure": item.product_exposure or item.product_exposure_mode or "",
+                    "emotional_state": str(item.emotional_state or "").strip(),
+                    "product_exposure": str(item.product_exposure or item.product_exposure_mode or "").strip(),
                     "source_selling_point": selling_point,
-                    "key_message": item.key_message or selling_point or (points[0] if points else product.product_summary),
-                    "product_feature_to_show": item.product_feature_to_show or (visual_features[idx] if idx < len(visual_features) else ""),
-                    "target_user_trigger": item.target_user_trigger or "、".join(product.target_users[:2]),
+                    "key_message": str(item.key_message or "").strip(),
+                    "product_feature_to_show": str(item.product_feature_to_show or "").strip(),
+                    "target_user_trigger": str(item.target_user_trigger or "").strip(),
                     "required_visual_elements": req_visual,
-                    "expected_assets": item.expected_assets or asset_req or req_visual[:4],
-                    "required_assets": item.required_assets or asset_req or req_visual[:4],
-                    "transition_to_next": item.transition_to_next or placeholder["transition"],
+                    "expected_assets": exp_assets,
+                    "required_assets": req_assets,
+                    "transition_to_next": str(item.transition_to_next or "").strip(),
                 }
             )
         )
         mapping[sid] = selling_point
+    seg_ids = [x.segment_id for x in next_plan]
+    if len(seg_ids) != len(set(seg_ids)):
+        logger.warning(
+            "[AI_BLUEPRINT_VALIDATE_FAILED] project_id=%s missing_field=%s",
+            pid,
+            "segment_id_uniqueness",
+        )
+        raise ShortDramaInvalidModelOutputError(
+            "S2 segment_id values must be unique after normalization; regenerate S2.",
+            code="ai_blueprint_validate_failed",
+            missing_fields=["segment_id"],
+        )
     actual_total_duration = round(sum(float(x.duration_seconds or 0.0) for x in next_plan), 1)
     max_segment_duration = round(max((float(x.duration_seconds or 0.0) for x in next_plan), default=0.0), 1)
     logger.info(
@@ -889,157 +1625,126 @@ def _normalize_blueprint_for_execution(
         )
     if not next_plan:
         raise ShortDramaInvalidModelOutputError("S2 segment_plan has no executable segment")
-    scene_goals = dict(blueprint.scene_goals or {})
-    for item in next_plan:
-        scene_goals[item.segment_id] = scene_goals.get(item.segment_id) or item.goal or item.summary
-    visual_requirements = list(
-        dict.fromkeys(
-            [
-                *blueprint.visual_requirements,
-                *visual_features,
-                *(product.consistency_notes or []),
-                str(project_config.get("visual_style") or "").strip(),
-                f"composition aspect ratio {project_config.get('aspect_ratio') or '9:16'}",
-            ]
-        )
+    aspect_ratio = str(project_config.get("aspect_ratio") or "").strip()
+    scene_goals_out: Any = (
+        dict(blueprint.scene_goals) if isinstance(blueprint.scene_goals, dict) else blueprint.scene_goals
     )
+    visual_lines = _visual_requirements_as_str_list(blueprint.visual_requirements)
+    if aspect_ratio:
+        visual_lines = [*visual_lines, f"composition aspect ratio {aspect_ratio}"]
+    visual_requirements_out: Any = [x for x in visual_lines if x]
     video_language = str((project_config.get("video_language") or workflow_language)).strip() or workflow_language
-    target_audience = str((project_config.get("target_audience") or "")).strip()
-    market_visual = creative_brief_data.get("market_context") if isinstance(creative_brief_data.get("market_context"), dict) else _market_visual_constraints(target_market, target_audience or "、".join(product.target_users[:2]))
-    style_visual = creative_brief_data.get("visual_constraints") if isinstance(creative_brief_data.get("visual_constraints"), dict) else _visual_style_constraints(project_config.get("visual_style"), target_market)
+    target_audience = str((project_config.get("target_audience") or blueprint.target_audience or "")).strip()
+    audience_for_market = target_audience
+    market_visual = (
+        creative_brief_data.get("market_context")
+        if isinstance(creative_brief_data.get("market_context"), dict)
+        else _market_visual_constraints(target_market, audience_for_market)
+    )
+    style_visual = (
+        creative_brief_data.get("visual_constraints")
+        if isinstance(creative_brief_data.get("visual_constraints"), dict)
+        else _visual_style_constraints(project_config.get("visual_style"), target_market)
+    )
     language_policy = {
         "workflow_language": workflow_language,
         "video_language": video_language,
         "target_market": target_market,
     }
     brand_tone = str((project_config.get("brand_tone") or "natural")).strip() or "natural"
-    marketing_strategy = dict(blueprint.marketing_strategy or {})
-    marketing_strategy.setdefault("target_audience", target_audience or "、".join(product.target_users[:2]))
-    marketing_strategy.setdefault(
-        "core_pain_point",
-        blueprint.core_pain or (blueprint.core_conflict or "").strip(),
-    )
-    marketing_strategy.setdefault("emotional_trigger", blueprint.emotional_trigger or "")
-    marketing_strategy.setdefault("product_promise", blueprint.product_promise or "")
-    marketing_strategy.setdefault("conversion_goal", blueprint.conversion_goal or "")
-    marketing_strategy.setdefault("cta", "")
+    ms_raw = blueprint.marketing_strategy
+    marketing_strategy_out: Any = dict(ms_raw) if isinstance(ms_raw, dict) else ms_raw
 
-    story_structure = dict(blueprint.story_structure or {})
-    emotional_arc = story_structure.get("emotional_arc") or blueprint.meta.get("emotional_curve") or []
-    hook_text = blueprint.hook
-    conflict_text = blueprint.core_conflict
-    twist_text = blueprint.twist
-    resolution_text = blueprint.resolution
+    hook_text = str(blueprint.hook or "")
+    conflict_text = str(blueprint.core_conflict or "")
+    twist_text = str(blueprint.twist or "")
+    resolution_text = str(blueprint.resolution or "")
     if is_brand_seeding:
-        hook_text = _sanitize_brand_seeding_text(hook_text, _BRAND_SEEDING_REWRITE["hook"])
-        conflict_text = _sanitize_brand_seeding_text(conflict_text, _BRAND_SEEDING_REWRITE["conflict"])
-        twist_text = _sanitize_brand_seeding_text(twist_text, _BRAND_SEEDING_REWRITE["twist"])
-        resolution_text = _sanitize_brand_seeding_text(resolution_text, _BRAND_SEEDING_REWRITE["resolution"])
-    story_structure.update(
-        {
-            "title": blueprint.title,
-            "premise": blueprint.premise,
-            "hook": hook_text,
-            "conflict": conflict_text,
-            "twist": twist_text,
-            "resolution": resolution_text,
-            "emotional_arc": emotional_arc,
-        }
-    )
+        _warn_brand_seeding_risk_terms(project_id=pid, field="hook", text=hook_text)
+        _warn_brand_seeding_risk_terms(project_id=pid, field="core_conflict", text=conflict_text)
+        _warn_brand_seeding_risk_terms(project_id=pid, field="twist", text=twist_text)
+        _warn_brand_seeding_risk_terms(project_id=pid, field="resolution", text=resolution_text)
+
+    ss_raw = blueprint.story_structure
+    if isinstance(ss_raw, dict):
+        story_structure_out: Any = dict(ss_raw)
+        emotional_arc = story_structure_out.get("emotional_arc") or blueprint.meta.get("emotional_curve") or []
+        story_structure_out.update(
+            {
+                "title": blueprint.title,
+                "premise": blueprint.premise,
+                "hook": hook_text,
+                "conflict": conflict_text,
+                "twist": twist_text,
+                "resolution": resolution_text,
+                "emotional_arc": emotional_arc,
+            }
+        )
+    else:
+        story_structure_out = ss_raw
+
+    sf_src = blueprint.story_framework if isinstance(blueprint.story_framework, dict) else {}
     story_framework = {
         "type": framework["type"],
         "marketing_goal": framework["marketing_goal"],
-        "name": (blueprint.story_framework or {}).get("name") or framework["name"],
-        "structure": (blueprint.story_framework or {}).get("structure") or framework["structure"],
-        "reason": (blueprint.story_framework or {}).get("reason")
-        or framework["reason"],
+        "name": sf_src.get("name") or framework["name"],
+        "structure": sf_src.get("structure") or framework["structure"],
+        "reason": sf_src.get("reason") or framework["reason"],
         "display": structure_type_display,
     }
 
-    asset_requirements = _asset_requirements_with_market_constraints(
-        dict(blueprint.asset_requirements or {}),
-        product,
-        framework,
-        project_config,
-        language_policy,
-        target_audience,
-        brand_tone,
-        creative_brief,
-    )
-    shot_plan = dict(blueprint.shot_plan or {})
-    fw_structure = story_framework.get("structure") or framework["structure"]
-    shot_segments: list[Dict[str, Any]] = []
-    for idx, item in enumerate(next_plan):
-        sid = item.segment_id
-        raw_steps = [fw_structure[min(idx, len(fw_structure) - 1)]]
-        if idx == len(next_plan) - 1 and len(fw_structure) >= 2:
-            raw_steps.append(fw_structure[-1])
-        function_text = " → ".join(dict.fromkeys([s for s in raw_steps if s]))
-        goal_text = item.goal or item.summary
-        action_text = item.summary or goal_text
-        if is_brand_seeding:
-            function_text = _sanitize_brand_seeding_text(function_text, item.story_beat or stage_default)
-            goal_text = _sanitize_brand_seeding_text(goal_text, framework["structure"][min(idx, len(framework["structure"]) - 1)])
-            action_text = _sanitize_brand_seeding_text(action_text, goal_text)
-        shot_segments.append(
-            {
-                "id": sid,
-                "name": item.story_beat or stage_default,
-                "function": function_text,
-                "goal": goal_text,
-                "action": action_text,
-                "duration": item.duration_seconds,
-                "segment_role": item.segment_role,
-                "product_exposure": item.product_exposure or item.product_exposure_mode,
-                "expected_assets": item.expected_assets,
-                "transition_to_next": item.transition_to_next,
-                "market_visual_constraints": market_visual,
-                "visual_style_constraints": style_visual,
-                "creative_brief": creative_brief_data,
-                "shots": [],
-            }
+    if isinstance(blueprint.asset_requirements, dict):
+        asset_requirements_out: Any = _asset_requirements_with_market_constraints(
+            dict(blueprint.asset_requirements),
+            product,
+            framework,
+            project_config,
+            language_policy,
+            target_audience,
+            brand_tone,
+            creative_brief,
         )
-    shot_plan["segments"] = shot_segments
-    _log_framework_alignment(project_config, story_framework, shot_segments)
-    spoken_strategy = dict(blueprint.spoken_strategy or {})
-    spoken_strategy.setdefault("default_dialogue_mode", "spoken")
-    spoken_strategy.setdefault("subtitle_allowed", True)
-    spoken_strategy.setdefault("voiceover_allowed", True)
-    spoken_strategy.setdefault("dialogue_language", video_language)
-    return blueprint.model_copy(
+    else:
+        asset_requirements_out = blueprint.asset_requirements
+
+    shot_plan_segments = shot_plan.get("segments") if isinstance(shot_plan.get("segments"), list) else []
+    _log_framework_alignment(project_config, story_framework, shot_plan_segments)
+    sp_raw = blueprint.spoken_strategy
+    spoken_strategy_out: Any = dict(sp_raw) if isinstance(sp_raw, dict) else sp_raw
+    normalized = blueprint.model_copy(
         update={
             "format": blueprint.format or str(project_config.get("format") or ""),
             "style": story_style,
             "script_title": blueprint.script_title or blueprint.title,
             "title": blueprint.title or blueprint.script_title,
-            "target_audience": target_audience or "、".join(product.target_users[:2]),
-            "core_pain": str(marketing_strategy.get("core_pain_point") or ""),
-            "emotional_trigger": str(marketing_strategy.get("emotional_trigger") or ""),
-            "product_promise": str(marketing_strategy.get("product_promise") or ""),
-            "conversion_goal": str(marketing_strategy.get("conversion_goal") or ""),
+            "target_audience": target_audience,
+            "core_pain": str(blueprint.core_pain or ""),
+            "emotional_trigger": str(blueprint.emotional_trigger or ""),
+            "product_promise": str(blueprint.product_promise or ""),
+            "conversion_goal": str(blueprint.conversion_goal or ""),
             "script_structure_type": framework["type"],
             "script_type_display": script_type_display,
             "structure_type_display": structure_type_display,
             "structure_reason": structure_reason_for_user,
             "structure_reason_for_user": structure_reason_for_user,
             "segment_plan": next_plan,
-            "scene_goals": scene_goals,
+            "scene_goals": scene_goals_out,
             "product_selling_point_mapping": mapping,
-            "target_user_expression": blueprint.target_user_expression or "、".join(product.target_users[:3]),
-            "visual_requirements": [x for x in visual_requirements if x],
-            "must_show_elements": list(dict.fromkeys([*blueprint.must_show_elements, product.product_name, *points])),
-            "must_avoid_elements": list(dict.fromkeys([*blueprint.must_avoid_elements, *product.visual_risk_notes])),
+            "target_user_expression": str(blueprint.target_user_expression or "").strip(),
+            "visual_requirements": visual_requirements_out,
+            "must_show_elements": list(dict.fromkeys([x for x in blueprint.must_show_elements if str(x or "").strip()])),
+            "must_avoid_elements": list(dict.fromkeys([x for x in blueprint.must_avoid_elements if str(x or "").strip()])),
             "language_policy": language_policy,
-            "marketing_strategy": marketing_strategy,
-            "story_structure": story_structure,
+            "marketing_strategy": marketing_strategy_out,
+            "story_structure": story_structure_out,
             "hook": hook_text,
             "core_conflict": conflict_text,
             "twist": twist_text,
             "resolution": resolution_text,
             "story_framework": story_framework,
-            "asset_requirements": asset_requirements,
+            "asset_requirements": asset_requirements_out,
             "shot_plan": shot_plan,
-            "spoken_strategy": spoken_strategy,
+            "spoken_strategy": spoken_strategy_out,
             "creative_brief": creative_brief_data,
             "market_visual_constraints": market_visual,
             "visual_style_constraints": style_visual,
@@ -1061,6 +1766,7 @@ def _normalize_blueprint_for_execution(
             },
         }
     )
+    return normalized
 
 
 def _build_story_planner_service() -> StoryPlannerService:

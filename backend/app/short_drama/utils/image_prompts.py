@@ -158,6 +158,27 @@ def build_visual_prompt(asset_input: dict[str, str]) -> str:
     return _append_min_negative_terms(f"{subject}, {detail}")
 
 
+def prepare_image_prompt_v2_asset_spec_pass_through(visual_prompt: str | None) -> str:
+    """Strip / length / emptiness checks only — no appended negative terms or creative rewrites (P2 v2)."""
+    raw = (visual_prompt or "").strip()
+    raw = re.sub(r"\s+", " ", raw)
+    if not raw:
+        raise ShortDramaImageProviderError("visual_prompt is empty; cannot generate image", category="configuration")
+    if len(raw) < _MIN_LEN:
+        raise ShortDramaImageProviderError(
+            f"visual_prompt too short for image generation (min {_MIN_LEN} chars)",
+            category="configuration",
+        )
+    if len(raw) > _MAX_LEN:
+        raw = raw[:_MAX_LEN]
+
+    vague_only = {"nice", "good", "cool", "beautiful", "cinematic", "shot", "product", "image", "a", "an", "the"}
+    tokens = re.findall(r"[a-z0-9]+", raw.lower())
+    if tokens and all(t in vague_only for t in tokens):
+        raise ShortDramaImageProviderError("visual_prompt is too vague for image generation", category="configuration")
+    return raw
+
+
 def prepare_image_prompt(visual_prompt: str | None) -> str:
     """
     Light sanitizer / enhancer: trim, length bounds, reject empty/vague-only,

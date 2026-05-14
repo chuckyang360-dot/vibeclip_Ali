@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 import json
 import re
+from collections import OrderedDict
 from typing import Any, Dict, Protocol
 
 from ...config import settings
@@ -10,9 +11,16 @@ from ..exceptions import ShortDramaInvalidModelOutputError
 from ..providers.xai_text_provider import XAITextProvider, get_xai_text_provider
 from ..schemas.asset import AssetSpecsBundleSchema
 from ..schemas.segment import SegmentScriptSchema, ShotSchema
-from ..schemas.story import StoryBlueprintSchema, SegmentPlanItemSchema
+from ..schemas.story import (
+    AssetGenerationSpecSchema,
+    DialogueOrVoiceoverItemSchema,
+    SegmentPlanItemSchema,
+    StoryBlueprintSchema,
+    VideoGenerationSpecSchema,
+)
 from ..utils.prompts import SEGMENT_DIRECTOR_SYSTEM_PROMPT
 from ..utils.segment_slots import (
+    _DEFAULT_CAMERA_STILL,
     compose_image_prompt_from_slots,
     compose_video_prompt_from_slots,
     filled_slot_count,
@@ -23,6 +31,37 @@ from ..utils.segment_slots import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _reject_v2_for_legacy_s4_entrypoints(blueprint: StoryBlueprintSchema, *, entry: str) -> None:
+    """Hard guard: creative_blueprint_v2 must use video_generation_specs materialization only."""
+    from .asset_v2_materialize_service import is_creative_blueprint_v2_project
+
+    if is_creative_blueprint_v2_project(blueprint):
+        raise ShortDramaInvalidModelOutputError(
+            f"{entry} is forbidden for creative_blueprint_v2; use materialize_segment_scripts_from_v2_video_generation_specs.",
+            code="s4_v2_legacy_segment_path_forbidden",
+            missing_fields=["video_generation_specs"],
+        )
+
+
+def _blueprint_visual_requirements_list(blueprint: StoryBlueprintSchema) -> list[str]:
+    v = blueprint.visual_requirements
+    if isinstance(v, list):
+        return [str(x).strip() for x in v if str(x or "").strip()]
+    if isinstance(v, str) and v.strip():
+        return [v.strip()]
+    return []
+
+
+def _blueprint_selling_point_mapping_dict(blueprint: StoryBlueprintSchema) -> dict[str, str]:
+    m = blueprint.product_selling_point_mapping
+    if not isinstance(m, dict):
+        return {}
+    out: dict[str, str] = {}
+    for k, v in m.items():
+        out[str(k)] = str(v) if v is not None else ""
+    return out
 
 
 def _trace(tag: str, payload: dict[str, Any]) -> None:
@@ -49,6 +88,610 @@ def _first_product_ref(assets: AssetSpecsBundleSchema | None) -> str:
     hero = next((x for x in assets.products if str(x.product_role or "").lower() in {"hero", "main", "primary"}), None)
     pick = hero or assets.products[0]
     return str(pick.id) if pick.id is not None else pick.name
+
+
+CREATIVE_BLUEPRINT_V2_SCHEMA_VERSION = "creative_blueprint_v2"
+
+
+def s2_video_specs_materialization_eligible(
+    blueprint: StoryBlueprintSchema,
+    *,
+    force_segment_director: bool = False,
+) -> tuple[bool, str]:
+    if force_segment_director:
+        return False, "force_segment_director"
+    if str(blueprint.blueprint_schema_version or "").strip() != CREATIVE_BLUEPRINT_V2_SCHEMA_VERSION:
+        return False, "not_creative_blueprint_v2"
+    specs = list(blueprint.video_generation_specs or [])
+    if not specs:
+        return False, "video_generation_specs_empty"
+    if not any(str(s.video_prompt or "").strip() for s in specs):
+        return False, "all_video_prompts_empty"
+    return True, ""
+
+
+def _dialogue_line_text(item: DialogueOrVoiceoverItemSchema) -> str:
+    speaker = str(item.speaker or "").strip()
+    text = str(item.text or "").strip()
+    if speaker and text:
+        return f"{speaker}：{text}"
+    return text
+
+
+def _segment_title_from_plan(plan_row: SegmentPlanItemSchema | None, *, segment_id: str) -> str:
+    if not plan_row:
+        return segment_id
+    return (
+        str(plan_row.segment_title or "").strip()
+        or str(plan_row.title or "").strip()
+        or str(plan_row.stage_name or "").strip()
+        or segment_id
+    )
+
+
+def _truncate_visual_action_fallback(video_prompt: str, *, limit: int = 280) -> str:
+    s = re.sub(r"\s+", " ", str(video_prompt or "")).strip()
+    if not s:
+        return ""
+    return s[:limit]
+
+
+def _pad_min_composed_prompt(text: str, *, floor: int = 30) -> str:
+    t = re.sub(r"\s+", " ", str(text or "")).strip()
+    if len(t) >= floor:
+        return t
+    pad = " Vertical 9:16 commercial framing with readable contrast and clear subject motion."
+    return (t + pad).strip()
+
+
+def _workflow_lang_is_zh_cn(workflow_language: str) -> bool:
+    wl = (workflow_language or "").strip().lower()
+    return wl.startswith("zh") or "hans" in wl or ("cn" in wl and "zh" in wl)
+
+
+def _looks_like_ascii_english_primary(text: str) -> bool:
+    t = (text or "").strip()
+    if len(t) < 10:
+        return False
+    if re.search(r"[\u3040-\u30ff\u4e00-\u9fff\uac00-\ud7af]", t):
+        return False
+    letters = len(re.findall(r"[A-Za-z]", t))
+    non_space = len(re.sub(r"\s+", "", t))
+    if non_space < 8:
+        return False
+    return letters / max(non_space, 1) >= 0.45
+
+
+def _reference_includes_product_kind(
+    reference_asset_keys: list[str],
+    ag_by_key: dict[str, AssetGenerationSpecSchema],
+) -> bool:
+    for rk in reference_asset_keys or []:
+        ag = ag_by_key.get(str(rk or "").strip())
+        if ag and str(ag.asset_kind or "").strip().lower() == "product":
+            return True
+    return False
+
+
+def _scene_display_name_for_bind(bind: dict[str, Any], assets: AssetSpecsBundleSchema) -> str:
+    sr = str(bind.get("scene_ref") or "").strip()
+    if sr.isdigit():
+        for s in assets.scenes:
+            if str(s.id) == sr:
+                return str(s.name or "").strip() or sr
+    for s in assets.scenes:
+        if _norm_lower(s.name) == _norm_lower(sr):
+            return str(s.name or "").strip()
+    return sr or ""
+
+
+def _selling_point_for_segment(blueprint: StoryBlueprintSchema, segment_id: str) -> str:
+    m = blueprint.product_selling_point_mapping
+    if isinstance(m, dict):
+        v = m.get(segment_id)
+        if v is None:
+            v = m.get(str(segment_id))
+        if v:
+            return str(v).strip()
+    return ""
+
+
+def _first_non_empty_plan_text(plan_row: SegmentPlanItemSchema | None, *attrs: str) -> str:
+    if not plan_row:
+        return ""
+    for a in attrs:
+        t = str(getattr(plan_row, a, "") or "").strip()
+        if t:
+            return t
+    return ""
+
+
+def _must_show_zh_phrase(must_show: list[str]) -> str:
+    parts = [str(x).strip() for x in (must_show or []) if str(x).strip()]
+    if not parts:
+        return ""
+    return f"本段重点呈现：{'、'.join(parts[:8])}。"
+
+
+def _spoken_voiceover_subtitle_for_ref(blueprint: StoryBlueprintSchema, dref: str) -> tuple[str, str, str, str]:
+    """(spoken_text, dialogue, voiceover_text, subtitle_text) for ShotSchema; no English prompt fallback."""
+    ref = str(dref or "").strip()
+    if not ref:
+        return "", "", "", ""
+    it = next((x for x in (blueprint.dialogue_or_voiceover or []) if str(x.ref_id or "").strip() == ref), None)
+    if not it:
+        return "", "", "", ""
+    mode = str(it.mode or "voiceover").strip().lower()
+    line = _dialogue_line_text(it)
+    plain = str(it.text or "").strip()
+    spk = str(it.speaker or "").strip()
+    if mode == "silent":
+        return "", "", "", ""
+    if mode == "subtitle_only":
+        body = line or plain
+        return "", "", "", body
+    if mode == "dialogue":
+        body = line if line else (f"{spk}：{plain}" if spk and plain else plain)
+        return body, body, "", ""
+    if mode in ("voiceover", "narration"):
+        body = line if line else (f"{spk}：{plain}" if spk and plain else plain)
+        return "", "", body, ""
+    body = line or plain
+    return "", "", body, ""
+
+
+def _build_s2_presentation_strings(
+    *,
+    blueprint: StoryBlueprintSchema,
+    plan_row: SegmentPlanItemSchema | None,
+    segment_title: str,
+    segment_id: str,
+    must_show: list[str],
+    bind: dict[str, Any],
+    assets: AssetSpecsBundleSchema,
+    visual_action_raw: str,
+    workflow_language: str,
+) -> tuple[str, str, str, str, str]:
+    """Returns (viewer_takeaway, visual_direction, character_action, scene_direction, product_purpose)."""
+    wf_zh = _workflow_lang_is_zh_cn(workflow_language)
+    va_raw = (visual_action_raw or "").strip()
+
+    if not wf_zh:
+        summary_any = _first_non_empty_plan_text(plan_row, "summary", "segment_goal", "goal", "key_message")
+        sg = _first_non_empty_plan_text(plan_row, "segment_goal", "goal", "story_beat") or segment_title
+        viewer = summary_any or f"Understand the beat for «{segment_title}»."
+        screen = (
+            f"Visual direction for «{segment_title}»"
+            + (f", emphasizing {sg}." if sg else ".")
+        )
+        character = va_raw or sg or viewer
+        scene_dir = (
+            str(bind.get("scene_description") or "").strip()
+            or "Keep spatial and lighting continuity with the selected scene asset."
+        )
+        sell = _selling_point_for_segment(blueprint, segment_id)
+        product_purpose = sell or ("Not specified" if not must_show else ", ".join(str(x) for x in must_show[:6]))
+        if not product_purpose.strip():
+            product_purpose = "Not specified"
+        return viewer, screen, character, scene_dir, product_purpose
+
+    summary_pick = _first_non_empty_plan_text(plan_row, "summary", "segment_goal", "goal", "key_message")
+    if wf_zh and summary_pick and _looks_like_ascii_english_primary(summary_pick):
+        summary_pick = ""
+
+    segment_goal = _first_non_empty_plan_text(plan_row, "segment_goal", "goal", "story_beat") or segment_title
+    if wf_zh and segment_goal and _looks_like_ascii_english_primary(segment_goal):
+        segment_goal = segment_title
+
+    viewer = summary_pick
+    if not viewer:
+        ms_line = _must_show_zh_phrase(must_show)
+        if ms_line:
+            viewer = ms_line
+    if not viewer:
+        viewer = f"本段展示「{segment_title}」，让观众理解核心信息。"
+    if wf_zh and viewer and _looks_like_ascii_english_primary(viewer):
+        viewer = f"本段展示「{segment_title}」，让观众理解核心信息。"
+
+    scene_name = _scene_display_name_for_bind(bind, assets)
+    sum_hint = summary_pick or _first_non_empty_plan_text(plan_row, "segment_goal", "goal") or ""
+    if wf_zh and sum_hint and _looks_like_ascii_english_primary(sum_hint):
+        sum_hint = ""
+    screen = f"围绕「{segment_title}」展开画面"
+    if sum_hint:
+        screen += f"，突出{sum_hint}"
+    screen += "。"
+    if scene_name and not scene_name.isdigit():
+        screen = f"在「{scene_name}」中呈现镜头节奏；{screen}"
+
+    va = (visual_action_raw or "").strip()
+    if va and not (wf_zh and _looks_like_ascii_english_primary(va)):
+        character = va
+    else:
+        character = f"主角完成与「{segment_title}」相关的动作，表现{segment_goal}。"
+
+    scene_dir = str(bind.get("scene_description") or "").strip()
+    if not scene_dir or (wf_zh and _looks_like_ascii_english_primary(scene_dir)):
+        tail = f"场景：「{scene_name}」。" if scene_name else ""
+        scene_dir = f"使用对应场景资产，保持空间与光线一致。{tail}".strip()
+
+    sell = _selling_point_for_segment(blueprint, segment_id)
+    product_purpose = sell
+    if not product_purpose.strip():
+        zh_parts = [str(x).strip() for x in must_show if str(x).strip() and not _looks_like_ascii_english_primary(str(x))]
+        if zh_parts:
+            product_purpose = f"与产品相关的展示重点：{'、'.join(zh_parts[:6])}。"
+    if not product_purpose.strip():
+        product_purpose = "未指定"
+    if wf_zh and product_purpose != "未指定" and _looks_like_ascii_english_primary(product_purpose):
+        product_purpose = "未指定"
+
+    return viewer, screen, character, scene_dir, product_purpose
+
+
+def _norm_lower(s: str) -> str:
+    return str(s or "").strip().lower()
+
+
+def _character_display_hint(blueprint: StoryBlueprintSchema, linked_key: str) -> str:
+    for c in blueprint.characters or []:
+        if str(c.character_key or "").strip() == linked_key:
+            return str(c.display_name or "").strip() or str(c.description or "").strip()[:120]
+    return ""
+
+
+def _scene_display_hint(blueprint: StoryBlueprintSchema, linked_key: str) -> str:
+    for s in blueprint.scenes or []:
+        if str(s.scene_key or "").strip() == linked_key:
+            return str(s.display_name or "").strip() or str(s.description or "").strip()[:160]
+    return ""
+
+
+def _product_display_hint(blueprint: StoryBlueprintSchema, linked_key: str) -> str:
+    for p in blueprint.product_assets or []:
+        if str(p.product_asset_key or "").strip() == linked_key:
+            return str(p.display_name or p.product_name or "").strip() or str(p.description or "").strip()[:160]
+    return ""
+
+
+def _find_character_asset_row(assets: AssetSpecsBundleSchema, hint: str) -> Any:
+    hint_l = _norm_lower(hint)
+    for c in assets.characters:
+        nm = _norm_lower(c.name)
+        if hint_l and nm == hint_l:
+            return c
+    for c in assets.characters:
+        nm = _norm_lower(c.name)
+        if hint_l and (hint_l in nm or nm in hint_l):
+            return c
+    return None
+
+
+def _find_scene_asset_row(assets: AssetSpecsBundleSchema, hint: str) -> Any:
+    hint_l = _norm_lower(hint)
+    for s in assets.scenes:
+        nm = _norm_lower(s.name)
+        if hint_l and nm == hint_l:
+            return s
+    for s in assets.scenes:
+        nm = _norm_lower(s.name)
+        if hint_l and (hint_l in nm or nm in hint_l):
+            return s
+    return None
+
+
+def _find_product_asset_row(assets: AssetSpecsBundleSchema, hint: str) -> Any:
+    hint_l = _norm_lower(hint)
+    for p in assets.products:
+        nm = _norm_lower(p.name)
+        if hint_l and nm == hint_l:
+            return p
+    for p in assets.products:
+        nm = _norm_lower(p.name)
+        if hint_l and (hint_l in nm or nm in hint_l):
+            return p
+    return None
+
+
+def _bind_reference_asset_keys_for_s4(
+    project_id: int,
+    reference_asset_keys: list[str],
+    ag_by_key: dict[str, AssetGenerationSpecSchema],
+    blueprint: StoryBlueprintSchema,
+    assets: AssetSpecsBundleSchema,
+) -> dict[str, Any]:
+    character_refs: list[str] = []
+    character_asset_ids: list[str] = []
+    product_refs: list[str] = []
+    scene_ref = ""
+    scene_asset_id = ""
+    product_asset_id = ""
+
+    def _warn(ref_key: str) -> None:
+        logger.warning("[S4_ASSET_REF_BIND_WARNING] project_id=%s reference_asset_key=%s", project_id, ref_key)
+
+    for rk in reference_asset_keys or []:
+        key = str(rk or "").strip()
+        if not key:
+            continue
+        ag = ag_by_key.get(key)
+        if not ag:
+            _warn(key)
+            continue
+        kind = str(ag.asset_kind or "").strip().lower()
+        lk = str(ag.linked_entity_key or "").strip()
+        disp = str(ag.display_name or "").strip()
+
+        if kind == "character":
+            hint = _character_display_hint(blueprint, lk) or disp
+            row = _find_character_asset_row(assets, hint)
+            if row is None and len(assets.characters) == 1:
+                row = assets.characters[0]
+            if row is not None and row.id is not None:
+                sid = str(row.id)
+                if sid not in character_asset_ids:
+                    character_asset_ids.append(sid)
+                if sid not in character_refs:
+                    character_refs.append(sid)
+            else:
+                _warn(key)
+        elif kind == "scene":
+            hint = _scene_display_hint(blueprint, lk) or disp
+            row = _find_scene_asset_row(assets, hint)
+            if row is None and len(assets.scenes) == 1:
+                row = assets.scenes[0]
+            if row is not None:
+                if row.id is not None:
+                    scene_ref = str(row.id)
+                    scene_asset_id = str(row.id)
+                else:
+                    scene_ref = str(row.name or "").strip()
+            else:
+                _warn(key)
+        elif kind == "product":
+            hint = _product_display_hint(blueprint, lk) or disp
+            row = _find_product_asset_row(assets, hint)
+            if row is None and len(assets.products) == 1:
+                row = assets.products[0]
+            if row is not None and row.id is not None:
+                pid = str(row.id)
+                if pid not in product_refs:
+                    product_refs.append(pid)
+                if not product_asset_id:
+                    product_asset_id = pid
+            else:
+                _warn(key)
+        else:
+            _warn(key)
+
+    if not character_refs:
+        fr = _first_character_ref(assets)
+        if fr:
+            character_refs = [fr]
+            if fr.isdigit() and fr not in character_asset_ids:
+                character_asset_ids.append(fr)
+    if not scene_ref:
+        sr = _first_scene_ref(assets)
+        if sr:
+            scene_ref = sr
+            if sr.isdigit():
+                scene_asset_id = sr
+
+    scene_description = ""
+    if scene_ref.isdigit():
+        for s in assets.scenes:
+            if str(s.id) == scene_ref:
+                scene_description = str(s.description or s.name or "").strip() or str(s.name or "")
+                break
+    else:
+        for s in assets.scenes:
+            if _norm_lower(s.name) == _norm_lower(scene_ref):
+                scene_description = str(s.description or s.name or "").strip() or str(s.name or "")
+                break
+    if not scene_description.strip():
+        scene_description = (
+            str(assets.scenes[0].description or assets.scenes[0].name or "").strip()
+            if assets.scenes
+            else "Commercial location continuity."
+        )
+
+    subject_description = ""
+    if character_refs:
+        cref = character_refs[0]
+        for c in assets.characters:
+            if c.id is not None and str(c.id) == cref:
+                subject_description = str(c.description or c.name or "").strip() or str(c.name or "")
+                break
+            if c.id is None and cref == str(c.name or "").strip():
+                subject_description = str(c.description or c.name or "").strip() or str(c.name or "")
+                break
+    if not subject_description.strip():
+        subject_description = (
+            str(assets.characters[0].description or assets.characters[0].name or "").strip()
+            if assets.characters
+            else "Lead subject in frame with clear silhouette."
+        )
+
+    return {
+        "character_refs": character_refs,
+        "character_asset_ids": character_asset_ids,
+        "scene_ref": scene_ref,
+        "scene_asset_id": scene_asset_id,
+        "product_refs": product_refs,
+        "product_asset_id": product_asset_id,
+        "scene_description": scene_description or "Location and blocking continuity for the segment.",
+        "subject_description": subject_description or "Subject blocking and wardrobe continuity for the segment.",
+    }
+
+
+def materialize_segment_scripts_from_s2_video_specs(
+    project_id: int,
+    blueprint: StoryBlueprintSchema,
+    assets: AssetSpecsBundleSchema,
+    *,
+    workflow_language: str = "",
+) -> list[SegmentScriptSchema]:
+    specs = list(blueprint.video_generation_specs or [])
+    wf_lang = workflow_language or str((blueprint.language_policy or {}).get("workflow_language") or "")
+    ag_by_key = {
+        str(a.asset_key or "").strip(): a
+        for a in (blueprint.asset_generation_specs or [])
+        if str(a.asset_key or "").strip()
+    }
+    buckets: OrderedDict[str, list[VideoGenerationSpecSchema]] = OrderedDict()
+    for sp in specs:
+        sid = str(sp.segment_id or "").strip() or "seg_1"
+        buckets.setdefault(sid, []).append(sp)
+
+    segments_out: list[SegmentScriptSchema] = []
+    for segment_id, seg_specs in buckets.items():
+        plan_row = next(
+            (p for p in (blueprint.segment_plan or []) if str(p.segment_id or "").strip() == segment_id),
+            None,
+        )
+        title = _segment_title_from_plan(plan_row, segment_id=segment_id)
+        duration_limit = 0.0
+        if plan_row is not None:
+            duration_limit = float(plan_row.duration_sec or plan_row.duration_seconds or 0.0)
+        if duration_limit <= 0:
+            duration_limit = max(float(s.duration_sec or 0.0) for s in seg_specs) or 6.0
+        duration_limit = max(1.0, min(10.0, float(duration_limit)))
+
+        function_label = ""
+        if plan_row is not None:
+            function_label = str(plan_row.stage_name or plan_row.goal or plan_row.segment_goal or "").strip()
+
+        shots: list[ShotSchema] = []
+        default_per = duration_limit / max(1, len(seg_specs))
+        for shot_i, spec in enumerate(seg_specs):
+            vp = str(spec.video_prompt or "").strip()
+            va_exec = str(spec.visual_action or "").strip() or _truncate_visual_action_fallback(vp)
+            if not va_exec.strip():
+                va_exec = _pad_min_composed_prompt(vp)[:280]
+
+            dref = str(spec.dialogue_or_voiceover_ref or "").strip()
+            spoken_t, dialogue_t, vtext, subtxt = _spoken_voiceover_subtitle_for_ref(blueprint, dref)
+
+            bind = _bind_reference_asset_keys_for_s4(
+                project_id, list(spec.reference_asset_keys or []), ag_by_key, blueprint, assets
+            )
+
+            d_sec = float(spec.duration_sec or 0.0)
+            if d_sec <= 0:
+                d_sec = default_per
+            d_sec = max(1.0, min(duration_limit, float(d_sec)))
+
+            shot_id = str(spec.shot_id or "").strip() or str(spec.spec_key or "").strip() or f"{segment_id}_shot_{shot_i + 1}"
+
+            raw_spec = spec.model_dump()
+            has_product_ref = _reference_includes_product_kind(list(spec.reference_asset_keys or []), ag_by_key)
+            source_visual = {
+                "s2_video_generation_spec": raw_spec,
+                "segment_script_source": "s2_video_generation_specs",
+                "reference_asset_keys": list(spec.reference_asset_keys or []),
+                "dialogue_or_voiceover_ref": dref,
+                "dialogue_or_voiceover_text": vtext or spoken_t or subtxt,
+                "aspect_ratio": str(spec.aspect_ratio or ""),
+                "s2_ui_product_presence": "explicit" if has_product_ref else "none",
+            }
+
+            scene_description = str(bind.get("scene_description") or "").strip()
+            subject_description = str(bind.get("subject_description") or "").strip()
+            camera_description = str(spec.camera or "").strip() or _DEFAULT_CAMERA_STILL
+            audio_notes = str(spec.audio_notes or "").strip()
+
+            ms = list(spec.must_show or []) if spec.must_show is not None else []
+            ma = list(spec.must_avoid or []) if spec.must_avoid is not None else []
+
+            pres_v, pres_scr, pres_char, pres_scene, pres_prod = _build_s2_presentation_strings(
+                blueprint=blueprint,
+                plan_row=plan_row,
+                segment_title=title,
+                segment_id=segment_id,
+                must_show=ms,
+                bind=bind,
+                assets=assets,
+                visual_action_raw=str(spec.visual_action or "").strip(),
+                workflow_language=wf_lang,
+            )
+            sell_line = _selling_point_for_segment(blueprint, segment_id)
+            if wf_lang and sell_line and _looks_like_ascii_english_primary(sell_line):
+                sell_line = ""
+
+            shots.append(
+                ShotSchema(
+                    shot_id=shot_id,
+                    shot_title=str(spec.spec_key or shot_id),
+                    shot_role=str(spec.spec_key or ""),
+                    shot_type="s2_video_spec",
+                    scene_ref=str(bind.get("scene_ref") or ""),
+                    scene_id=str(bind.get("scene_ref") or ""),
+                    character_refs=list(bind.get("character_refs") or []),
+                    character_ids=list(bind.get("character_refs") or []),
+                    character_asset_ids=[str(x) for x in (bind.get("character_asset_ids") or []) if str(x).strip()],
+                    product_refs=list(bind.get("product_refs") or []),
+                    product_ids=list(bind.get("product_refs") or []),
+                    scene_asset_id=str(bind.get("scene_asset_id") or ""),
+                    product_asset_id=str(bind.get("product_asset_id") or ""),
+                    visual_action=va_exec,
+                    action_description=va_exec,
+                    scene_description=scene_description,
+                    subject_description=subject_description,
+                    camera_description=camera_description,
+                    camera=str(spec.camera or "").strip(),
+                    image_prompt=_pad_min_composed_prompt(vp),
+                    video_prompt=vp,
+                    generation_prompt=vp,
+                    duration_seconds=d_sec,
+                    duration_sec=d_sec,
+                    spoken_text=spoken_t,
+                    dialogue=dialogue_t,
+                    voiceover_text=vtext,
+                    voiceover=vtext or None,
+                    narration=vtext or "",
+                    subtitle_text=subtxt,
+                    subtitle=subtxt,
+                    must_show=ms,
+                    must_avoid=ma,
+                    required_assets=[
+                        *(bind.get("character_refs") or []),
+                        str(bind.get("scene_ref") or ""),
+                        *(bind.get("product_refs") or []),
+                    ],
+                    source_segment_id=segment_id,
+                    source_visual_constraints=source_visual,
+                    audio_intent=audio_notes or "",
+                    presentation_viewer_takeaway=pres_v,
+                    presentation_visual_direction=pres_scr,
+                    presentation_character_action=pres_char,
+                    presentation_scene_direction=pres_scene,
+                    presentation_product_purpose=pres_prod,
+                    source_selling_point=sell_line,
+                )
+            )
+
+        segments_out.append(
+            SegmentScriptSchema(
+                segment_id=segment_id,
+                title=title,
+                duration_limit=duration_limit,
+                goal=str(plan_row.goal or plan_row.segment_goal or "") if plan_row is not None else "",
+                shots=shots,
+                meta={
+                    "source": "s2_video_generation_specs",
+                    "function_label": function_label or title,
+                },
+            )
+        )
+
+    shot_total = sum(len(s.shots) for s in segments_out)
+    logger.info(
+        "[S4_SEGMENT_SCRIPT_MATERIALIZED] project_id=%s segment_count=%s shot_count=%s",
+        project_id,
+        len(segments_out),
+        shot_total,
+    )
+    return segments_out
 
 
 def _desired_segment_count(duration_text: str, format_text: str) -> int:
@@ -181,7 +824,7 @@ def _trim_story_blueprint_for_segment_director(blueprint: StoryBlueprintSchema) 
         "core_conflict": blueprint.core_conflict,
         "twist": blueprint.twist,
         "resolution": blueprint.resolution,
-        "visual_requirements": list(blueprint.visual_requirements or [])[:12],
+        "visual_requirements": _blueprint_visual_requirements_list(blueprint)[:12],
         "must_show_elements": list(blueprint.must_show_elements or [])[:12],
         "must_avoid_elements": list(blueprint.must_avoid_elements or [])[:12],
         "segment_plan": [
@@ -447,11 +1090,12 @@ def enrich_shot_via_slot_pipeline(
     selling_point = (
         cur.source_selling_point
         or (source_segment.source_selling_point if source_segment else "")
-        or (blueprint.product_selling_point_mapping or {}).get(seg.segment_id, "")
+        or (_blueprint_selling_point_mapping_dict(blueprint).get(seg.segment_id, ""))
     )
+    vreq = _blueprint_visual_requirements_list(blueprint)
     source_visual_constraints = {
         **(cur.source_visual_constraints or {}),
-        "s2_visual_requirements": blueprint.visual_requirements,
+        "s2_visual_requirements": vreq,
         "s2_required_visual_elements": source_segment.required_visual_elements if source_segment else [],
         "market_visual_constraints": blueprint.market_visual_constraints,
         "visual_style_constraints": blueprint.visual_style_constraints,
@@ -473,7 +1117,7 @@ def enrich_shot_via_slot_pipeline(
             video_prompt,
             f"MUST SHOW: {'; '.join([m for m in must_show if m])}." if must_show else "",
             f"DO NOT SHOW: {'; '.join([m for m in must_avoid if m])}." if must_avoid else "",
-            f"VISUAL CONSTRAINTS: {'; '.join(blueprint.visual_requirements[:8])}." if blueprint.visual_requirements else "",
+            f"VISUAL CONSTRAINTS: {'; '.join(vreq[:8])}." if vreq else "",
             f"MARKET VISUAL CONSTRAINTS: {blueprint.market_visual_constraints}." if blueprint.market_visual_constraints else "",
             f"STYLE CONSTRAINTS: {blueprint.visual_style_constraints}." if blueprint.visual_style_constraints else "",
         ]
@@ -545,7 +1189,7 @@ class MockSegmentDirectorProvider:
         vf = [str(x) for x in s1_constraints.get("visual_features", []) if x]
         consistency = [str(x) for x in s1_constraints.get("consistency_notes", []) if x]
         risks = [str(x) for x in s1_constraints.get("visual_risk_notes", []) if x]
-        mapping = blueprint.product_selling_point_mapping or {}
+        mapping = _blueprint_selling_point_mapping_dict(blueprint)
         plan = list(blueprint.segment_plan or [])
         return [
             SegmentScriptSchema(
@@ -689,7 +1333,7 @@ class XAISegmentDirectorProvider:
                 "segment_plan": [s.model_dump() for s in blueprint.segment_plan],
                 "scene_goals": blueprint.scene_goals,
                 "product_selling_point_mapping": blueprint.product_selling_point_mapping,
-                "visual_requirements": blueprint.visual_requirements,
+                "visual_requirements": _blueprint_visual_requirements_list(blueprint),
                 "must_show_elements": blueprint.must_show_elements,
                 "must_avoid_elements": blueprint.must_avoid_elements,
             }
@@ -813,12 +1457,50 @@ def _validate_segments(
         for sh in seg.shots:
             if not sh.duration_seconds or sh.duration_seconds > segment_limit:
                 sh = sh.model_copy(update={"duration_seconds": segment_limit})
+            action0 = (sh.visual_action or sh.action_description or "").strip()
+            if len(action0) < 8 or _has_internal_action_terms(action0):
+                vp0 = (sh.video_prompt or sh.generation_prompt or "").strip()
+                fb0 = _truncate_visual_action_fallback(vp0) if len(vp0.strip()) >= 8 else ""
+                if not fb0:
+                    fb0 = (
+                        "Vertical 9:16 commercial framing with deliberate subject motion "
+                        "and readable contrast across the shot."
+                    )
+                sh = sh.model_copy(
+                    update={
+                        "visual_action": fb0,
+                        "action_description": (sh.action_description or "").strip() or fb0,
+                    }
+                )
             sh2 = enrich_shot_via_slot_pipeline(
                 sh, seg, assets, blueprint, project_id=project_id
             )
             action = (sh2.visual_action or sh2.action_description or "").strip()
             if len(action) < 8 or _has_internal_action_terms(action):
-                raise ShortDramaInvalidModelOutputError(f"segment {seg.segment_id} has invalid visual_action")
+                vp1 = (sh2.video_prompt or sh2.generation_prompt or "").strip()
+                fb1 = (
+                    _truncate_visual_action_fallback(vp1)
+                    if len(vp1.strip()) >= 8
+                    else _pad_min_composed_prompt(vp1)[:280]
+                )
+                if not (fb1 or "").strip():
+                    fb1 = (
+                        "Vertical 9:16 commercial framing with deliberate subject motion "
+                        "and readable contrast across the shot."
+                    )
+                logger.info(
+                    "[S4_VISUAL_ACTION_FALLBACK_POST_ENRICH] project_id=%s segment_id=%s shot_id=%s",
+                    project_id,
+                    seg.segment_id,
+                    sh2.shot_id,
+                )
+                sh2 = sh2.model_copy(
+                    update={
+                        "visual_action": fb1,
+                        "action_description": (sh2.action_description or "").strip() or fb1,
+                    }
+                )
+                action = (sh2.visual_action or sh2.action_description or "").strip()
             product_refs = list(sh2.product_refs or [])
             if _shot_requires_product_ref(action, product_keywords) and not product_refs:
                 if _is_bare_iphone_pain_shot(action):
@@ -854,14 +1536,28 @@ def _validate_segments(
                             code="missing_refs",
                         )
             if any(_actions_too_similar(action, prev) for prev in seen_actions):
-                raise ShortDramaInvalidModelOutputError(f"segment {seg.segment_id} has repeated visual_action")
+                logger.warning(
+                    "[S4_VISUAL_ACTION_SIMILAR_SHOTS] project_id=%s segment_id=%s shot_id=%s",
+                    project_id,
+                    seg.segment_id,
+                    sh2.shot_id,
+                )
             seen_actions.append(action)
-            validate_shot_prompt_quality(
-                sh2.image_prompt,
-                sh2.video_prompt,
-                shot_id=sh2.shot_id,
-                segment_id=seg.segment_id,
-            )
+            try:
+                validate_shot_prompt_quality(
+                    sh2.image_prompt,
+                    sh2.video_prompt,
+                    shot_id=sh2.shot_id,
+                    segment_id=seg.segment_id,
+                )
+            except ShortDramaInvalidModelOutputError as qe:
+                logger.warning(
+                    "[S4_SHOT_PROMPT_QUALITY_WARNING] project_id=%s segment_id=%s shot_id=%s detail=%s",
+                    project_id,
+                    seg.segment_id,
+                    sh2.shot_id,
+                    str(qe),
+                )
             enriched_shots.append(sh2)
         out.append(seg.model_copy(update={"duration_limit": segment_limit, "shots": enriched_shots}))
     return out
@@ -878,6 +1574,7 @@ class SegmentDirectorService:
         assets: AssetSpecsBundleSchema,
         project_config: Dict[str, Any],
     ) -> list[SegmentScriptSchema]:
+        _reject_v2_for_legacy_s4_entrypoints(blueprint, entry="segment_director_service.generate")
         segments = self._provider.direct(project_id, blueprint, assets, project_config)
         if isinstance(self._provider, MockSegmentDirectorProvider):
             out: list[SegmentScriptSchema] = []
@@ -907,6 +1604,7 @@ def segments_from_story_shot_plan(
     *,
     force_from_shot_plan: bool = False,
 ) -> list[SegmentScriptSchema] | None:
+    _reject_v2_for_legacy_s4_entrypoints(blueprint, entry="segments_from_story_shot_plan")
     shot_plan = blueprint.shot_plan if isinstance(blueprint.shot_plan, dict) else {}
     if (not force_from_shot_plan) and blueprint.creative_brief and blueprint.segment_plan:
         # New projects must use the segment director provider so the model authors shots.
@@ -983,6 +1681,7 @@ def segments_from_story_shot_plan(
                 movement=str(shot.get("camera_movement") or movement),
                 asset_summaries=asset_summaries,
             )
+            video_prompt_value = str(shot.get("video_prompt") or "").strip() or generation_prompt
             dialogue = str(shot.get("spoken_text") or shot.get("dialogue") or "").strip()
             voiceover = str(shot.get("voiceover_text") or shot.get("voiceover") or shot.get("narration") or "").strip()
             subtitle = str(shot.get("subtitle_text") or shot.get("subtitle") or "").strip() or _subtitle_for_shot(role, action, video_language)
@@ -1023,6 +1722,7 @@ def segments_from_story_shot_plan(
                     visual_style_instruction=style_instruction,
                     market_localization_detail=market_detail,
                     generation_prompt=generation_prompt,
+                    video_prompt=video_prompt_value,
                     negative_prompt=str(shot.get("negative_prompt") or "；".join([*(visual_world.get("negative") or []), *(market_context.get("negative") or [])])),
                     must_show=[str(x) for x in (shot.get("must_show") or []) if str(x).strip()],
                     must_avoid=[str(x) for x in (shot.get("must_avoid") or []) if str(x).strip()],
@@ -1047,6 +1747,15 @@ def segments_from_story_shot_plan(
             if not product_allowed:
                 product_refs = []
                 product_ids = []
+            composed_gp = _compose_generation_prompt(
+                visual_action=action,
+                style_instruction=style_instruction,
+                market_detail=market_detail,
+                framing=sh.camera_framing or sh.framing or framing,
+                movement=sh.camera_movement or movement,
+                asset_summaries=asset_summaries,
+            )
+            vp_final = str(sh.video_prompt or "").strip() or composed_gp
             distinct_shots.append(
                 sh.model_copy(
                     update={
@@ -1067,14 +1776,8 @@ def segments_from_story_shot_plan(
                         "camera_movement": sh.camera_movement or movement,
                         "visual_style_instruction": style_instruction,
                         "market_localization_detail": market_detail,
-                        "generation_prompt": _compose_generation_prompt(
-                            visual_action=action,
-                            style_instruction=style_instruction,
-                            market_detail=market_detail,
-                            framing=sh.camera_framing or sh.framing or framing,
-                            movement=sh.camera_movement or movement,
-                            asset_summaries=asset_summaries,
-                        ),
+                        "generation_prompt": composed_gp,
+                        "video_prompt": vp_final,
                         "negative_prompt": sh.negative_prompt
                         or "；".join([*(visual_world.get("negative") or []), *(market_context.get("negative") or [])]),
                     }

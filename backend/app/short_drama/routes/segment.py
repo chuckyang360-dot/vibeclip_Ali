@@ -20,14 +20,23 @@ from ..schemas.segment import (
     UpdateSegmentShotRequest,
     UpdateSegmentShotResponse,
 )
-from ..schemas.story import StoryBlueprintSchema
+from ..schemas.story import parse_story_blueprint_json
+from ..services.asset_v2_materialize_service import is_creative_blueprint_v2_project
 from ..services.read_models import (
     latest_product_context,
     latest_story_blueprint,
     list_pipeline_asset_rows,
     next_segment_batch_version,
 )
-from ..services.segment_director_service import segment_director_service, segments_from_story_shot_plan
+from ..services.segment_director_service import (
+    segment_director_service,
+    segments_from_story_shot_plan,
+    s2_video_specs_materialization_eligible,
+)
+from ..services.video_v2_materialize_service import (
+    materialize_segment_scripts_from_v2_video_generation_specs,
+    v2_video_spec_expects_product_reference,
+)
 from ..services.project_state_service import STEP_4, mark_step_completed, update_last_active_step
 from ..services.workflow_orchestrator import orchestrator
 from ..services.project_task_guard import (
@@ -97,17 +106,45 @@ def _presentation_text(value: Any) -> str:
     return re.sub(r"\s+", " ", out).strip()
 
 
+def _presentation_product_presence(shot: dict[str, Any]) -> str:
+    svc = shot.get("source_visual_constraints")
+    if isinstance(svc, dict):
+        v = str(svc.get("s2_ui_product_presence") or "").strip().lower()
+        if v in ("explicit", "none"):
+            return v
+    return "explicit" if (shot.get("product_refs") or []) else "none"
+
+
 def _presentation_shot_from_execution(shot: dict[str, Any], *, shot_index: int) -> dict[str, Any]:
     return {
         "shot_id": _safe_text(shot.get("shot_id") or f"shot_{shot_index}"),
         "shot_index": shot_index,
         "shot_role": _safe_text(shot.get("shot_role") or shot.get("shot_title")),
-        "viewer_takeaway": _presentation_text(shot.get("source_selling_point") or shot.get("action_description")),
-        "visual_direction": _presentation_text(shot.get("visual_action") or shot.get("action_description")),
-        "character_action": _presentation_text(shot.get("action_description") or shot.get("visual_action")),
-        "product_presence": "explicit" if (shot.get("product_refs") or []) else "none",
-        "product_purpose": _safe_text(shot.get("source_selling_point")),
-        "scene_direction": _presentation_text(shot.get("scene_description") or shot.get("scene_ref")),
+        "viewer_takeaway": _presentation_text(
+            shot.get("presentation_viewer_takeaway")
+            or shot.get("viewer_takeaway")
+            or shot.get("source_selling_point")
+            or shot.get("action_description")
+        ),
+        "visual_direction": _presentation_text(
+            shot.get("presentation_visual_direction")
+            or shot.get("visual_direction")
+            or shot.get("visual_action")
+            or shot.get("action_description")
+        ),
+        "character_action": _presentation_text(
+            shot.get("presentation_character_action")
+            or shot.get("character_action")
+            or shot.get("action_description")
+            or shot.get("visual_action")
+        ),
+        "product_presence": _presentation_product_presence(shot),
+        "product_purpose": _safe_text(
+            shot.get("presentation_product_purpose") or shot.get("product_purpose") or shot.get("source_selling_point")
+        ),
+        "scene_direction": _presentation_text(
+            shot.get("presentation_scene_direction") or shot.get("scene_direction") or shot.get("scene_description") or shot.get("scene_ref")
+        ),
         "camera_direction": _presentation_text(
             shot.get("camera_direction")
             or shot.get("camera_description")
@@ -301,7 +338,7 @@ async def generate_segments(body: GenerateSegmentsRequest, db: Session = Depends
                 detail="Asset specs missing; run /assets/specs/generate first",
             )
 
-        blueprint = StoryBlueprintSchema.model_validate(sb_row.blueprint_json)
+        blueprint = parse_story_blueprint_json(sb_row.blueprint_json)
         product_ctx = ProductContextSchema.model_validate(pc_row.normalized_context_json) if pc_row else ProductContextSchema()
         assets = AssetSpecsBundleSchema(
             characters=[
@@ -427,64 +464,125 @@ async def generate_segments(body: GenerateSegmentsRequest, db: Session = Depends
             project_config["creative_intent"] or project_config["legacy_creative_intent_summary"]
         )
 
+        is_v2_blueprint = is_creative_blueprint_v2_project(blueprint)
+        if is_v2_blueprint and body.force_segment_director:
+            raise_short_drama_http(
+                ShortDramaInvalidModelOutputError(
+                    "creative_blueprint_v2 projects cannot use force_segment_director; S4 consumes video_generation_specs only.",
+                    code="s4_v2_segment_director_forbidden",
+                    missing_fields=["force_segment_director"],
+                )
+            )
+
         logger.info("[S4_DB_RELEASE_BEFORE_EXTERNAL_CALL] project_id=%s", body.project_id)
         db.close()
         try:
-            segments = None if blueprint.creative_brief else segments_from_story_shot_plan(blueprint, assets=assets, project_config=project_config)
-            source = "story_blueprint.shot_plan" if segments is not None else "segment_director_provider"
-            if segments is None:
-                try:
-                    segments = segment_director_service.generate(body.project_id, blueprint, assets, project_config)
-                except ShortDramaInvalidModelOutputError as e:
-                    logger.warning(
-                        "[S4_SEGMENT_GENERATION_FALLBACK_TRIGGERED] project_id=%s error_type=%s error=%s",
+            segments: list[SegmentScriptSchema] | None = None
+            source = ""
+
+            if is_v2_blueprint:
+                wf_lang = str(
+                    project_config.get("workflow_language")
+                    or (blueprint.language_policy or {}).get("workflow_language")
+                    or ""
+                )
+                segments = materialize_segment_scripts_from_v2_video_generation_specs(
+                    body.project_id,
+                    blueprint,
+                    assets,
+                    workflow_language=wf_lang,
+                    default_aspect_ratio=str(project.aspect_ratio or "9:16"),
+                )
+                source = "blueprint.video_generation_specs"
+            else:
+                logger.info(
+                    "[S4_LEGACY_SEGMENT_PATH] %s",
+                    json.dumps(
+                        {"project_id": body.project_id, "reason": "not_creative_blueprint_v2"},
+                        ensure_ascii=False,
+                    ),
+                )
+                segments = None
+                source = ""
+                _, s2_skip_reason = s2_video_specs_materialization_eligible(
+                    blueprint, force_segment_director=bool(body.force_segment_director)
+                )
+
+                if segments is None and not blueprint.creative_brief:
+                    segments = segments_from_story_shot_plan(blueprint, assets=assets, project_config=project_config)
+                    if segments is not None:
+                        source = "story_blueprint.shot_plan"
+
+                if segments is None:
+                    fb_reason = s2_skip_reason
+                    if body.force_segment_director:
+                        fb_reason = "force_segment_director"
+                    elif str(blueprint.blueprint_schema_version or "").strip() != "creative_blueprint_v2":
+                        fb_reason = "not_creative_blueprint_v2"
+                    elif not (blueprint.video_generation_specs or []):
+                        fb_reason = "video_generation_specs_empty"
+                    elif not any(str(x.video_prompt or "").strip() for x in blueprint.video_generation_specs):
+                        fb_reason = "all_video_prompts_empty"
+                    logger.info(
+                        "[S4_FALLBACK_DIRECTOR_GENERATION] project_id=%s reason=%s",
                         body.project_id,
-                        type(e).__name__,
-                        str(e),
+                        fb_reason,
                     )
-                    fallback_segments = segments_from_story_shot_plan(
-                        blueprint,
-                        assets=assets,
-                        project_config=project_config,
-                        force_from_shot_plan=True,
-                    )
-                    if fallback_segments:
-                        source = "fallback_story_blueprint_shot_plan"
-                        segments = []
-                        for seg in fallback_segments:
-                            seg_meta = dict(seg.meta or {})
-                            seg_meta["source"] = "fallback_story_blueprint_shot_plan"
-                            seg_meta["generation_warning"] = "structured_generation_failed_fallback_used"
-                            seg_meta["original_error_type"] = type(e).__name__
-                            segments.append(seg.model_copy(update={"meta": seg_meta}))
-                    else:
-                        shot_plan = blueprint.shot_plan if isinstance(blueprint.shot_plan, dict) else {}
-                        shot_plan_segments = shot_plan.get("segments") if isinstance(shot_plan.get("segments"), list) else []
-                        segment_plan = blueprint.segment_plan if isinstance(blueprint.segment_plan, list) else []
-                        fallback_reason = "unknown"
-                        if not shot_plan:
-                            fallback_reason = "shot_plan_missing"
-                        elif not shot_plan_segments:
-                            fallback_reason = "shot_plan_segments_missing"
-                        elif any(
-                            not isinstance(seg, dict) or not isinstance(seg.get("shots"), list) or len(seg.get("shots") or []) == 0
-                            for seg in shot_plan_segments
-                        ):
-                            fallback_reason = "shot_plan_segments_empty_or_invalid"
-                        elif not segment_plan:
-                            fallback_reason = "segment_plan_missing"
+                    try:
+                        segments = segment_director_service.generate(body.project_id, blueprint, assets, project_config)
+                        source = "segment_director_provider"
+                    except ShortDramaInvalidModelOutputError as e:
                         logger.warning(
-                            "[S4_SEGMENT_GENERATION_FALLBACK_FAILED] %s",
-                            {
-                                "project_id": body.project_id,
-                                "has_story_blueprint": bool(sb_row and sb_row.blueprint_json),
-                                "has_shot_plan": bool(shot_plan),
-                                "has_segment_plan": bool(segment_plan),
-                                "fallback_segments_count": 0,
-                                "reason": fallback_reason,
-                            },
+                            "[S4_SEGMENT_GENERATION_FALLBACK_TRIGGERED] project_id=%s error_type=%s error=%s",
+                            body.project_id,
+                            type(e).__name__,
+                            str(e),
                         )
-                        raise
+                        fallback_segments = segments_from_story_shot_plan(
+                            blueprint,
+                            assets=assets,
+                            project_config=project_config,
+                            force_from_shot_plan=True,
+                        )
+                        if fallback_segments:
+                            source = "fallback_story_blueprint_shot_plan"
+                            segments = []
+                            for seg in fallback_segments:
+                                seg_meta = dict(seg.meta or {})
+                                seg_meta["source"] = "fallback_story_blueprint_shot_plan"
+                                seg_meta["generation_warning"] = "structured_generation_failed_fallback_used"
+                                seg_meta["original_error_type"] = type(e).__name__
+                                segments.append(seg.model_copy(update={"meta": seg_meta}))
+                        else:
+                            shot_plan = blueprint.shot_plan if isinstance(blueprint.shot_plan, dict) else {}
+                            shot_plan_segments = shot_plan.get("segments") if isinstance(shot_plan.get("segments"), list) else []
+                            segment_plan = blueprint.segment_plan if isinstance(blueprint.segment_plan, list) else []
+                            fallback_reason = "unknown"
+                            if not shot_plan:
+                                fallback_reason = "shot_plan_missing"
+                            elif not shot_plan_segments:
+                                fallback_reason = "shot_plan_segments_missing"
+                            elif any(
+                                not isinstance(seg, dict)
+                                or not isinstance(seg.get("shots"), list)
+                                or len(seg.get("shots") or []) == 0
+                                for seg in shot_plan_segments
+                            ):
+                                fallback_reason = "shot_plan_segments_empty_or_invalid"
+                            elif not segment_plan:
+                                fallback_reason = "segment_plan_missing"
+                            logger.warning(
+                                "[S4_SEGMENT_GENERATION_FALLBACK_FAILED] %s",
+                                {
+                                    "project_id": body.project_id,
+                                    "has_story_blueprint": bool(sb_row and sb_row.blueprint_json),
+                                    "has_shot_plan": bool(shot_plan),
+                                    "has_segment_plan": bool(segment_plan),
+                                    "fallback_segments_count": 0,
+                                    "reason": fallback_reason,
+                                },
+                            )
+                            raise
             shot_count = sum(len(s.shots) for s in segments)
             story_framework = blueprint.story_framework if isinstance(blueprint.story_framework, dict) else {}
             original_structure = story_framework.get("structure") if isinstance(story_framework.get("structure"), list) else []
@@ -517,6 +615,15 @@ async def generate_segments(body: GenerateSegmentsRequest, db: Session = Depends
                 scene_ref = str((first.scene_ref if first else "") or "")
                 prod_refs = list((first.product_refs if first else []) or [])
                 missing_fields: list[str] = []
+                meta_src = str((seg.meta or {}).get("source") or "").strip()
+                is_v2_video_specs = meta_src == "v2_video_generation_specs"
+                expects_product_ref = (
+                    v2_video_spec_expects_product_reference(blueprint, assets, seg.segment_id)
+                    if is_v2_video_specs
+                    else True
+                )
+                product_asset_id_str = str((first.product_asset_id if first else "") or "").strip()
+                has_product_bind = bool(prod_refs) or bool(product_asset_id_str)
                 if not first:
                     missing_fields.append("shots")
                 else:
@@ -528,10 +635,20 @@ async def generate_segments(body: GenerateSegmentsRequest, db: Session = Depends
                         missing_fields.append("character_refs")
                     if not scene_ref:
                         missing_fields.append("scene_ref")
-                    if not prod_refs:
-                        missing_fields.append("product_refs")
-                used_fallback_assets = bool(char_refs or scene_ref or prod_refs)
-                asset_refs_complete = bool(char_refs and scene_ref and prod_refs)
+                    if is_v2_video_specs:
+                        if expects_product_ref and not has_product_bind:
+                            missing_fields.append("product_refs")
+                    else:
+                        if not prod_refs:
+                            missing_fields.append("product_refs")
+                if is_v2_video_specs:
+                    used_fallback_assets = False
+                    asset_refs_complete = bool(char_refs and scene_ref) and (
+                        not expects_product_ref or has_product_bind
+                    )
+                else:
+                    used_fallback_assets = bool(char_refs or scene_ref or prod_refs)
+                    asset_refs_complete = bool(char_refs and scene_ref and prod_refs)
                 logger.info(
                     "[S4_SEGMENT_SHOT_FIELDS_BUILT] %s",
                     {

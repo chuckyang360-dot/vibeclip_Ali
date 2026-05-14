@@ -9,6 +9,8 @@ import { AdminTabs } from '../../components/admin/AdminTabs';
 import { CreditAdjustmentModal } from '../../components/admin/CreditAdjustmentModal';
 import { useAdminLocale } from '../../contexts/AdminLocaleContext';
 import { formatTransactionType } from '../../i18n/adminI18n';
+import { formatCreditTransactionReasonDisplay } from '../../utils/adminCreditTxnDisplay';
+import { formatAdminShanghaiDateTime } from '../../utils/adminDateTime';
 
 export function AdminCreditsPage() {
   const { locale, t } = useAdminLocale();
@@ -161,7 +163,7 @@ export function AdminCreditsPage() {
                       <td className="px-4 py-3 text-xs text-gray-500">{String(row.total_granted)}</td>
                       <td className="px-4 py-3 text-xs text-gray-500">{String(row.total_consumed)}</td>
                       <td className="px-4 py-3 text-xs text-gray-500">{String(row.total_refunded)}</td>
-                      <td className="px-4 py-3 text-xs text-gray-500">{String(row.updated_at || '')}</td>
+                      <td className="px-4 py-3 text-xs text-gray-500">{formatAdminShanghaiDateTime(String(row.updated_at || ''))}</td>
                     </tr>
                   );
                 })}
@@ -234,23 +236,28 @@ export function AdminCreditsPage() {
           {!loading && !error && txns.length > 0 ? (
             <>
               <AdminDataTable headers={['ID', t('user'), t('action'), t('amount'), locale === 'zh' ? '余额变化' : 'Balances', t('operator'), t('reason'), t('createdAt')]}>
-                {txns.map((t) => {
-                  const u = t.user as Record<string, unknown> | undefined;
-                  const op = t.operator as Record<string, unknown> | undefined;
+                {txns.map((txn) => {
+                  const u = txn.user as Record<string, unknown> | undefined;
+                  const op = txn.operator as Record<string, unknown> | undefined;
+                  const reasonText = formatCreditTransactionReasonDisplay(locale, {
+                    type: txn.type as string | undefined,
+                    note: txn.note as string | undefined,
+                    subscription_order: txn.subscription_order as Record<string, unknown> | null | undefined,
+                  });
                   return (
-                    <tr key={String(t.transaction_id)}>
-                      <td className="px-4 py-3 text-xs">{String(t.transaction_id)}</td>
+                    <tr key={String(txn.transaction_id)}>
+                      <td className="px-4 py-3 text-xs">{String(txn.transaction_id)}</td>
                       <td className="px-4 py-3 text-xs">{String(u?.email || u?.user_id)}</td>
-                      <td className="px-4 py-3 text-xs">{formatTransactionType(locale, t.type)}</td>
-                      <td className="px-4 py-3 text-sm">{String(t.amount)}</td>
+                      <td className="px-4 py-3 text-xs">{formatTransactionType(locale, txn.type)}</td>
+                      <td className="px-4 py-3 text-sm">{String(txn.amount)}</td>
                       <td className="px-4 py-3 text-xs text-gray-500">
-                        {String(t.balance_before)} → {String(t.balance_after)}
+                        {String(txn.balance_before)} → {String(txn.balance_after)}
                       </td>
                       <td className="px-4 py-3 text-xs text-gray-500">
                         {String(op?.type || '')} {op?.admin_email ? `· ${String(op.admin_email)}` : ''}
                       </td>
-                      <td className="max-w-xs truncate px-4 py-3 text-xs text-gray-500">{String(t.note || '')}</td>
-                      <td className="px-4 py-3 text-xs text-gray-500">{String(t.created_at || '')}</td>
+                      <td className="max-w-md whitespace-normal break-words px-4 py-3 text-xs text-gray-700">{reasonText}</td>
+                      <td className="px-4 py-3 text-xs text-gray-500">{formatAdminShanghaiDateTime(String(txn.created_at || ''))}</td>
                     </tr>
                   );
                 })}

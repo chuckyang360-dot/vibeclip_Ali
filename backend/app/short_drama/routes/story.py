@@ -8,7 +8,7 @@ from ..exceptions import ShortDramaInvalidModelOutputError, ShortDramaProviderEr
 from ..http_errors import raise_short_drama_http
 from ..models import StoryBlueprintRecord
 from ..schemas.product import ProductContextSchema
-from ..schemas.story import GenerateStoryRequest, GenerateStoryResponse, StoryBlueprintSchema
+from ..schemas.story import GenerateStoryRequest, GenerateStoryResponse, StoryBlueprintSchema, parse_story_blueprint_json
 from ..services.read_models import (
     latest_product_context,
     latest_story_blueprint,
@@ -248,7 +248,7 @@ async def generate_story(body: GenerateStoryRequest, db: Session = Depends(get_d
             record_id=record.id,
             project_id=body.project_id,
             version=record.version,
-            blueprint=StoryBlueprintSchema.model_validate(record.blueprint_json),
+            blueprint=parse_story_blueprint_json(record.blueprint_json),
             approved=record.approved,
             created_at=record.created_at,
         )

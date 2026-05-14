@@ -34,6 +34,27 @@ def effective_xai_text_model() -> str:
     return settings.XAI_TEXT_MODEL or settings.XAI_MODEL or _DEFAULT_XAI_TEXT_MODEL
 
 
+def effective_xai_story_model() -> str:
+    """S2 Story Planner: XAI_STORY_MODEL when set, else global text model."""
+    m = settings.XAI_STORY_MODEL
+    if m is not None and str(m).strip():
+        return str(m).strip()
+    return effective_xai_text_model()
+
+
+def effective_xai_story_max_output_tokens() -> int:
+    v = int(settings.XAI_STORY_MAX_OUTPUT_TOKENS or 16384)
+    return max(1024, v)
+
+
+def extract_responses_api_model(response_json: dict[str, Any]) -> str:
+    """Best-effort model id returned by xAI (may differ from request alias)."""
+    m = response_json.get("model")
+    if isinstance(m, str) and m.strip():
+        return m.strip()
+    return ""
+
+
 def _truncate(s: str, max_len: int = 500) -> str:
     s = s or ""
     if len(s) <= max_len:

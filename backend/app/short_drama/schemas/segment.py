@@ -79,6 +79,12 @@ class ShotSchema(BaseModel):
     source_segment_id: str = ""
     source_selling_point: str = ""
     source_visual_constraints: Dict[str, Any] = Field(default_factory=dict)
+    # S4 / presentation: Chinese UI copy; execution still uses video_prompt / visual_action / generation_prompt.
+    presentation_viewer_takeaway: str = ""
+    presentation_visual_direction: str = ""
+    presentation_character_action: str = ""
+    presentation_scene_direction: str = ""
+    presentation_product_purpose: str = ""
 
     @model_validator(mode="before")
     @classmethod
@@ -166,6 +172,8 @@ class SegmentScriptSchema(BaseModel):
 
 class GenerateSegmentsRequest(BaseModel):
     project_id: int
+    # When true, skip S2 video_generation_specs materialization and call segment director / Grok.
+    force_segment_director: bool = False
 
 
 class GenerateSegmentsResponse(BaseModel):

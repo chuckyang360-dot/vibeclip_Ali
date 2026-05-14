@@ -33,7 +33,7 @@ from ..schemas.asset import (
 )
 from ..services.project_state_service import STEP_3, mark_step_completed, propagate_downstream_stale, update_last_active_step
 from ..schemas.product import ProductContextSchema
-from ..schemas.story import StoryBlueprintSchema
+from ..schemas.story import parse_story_blueprint_json
 from ..services.asset_spec_service import (
     asset_bundle_from_story_requirements,
     asset_spec_service,
@@ -41,6 +41,11 @@ from ..services.asset_spec_service import (
     resolve_scene_fields,
 )
 from ..services.asset_library_service import asset_library_service
+from ..services.asset_v2_materialize_service import (
+    build_v2_asset_specs_bundle,
+    is_creative_blueprint_v2_project,
+    persist_v2_asset_specs_bundle_to_legacy_tables,
+)
 from ..services.read_models import latest_product_context, latest_story_blueprint
 from ..services.workflow_orchestrator import orchestrator
 from ..services.image_understanding_service import validate_supported_image_data_url
@@ -361,7 +366,7 @@ async def generate_asset_specs(body: GenerateAssetSpecsRequest, db: Session = De
             )
 
         product = ProductContextSchema.model_validate(pc_row.normalized_context_json)
-        blueprint = StoryBlueprintSchema.model_validate(sb_row.blueprint_json)
+        blueprint = parse_story_blueprint_json(sb_row.blueprint_json)
         language_policy = build_language_policy(
             workflow_source={"product": product.model_dump(), "raw_inputs": pc_row.raw_inputs_json, "blueprint": blueprint.model_dump()},
             market_source={
@@ -387,6 +392,7 @@ async def generate_asset_specs(body: GenerateAssetSpecsRequest, db: Session = De
             "video_language": language_policy["video_language"],
             "language_policy": language_policy,
             "language_prompt_rules": language_prompt_rules(language_policy),
+            "project_id": body.project_id,
         }
         project_config["legacy_creative_intent_summary"] = "；".join(
             [
@@ -404,89 +410,136 @@ async def generate_asset_specs(body: GenerateAssetSpecsRequest, db: Session = De
             project_config["creative_intent"] or project_config["legacy_creative_intent_summary"]
         )
 
+        is_v2_blueprint = is_creative_blueprint_v2_project(blueprint)
         status_before = project.status
-        logger.info("[S3_DB_RELEASE_BEFORE_EXTERNAL_CALL] project_id=%s", body.project_id)
-        db.close()
         try:
-            req_state = inspect_asset_requirements_source(blueprint)
-            if blueprint.creative_brief:
-                bundle = asset_spec_service.generate(body.project_id, product, blueprint, project_config)
-                source = "asset_spec_provider"
+            if is_v2_blueprint:
+                specs = list(blueprint.asset_generation_specs or [])
+                n_char = sum(1 for s in specs if str(s.asset_kind or "").strip().lower() == "character")
+                n_scene = sum(1 for s in specs if str(s.asset_kind or "").strip().lower() == "scene")
+                n_prod = sum(1 for s in specs if str(s.asset_kind or "").strip().lower() == "product")
+                logger.info(
+                    "[S3_V2_ASSET_SPECS_USE_BLUEPRINT] %s",
+                    json.dumps(
+                        {
+                            "project_id": body.project_id,
+                            "asset_specs_count": len(specs),
+                            "character_count": n_char,
+                            "scene_count": n_scene,
+                            "product_count": n_prod,
+                        },
+                        ensure_ascii=False,
+                    ),
+                )
+                bundle = build_v2_asset_specs_bundle(project_id=body.project_id, blueprint=blueprint)
+                source = "blueprint.asset_generation_specs"
                 used_fallback = False
                 fallback_reason = None
-            else:
-                bundle = asset_bundle_from_story_requirements(blueprint, product=product, project_config=project_config)
-                source = "story_blueprint.asset_requirements" if req_state.get("usable") else "fallback_legacy"
-                used_fallback = not bool(req_state.get("usable"))
-                fallback_reason = req_state.get("reason")
-            if bundle is None:
-                bundle = asset_spec_service.generate(body.project_id, product, blueprint, project_config)
-                used_fallback = True
-                if not fallback_reason:
-                    fallback_reason = "asset_bundle_conversion_empty"
-            logger.info(
-                "[S3_ASSET_REQUIREMENTS_SOURCE] project_id=%s source=%s character_count=%s scene_count=%s product_count=%s",
-                body.project_id,
-                source,
-                len(bundle.characters),
-                len(bundle.scenes),
-                len(bundle.products),
-            )
-            logger.info(
-                "[S3_ASSET_REQUIREMENTS_CONSUMED] %s",
-                {
-                    "project_id": body.project_id,
-                    "source": source,
-                    "target_market": project_config.get("target_market"),
-                    "target_audience": project_config.get("target_audience"),
-                    "character_names": [c.name for c in bundle.characters],
-                    "scene_names": [s.name for s in bundle.scenes],
-                    "product_names": [p.name for p in bundle.products],
-                    "used_fallback": used_fallback,
-                    "fallback_reason": fallback_reason,
-                },
-            )
-            for c in bundle.characters:
                 logger.info(
-                    "[S3_CHARACTER_ASSET_PROMPT] %s",
+                    "[S3_ASSET_REQUIREMENTS_SOURCE] project_id=%s source=%s character_count=%s scene_count=%s product_count=%s",
+                    body.project_id,
+                    source,
+                    len(bundle.characters),
+                    len(bundle.scenes),
+                    len(bundle.products),
+                )
+            else:
+                logger.info(
+                    "[S3_LEGACY_ASSET_SPEC_PATH] %s",
+                    json.dumps(
+                        {"project_id": body.project_id, "reason": "not_creative_blueprint_v2"},
+                        ensure_ascii=False,
+                    ),
+                )
+                logger.info("[S3_DB_RELEASE_BEFORE_EXTERNAL_CALL] project_id=%s", body.project_id)
+                db.close()
+                req_state = inspect_asset_requirements_source(blueprint)
+                if blueprint.creative_brief:
+                    bundle = asset_spec_service.generate(body.project_id, product, blueprint, project_config)
+                    source = "asset_spec_provider"
+                    used_fallback = False
+                    fallback_reason = None
+                else:
+                    if not req_state.get("usable"):
+                        logger.warning(
+                            "[S3_ASSET_SPEC_MISSING] project_id=%s missing_field=%s",
+                            body.project_id,
+                            str(req_state.get("reason") or "asset_requirements"),
+                        )
+                        raise_short_drama_http(
+                            ShortDramaInvalidModelOutputError(
+                                "Story blueprint has no usable asset_requirements; regenerate S2 or complete asset_requirements.",
+                                code="s3_asset_spec_missing",
+                                missing_fields=[str(req_state.get("reason") or "asset_requirements")],
+                            )
+                        )
+                    bundle = asset_bundle_from_story_requirements(blueprint, product=product, project_config=project_config)
+                    source = "story_blueprint.asset_requirements"
+                    used_fallback = False
+                    fallback_reason = None
+                logger.info(
+                    "[S3_ASSET_REQUIREMENTS_SOURCE] project_id=%s source=%s character_count=%s scene_count=%s product_count=%s",
+                    body.project_id,
+                    source,
+                    len(bundle.characters),
+                    len(bundle.scenes),
+                    len(bundle.products),
+                )
+                logger.info(
+                    "[S3_ASSET_REQUIREMENTS_CONSUMED] %s",
                     {
                         "project_id": body.project_id,
+                        "source": source,
                         "target_market": project_config.get("target_market"),
                         "target_audience": project_config.get("target_audience"),
-                        "final_character_name": c.name,
-                        "prompt_preview": _preview_text((c.image_prompt or c.visual_prompt)),
+                        "character_names": [c.name for c in bundle.characters],
+                        "scene_names": [s.name for s in bundle.scenes],
+                        "product_names": [p.name for p in bundle.products],
+                        "used_fallback": used_fallback,
+                        "fallback_reason": fallback_reason,
                     },
                 )
-            story_framework = blueprint.story_framework if isinstance(blueprint.story_framework, dict) else {}
-            for s in bundle.scenes:
-                logger.info(
-                    "[S3_SCENE_ASSET_PROMPT] %s",
-                    {
-                        "project_id": body.project_id,
-                        "target_market": project_config.get("target_market"),
-                        "story_framework_type": story_framework.get("type"),
-                        "final_scene_name": s.name,
-                        "prompt_preview": _preview_text((s.image_prompt or s.visual_prompt)),
-                    },
-                )
-            product_name_from_s1 = product.product_name
-            product_req_first_name = ""
-            req = blueprint.asset_requirements if isinstance(blueprint.asset_requirements, dict) else {}
-            req_products = req.get("products") if isinstance(req.get("products"), list) else []
-            if req_products and isinstance(req_products[0], dict):
-                product_req_first_name = str(req_products[0].get("name") or "").strip()
-            for p in bundle.products:
-                logger.info(
-                    "[S3_PRODUCT_ASSET_CONTEXT] %s",
-                    {
-                        "project_id": body.project_id,
-                        "product_name_from_s1": product_name_from_s1,
-                        "product_name_from_asset_requirement": product_req_first_name,
-                        "final_product_asset_name": p.name,
-                        "visual_features": product.visual_features[:8],
-                        "prompt_preview": _preview_text((p.image_prompt or p.visual_prompt)),
-                    },
-                )
+                for c in bundle.characters:
+                    logger.info(
+                        "[S3_CHARACTER_ASSET_PROMPT] %s",
+                        {
+                            "project_id": body.project_id,
+                            "target_market": project_config.get("target_market"),
+                            "target_audience": project_config.get("target_audience"),
+                            "final_character_name": c.name,
+                            "prompt_preview": _preview_text((c.image_prompt or c.visual_prompt)),
+                        },
+                    )
+                story_framework = blueprint.story_framework if isinstance(blueprint.story_framework, dict) else {}
+                for s in bundle.scenes:
+                    logger.info(
+                        "[S3_SCENE_ASSET_PROMPT] %s",
+                        {
+                            "project_id": body.project_id,
+                            "target_market": project_config.get("target_market"),
+                            "story_framework_type": story_framework.get("type"),
+                            "final_scene_name": s.name,
+                            "prompt_preview": _preview_text((s.image_prompt or s.visual_prompt)),
+                        },
+                    )
+                product_name_from_s1 = product.product_name
+                product_req_first_name = ""
+                req = blueprint.asset_requirements if isinstance(blueprint.asset_requirements, dict) else {}
+                req_products = req.get("products") if isinstance(req.get("products"), list) else []
+                if req_products and isinstance(req_products[0], dict):
+                    product_req_first_name = str(req_products[0].get("name") or "").strip()
+                for p in bundle.products:
+                    logger.info(
+                        "[S3_PRODUCT_ASSET_CONTEXT] %s",
+                        {
+                            "project_id": body.project_id,
+                            "product_name_from_s1": product_name_from_s1,
+                            "product_name_from_asset_requirement": product_req_first_name,
+                            "final_product_asset_name": p.name,
+                            "visual_features": product.visual_features[:8],
+                            "prompt_preview": _preview_text((p.image_prompt or p.visual_prompt)),
+                        },
+                    )
         except (ShortDramaProviderError, ShortDramaInvalidModelOutputError) as e:
             logger.info(
                 "[SHORT_DRAMA_STEP_FAIL] project_id=%s step=%s error_type=%s project_status_before=%s project_status_after=%s",
@@ -519,595 +572,598 @@ async def generate_asset_specs(body: GenerateAssetSpecsRequest, db: Session = De
         db.query(SceneAsset).filter(SceneAsset.project_id == body.project_id).delete(synchronize_session=False)
         db.query(ProductAsset).filter(ProductAsset.project_id == body.project_id).delete(synchronize_session=False)
 
-        for c in bundle.characters:
-            _trace(
-                "S3_SPEC_BEFORE_SAVE",
-                {
-                    "project_id": body.project_id,
-                    "asset_type": "character",
-                    "asset_id": c.id,
-                    "name": c.name,
-                    "description": c.description,
-                    "visual_prompt": c.visual_prompt,
-                    "image_prompt": c.image_prompt,
-                    "type_fields": c.meta,
-                    "source_field": "bundle.characters",
-                },
-            )
-            original_name = c.name.strip() if isinstance(c.name, str) else ""
-            role_type = _as_text(c.role_type) or "main"
-            raw_story_usage = _as_text((c.meta or {}).get("story_usage"))
-            story_usage = raw_story_usage or "用于展示产品在生活场景中的自然露出和人物反应。"
-            display_name = original_name
-            name_reason = "model_name_kept"
-            if _character_name_is_too_generic(display_name, project_config.get("target_audience", "")):
-                display_name = build_character_display_name(
-                    target_market=_as_text(project_config.get("target_market")),
-                    target_audience=_as_text(project_config.get("target_audience")),
-                    role_type=role_type,
-                    scenario=story_usage,
-                    marketing_goal=_as_text(project_config.get("marketing_goal")),
-                )
-                name_reason = "rewritten_generic_or_audience_name"
-            if _is_bad_display_text(display_name):
-                display_name = _zh_fallback_name("character")
-                name_reason = "rewritten_bad_placeholder"
-            logger.info(
-                "[S3_CHARACTER_NAME_RESOLVED] %s",
-                {
-                    "project_id": body.project_id,
-                    "original_name": original_name,
-                    "target_market": project_config.get("target_market"),
-                    "target_audience": project_config.get("target_audience"),
-                    "story_usage": story_usage,
-                    "resolved_name": display_name,
-                    "reason": name_reason,
-                },
-            )
-            display_desc = str(c.description or "").strip()
-            bad_char_desc = _is_bad_display_text(display_desc) or _contains_any(
-                display_desc,
-                ["符合目标市场与受众的角色设定", "符合目标市场的角色", "角色资产", "市场语境", "目标受众"],
-            )
-            if bad_char_desc:
-                display_desc = _good_character_description(
-                    _as_text(project_config.get("target_market")),
-                    _as_text(project_config.get("target_audience")),
-                    story_usage,
-                )
-            appearance = str((c.meta or {}).get("appearance") or "").strip() or _join_non_empty(
-                [
-                    _as_text((c.technical_constraints or {}).get("market_context") or project_config.get("target_market")),
-                    "动画角色，非真人，商业动画广告质感，干净线条，柔和色彩"
-                    if "animation" in _as_text(project_config.get("visual_style")).lower() or "动画" in _as_text(project_config.get("visual_style"))
-                    else "生活化广告人物，符合目标市场审美",
-                ],
-                "，",
-            )
-            costume = str((c.meta or {}).get("costume") or "").strip() or "浅色休闲衬衫、白色内搭、深色休闲裤，整体偏自然通勤穿搭。"
-            base_expression = str((c.meta or {}).get("base_expression") or "").strip() or "轻松、自信、自然微笑。"
-            if not raw_story_usage:
-                story_usage = "用于展示产品在生活场景中的自然露出和人物反应。"
-            plot_stage = _infer_plot_stage(
-                _as_text(project_config.get("marketing_goal")),
-                story_usage,
-                _as_text(c.narrative_function),
-                "character",
-            )
-            scene_form = _infer_scene_form("character", story_usage)
-            structure_summary = str((c.meta or {}).get("structure_summary") or "").strip() or _build_structure_summary(
-                "character",
-                scene_form,
-                story_usage,
-                "",
-            )
-            c_type_fields = {
-                "name": display_name,
-                "asset_type": "character",
-                "role_position": c.role_type or "主角",
-                "market_context": project_config.get("target_market"),
-                "age_range": (c.meta or {}).get("age_range") or "",
-                "gender": (c.meta or {}).get("gender") or "",
-                "occupation_or_identity": (c.meta or {}).get("identity") or (c.meta or {}).get("occupation_or_identity") or "",
-                "relationship_to_product": (c.meta or {}).get("relationship_to_product") or "使用者",
-                "personality": (c.meta or {}).get("personality") or "",
-                "emotional_baseline": (c.meta or {}).get("emotional_baseline") or base_expression,
-                "behavior_pattern": (c.meta or {}).get("behavior_pattern") or "自然、生活化、不过度表演",
-                "story_function": story_usage,
-                "role_type": c.role_type,
-                "appearance": appearance,
-                "appearance_overview": appearance,
-                "face_features": (c.meta or {}).get("face_features") or "",
-                "hairstyle": (c.meta or {}).get("hairstyle") or "",
-                "body_shape": (c.meta or {}).get("body_shape") or "",
-                "outfit": costume,
-                "accessories": (c.meta or {}).get("accessories") or "",
-                "posture_expression": base_expression,
-                "visual_memory_points": (c.meta or {}).get("visual_memory_points") or [],
-                "negative_constraints": (c.meta or {}).get("must_avoid") or c.boundary_warnings,
-                "costume": costume,
-                "base_expression": base_expression,
-                "voice_profile": (c.meta or {}).get("voice_profile") or (c.meta or {}).get("voice_style") or "",
-                "requires_spoken": bool((c.meta or {}).get("requires_spoken", True)),
-                "spoken_language": project_config.get("video_language"),
-                "voice_tone": (c.meta or {}).get("voice_tone") or project_config.get("brand_tone"),
-                "speech_style": (c.meta or {}).get("speech_style") or "自然口播",
-                "structured_prompt": c.image_prompt or c.visual_prompt or "",
-                "structure_summary": structure_summary,
-                "story_usage": story_usage,
-                "narrative_function": c.narrative_function or "",
-                "exposure_priority": c.exposure_priority,
-                "display_name": display_name,
-                "display_description": display_desc,
-                "image_prompt": c.image_prompt or c.visual_prompt or "",
-                "plot_stage": plot_stage,
-                "scene_form": scene_form,
-                "workflow_language": project_config.get("workflow_language"),
-                "business_profile": c.business_profile,
-                "technical_constraints": c.technical_constraints,
-            }
-            db.add(
-                CharacterAsset(
-                    project_id=body.project_id,
-                    name=display_name,
-                    role_type=c.role_type,
-                    description=display_desc,
-                    visual_prompt=c.visual_prompt,
-                    image_url=c.image_url,
-                    meta_json={
-                        **(c.meta or {}),
-                        "type_fields": c_type_fields,
-                        "asset_identity": c.asset_identity,
-                        "boundary_warnings": c.boundary_warnings,
-                        "source_asset_version": c.source_asset_version,
-                        "exposure_priority": c.exposure_priority,
-                        "narrative_function": c.narrative_function,
-                        "purpose": c.purpose,
+        if is_v2_blueprint:
+            persist_v2_asset_specs_bundle_to_legacy_tables(db, body.project_id, bundle)
+        else:
+            for c in bundle.characters:
+                _trace(
+                    "S3_SPEC_BEFORE_SAVE",
+                    {
+                        "project_id": body.project_id,
+                        "asset_type": "character",
+                        "asset_id": c.id,
+                        "name": c.name,
+                        "description": c.description,
+                        "visual_prompt": c.visual_prompt,
+                        "image_prompt": c.image_prompt,
+                        "type_fields": c.meta,
+                        "source_field": "bundle.characters",
                     },
                 )
-            )
-            logger.info(
-                "[S3_ASSET_DISPLAY_FIELDS_BUILT] %s",
-                {
-                    "project_id": body.project_id,
+                original_name = c.name.strip() if isinstance(c.name, str) else ""
+                role_type = _as_text(c.role_type) or "main"
+                raw_story_usage = _as_text((c.meta or {}).get("story_usage"))
+                story_usage = raw_story_usage or "用于展示产品在生活场景中的自然露出和人物反应。"
+                display_name = original_name
+                name_reason = "model_name_kept"
+                if _character_name_is_too_generic(display_name, project_config.get("target_audience", "")):
+                    display_name = build_character_display_name(
+                        target_market=_as_text(project_config.get("target_market")),
+                        target_audience=_as_text(project_config.get("target_audience")),
+                        role_type=role_type,
+                        scenario=story_usage,
+                        marketing_goal=_as_text(project_config.get("marketing_goal")),
+                    )
+                    name_reason = "rewritten_generic_or_audience_name"
+                if _is_bad_display_text(display_name):
+                    display_name = _zh_fallback_name("character")
+                    name_reason = "rewritten_bad_placeholder"
+                logger.info(
+                    "[S3_CHARACTER_NAME_RESOLVED] %s",
+                    {
+                        "project_id": body.project_id,
+                        "original_name": original_name,
+                        "target_market": project_config.get("target_market"),
+                        "target_audience": project_config.get("target_audience"),
+                        "story_usage": story_usage,
+                        "resolved_name": display_name,
+                        "reason": name_reason,
+                    },
+                )
+                display_desc = str(c.description or "").strip()
+                bad_char_desc = _is_bad_display_text(display_desc) or _contains_any(
+                    display_desc,
+                    ["符合目标市场与受众的角色设定", "符合目标市场的角色", "角色资产", "市场语境", "目标受众"],
+                )
+                if bad_char_desc:
+                    display_desc = _good_character_description(
+                        _as_text(project_config.get("target_market")),
+                        _as_text(project_config.get("target_audience")),
+                        story_usage,
+                    )
+                appearance = str((c.meta or {}).get("appearance") or "").strip() or _join_non_empty(
+                    [
+                        _as_text((c.technical_constraints or {}).get("market_context") or project_config.get("target_market")),
+                        "动画角色，非真人，商业动画广告质感，干净线条，柔和色彩"
+                        if "animation" in _as_text(project_config.get("visual_style")).lower() or "动画" in _as_text(project_config.get("visual_style"))
+                        else "生活化广告人物，符合目标市场审美",
+                    ],
+                    "，",
+                )
+                costume = str((c.meta or {}).get("costume") or "").strip() or "浅色休闲衬衫、白色内搭、深色休闲裤，整体偏自然通勤穿搭。"
+                base_expression = str((c.meta or {}).get("base_expression") or "").strip() or "轻松、自信、自然微笑。"
+                if not raw_story_usage:
+                    story_usage = "用于展示产品在生活场景中的自然露出和人物反应。"
+                plot_stage = _infer_plot_stage(
+                    _as_text(project_config.get("marketing_goal")),
+                    story_usage,
+                    _as_text(c.narrative_function),
+                    "character",
+                )
+                scene_form = _infer_scene_form("character", story_usage)
+                structure_summary = str((c.meta or {}).get("structure_summary") or "").strip() or _build_structure_summary(
+                    "character",
+                    scene_form,
+                    story_usage,
+                    "",
+                )
+                c_type_fields = {
+                    "name": display_name,
                     "asset_type": "character",
-                    "asset_id": c.id,
+                    "role_position": c.role_type or "主角",
+                    "market_context": project_config.get("target_market"),
+                    "age_range": (c.meta or {}).get("age_range") or "",
+                    "gender": (c.meta or {}).get("gender") or "",
+                    "occupation_or_identity": (c.meta or {}).get("identity") or (c.meta or {}).get("occupation_or_identity") or "",
+                    "relationship_to_product": (c.meta or {}).get("relationship_to_product") or "使用者",
+                    "personality": (c.meta or {}).get("personality") or "",
+                    "emotional_baseline": (c.meta or {}).get("emotional_baseline") or base_expression,
+                    "behavior_pattern": (c.meta or {}).get("behavior_pattern") or "自然、生活化、不过度表演",
+                    "story_function": story_usage,
+                    "role_type": c.role_type,
+                    "appearance": appearance,
+                    "appearance_overview": appearance,
+                    "face_features": (c.meta or {}).get("face_features") or "",
+                    "hairstyle": (c.meta or {}).get("hairstyle") or "",
+                    "body_shape": (c.meta or {}).get("body_shape") or "",
+                    "outfit": costume,
+                    "accessories": (c.meta or {}).get("accessories") or "",
+                    "posture_expression": base_expression,
+                    "visual_memory_points": (c.meta or {}).get("visual_memory_points") or [],
+                    "negative_constraints": (c.meta or {}).get("must_avoid") or c.boundary_warnings,
+                    "costume": costume,
+                    "base_expression": base_expression,
+                    "voice_profile": (c.meta or {}).get("voice_profile") or (c.meta or {}).get("voice_style") or "",
+                    "requires_spoken": bool((c.meta or {}).get("requires_spoken", True)),
+                    "spoken_language": project_config.get("video_language"),
+                    "voice_tone": (c.meta or {}).get("voice_tone") or project_config.get("brand_tone"),
+                    "speech_style": (c.meta or {}).get("speech_style") or "自然口播",
+                    "structured_prompt": c.image_prompt or c.visual_prompt or "",
+                    "structure_summary": structure_summary,
+                    "story_usage": story_usage,
+                    "narrative_function": c.narrative_function or "",
+                    "exposure_priority": c.exposure_priority,
                     "display_name": display_name,
-                    "description_preview": _preview_text(display_desc),
-                    "has_structure_summary": bool(c_type_fields.get("structure_summary")),
-                    "has_image_prompt": bool(c.visual_prompt),
-                    "workflow_language": project_config.get("workflow_language"),
-                },
-            )
-            missing_fields = _missing_fields_of(
-                c_type_fields,
-                ["appearance", "costume", "base_expression", "story_usage", "structure_summary"],
-            )
-            logger.info(
-                "[S3_CHARACTER_FIELDS_RESOLVED] %s",
-                {
-                    "project_id": body.project_id,
-                    "asset_id": c.id,
-                    "has_description": bool(display_desc.strip()),
-                    "has_appearance": bool(appearance.strip()),
-                    "has_costume": bool(costume.strip()),
-                    "has_base_expression": bool(base_expression.strip()),
-                    "has_story_usage": bool(story_usage.strip()),
-                    "bad_fallback_detected": bad_char_desc,
-                },
-            )
-            logger.info(
-                "[S3_STRUCTURE_SUMMARY_RESOLVED] %s",
-                {
-                    "project_id": body.project_id,
-                    "asset_id": c.id,
-                    "asset_type": "character",
+                    "display_description": display_desc,
+                    "image_prompt": c.image_prompt or c.visual_prompt or "",
                     "plot_stage": plot_stage,
                     "scene_form": scene_form,
-                    "structure_summary": structure_summary,
-                    "used_fallback": not bool((c.meta or {}).get("structure_summary")),
-                },
-            )
-            logger.info(
-                "[S3_ASSET_STRUCTURED_FIELDS_BUILT] %s",
-                {
-                    "project_id": body.project_id,
-                    "asset_type": "character",
-                    "asset_id": c.id,
-                    "display_name": display_name,
-                    "has_description": bool(display_desc.strip()),
-                    "has_appearance_or_location_or_form": bool(appearance.strip()),
-                    "has_story_usage": bool(story_usage.strip()),
-                    "has_structure_summary": bool(structure_summary.strip()),
                     "workflow_language": project_config.get("workflow_language"),
-                    "missing_fields": missing_fields,
-                },
-            )
-        scene_description_names: dict[str, list[str]] = {}
-        for idx, s in enumerate(bundle.scenes):
-            _trace(
-                "S3_SPEC_BEFORE_SAVE",
-                {
-                    "project_id": body.project_id,
-                    "asset_type": "scene",
-                    "asset_id": s.id,
-                    "name": s.name,
-                    "description": s.description,
-                    "visual_prompt": s.visual_prompt,
-                    "image_prompt": s.image_prompt,
-                    "type_fields": s.meta,
-                    "source_field": "bundle.scenes",
-                },
-            )
-            original_name = s.name.strip() if isinstance(s.name, str) else ""
-            resolved_scene = resolve_scene_fields(
-                scene=s,
-                project_context=project_config,
-                story_context={
-                    "story_framework": blueprint.story_framework if isinstance(blueprint.story_framework, dict) else {},
-                    "segment_plan": [
-                        item.model_dump()
-                        for item in (blueprint.segment_plan or [])
-                    ],
-                },
-                index=idx,
-            )
-            raw_story_usage = _as_text((s.meta or {}).get("story_usage"))
-            raw_location = resolved_scene.get("location", "")
-            story_usage = resolved_scene.get("story_usage", "")
-            lighting = resolved_scene.get("lighting", "")
-            atmosphere = resolved_scene.get("atmosphere", "")
-            props_text = resolved_scene.get("props", "")
-            props = [x.strip() for x in props_text.split("、") if x.strip()]
-            time_of_day = resolved_scene.get("time_of_day", "")
-            display_name = resolved_scene.get("display_name", "")
-            scene_name_reason = "composed_from_context"
-            if _is_bad_display_text(display_name):
-                display_name = _zh_fallback_name("scene")
-                scene_name_reason = "rewritten_bad_placeholder"
-            logger.info(
-                "[S3_SCENE_NAME_RESOLVED] %s",
-                {
-                    "project_id": body.project_id,
-                    "original_name": original_name,
-                    "primary_location": raw_location,
-                    "time_of_day": time_of_day,
-                    "atmosphere": atmosphere,
-                    "story_usage": story_usage,
-                    "resolved_name": display_name,
-                    "reason": scene_name_reason,
-                },
-            )
-            display_desc = str(s.description or "").strip()
-            bad_scene_desc = _is_bad_display_text(display_desc) or _contains_any(
-                display_desc,
-                ["单一地点场景：", "可复用空间", "场景资产", "市场语境"],
-            )
-            location = raw_location or "地铁站台"
-            if bad_scene_desc:
-                display_desc = resolved_scene.get("display_description", "")
-            if not props:
-                props = ["生活化场景道具"]
-            plot_stage = resolved_scene.get("plot_stage", "生活场景")
-            scene_form = resolved_scene.get("scene_form", "单地点生活方式场景")
-            structure_summary = resolved_scene.get("structure_summary", "暂无结构摘要")
-            s_type_fields = {
-                "name": display_name,
-                "asset_type": "scene",
-                "scene_position": s.scene_type or "生活场景",
-                "market_context": project_config.get("target_market"),
-                "location_type": location,
-                "place_description": display_desc,
-                "spatial_layout": (s.meta or {}).get("spatial_layout") or "单一可复用空间",
-                "materials": (s.meta or {}).get("materials") or "",
-                "camera_viewpoint": (s.meta or {}).get("camera_viewpoint") or "生活广告片自然视角",
-                "foreground": (s.meta or {}).get("foreground") or "",
-                "midground": (s.meta or {}).get("midground") or "",
-                "background": (s.meta or {}).get("background") or "",
-                "visual_anchor": (s.meta or {}).get("visual_anchor") or location,
-                "memory_point": (s.meta or {}).get("memory_point") or "",
-                "negative_constraints": (s.meta or {}).get("must_avoid") or s.boundary_warnings,
-                "allowed_actions": (s.meta or {}).get("allowed_actions") or ["仅作为空间背景承载 shot 动作"],
-                "disallowed_actions": (s.meta or {}).get("disallowed_actions") or ["场景资产不写人物剧情动作", "不要在场景图中生成主角执行动作"],
-                "scene_type": s.scene_type or "",
-                "scene_form": scene_form,
-                "location": location,
-                "time_of_day": time_of_day,
-                "lighting": lighting,
-                "color_palette": (s.meta or {}).get("color_palette") or "",
-                "materials": (s.meta or {}).get("materials") or "",
-                "atmosphere": atmosphere,
-                "props": props,
-                "structured_prompt": s.image_prompt or s.visual_prompt or "",
-                "structure_summary": structure_summary,
-                "story_usage": story_usage,
-                "narrative_function": s.narrative_function or "",
-                "exposure_priority": s.exposure_priority,
-                "display_name": display_name,
-                "display_description": display_desc,
-                "image_prompt": s.image_prompt or s.visual_prompt or "",
-                "plot_stage": plot_stage,
-                "workflow_language": project_config.get("workflow_language"),
-                "business_profile": s.business_profile,
-                "technical_constraints": s.technical_constraints,
-            }
-            scene_description_names.setdefault(display_desc, []).append(display_name)
-            db.add(
-                SceneAsset(
-                    project_id=body.project_id,
-                    name=display_name,
-                    scene_type=s.scene_type,
-                    description=display_desc,
-                    visual_prompt=s.visual_prompt,
-                    image_url=s.image_url,
-                    meta_json={
-                        **(s.meta or {}),
-                        "type_fields": s_type_fields,
-                        "asset_identity": s.asset_identity,
-                        "boundary_warnings": s.boundary_warnings,
-                        "scene_form": s.scene_form,
-                        "source_asset_version": s.source_asset_version,
-                        "exposure_priority": s.exposure_priority,
-                        "narrative_function": s.narrative_function,
-                        "purpose": s.purpose,
+                    "business_profile": c.business_profile,
+                    "technical_constraints": c.technical_constraints,
+                }
+                db.add(
+                    CharacterAsset(
+                        project_id=body.project_id,
+                        name=display_name,
+                        role_type=c.role_type,
+                        description=display_desc,
+                        visual_prompt=c.visual_prompt,
+                        image_url=c.image_url,
+                        meta_json={
+                            **(c.meta or {}),
+                            "type_fields": c_type_fields,
+                            "asset_identity": c.asset_identity,
+                            "boundary_warnings": c.boundary_warnings,
+                            "source_asset_version": c.source_asset_version,
+                            "exposure_priority": c.exposure_priority,
+                            "narrative_function": c.narrative_function,
+                            "purpose": c.purpose,
+                        },
+                    )
+                )
+                logger.info(
+                    "[S3_ASSET_DISPLAY_FIELDS_BUILT] %s",
+                    {
+                        "project_id": body.project_id,
+                        "asset_type": "character",
+                        "asset_id": c.id,
+                        "display_name": display_name,
+                        "description_preview": _preview_text(display_desc),
+                        "has_structure_summary": bool(c_type_fields.get("structure_summary")),
+                        "has_image_prompt": bool(c.visual_prompt),
+                        "workflow_language": project_config.get("workflow_language"),
                     },
                 )
-            )
-            logger.info(
-                "[S3_ASSET_DISPLAY_FIELDS_BUILT] %s",
-                {
-                    "project_id": body.project_id,
+                missing_fields = _missing_fields_of(
+                    c_type_fields,
+                    ["appearance", "costume", "base_expression", "story_usage", "structure_summary"],
+                )
+                logger.info(
+                    "[S3_CHARACTER_FIELDS_RESOLVED] %s",
+                    {
+                        "project_id": body.project_id,
+                        "asset_id": c.id,
+                        "has_description": bool(display_desc.strip()),
+                        "has_appearance": bool(appearance.strip()),
+                        "has_costume": bool(costume.strip()),
+                        "has_base_expression": bool(base_expression.strip()),
+                        "has_story_usage": bool(story_usage.strip()),
+                        "bad_fallback_detected": bad_char_desc,
+                    },
+                )
+                logger.info(
+                    "[S3_STRUCTURE_SUMMARY_RESOLVED] %s",
+                    {
+                        "project_id": body.project_id,
+                        "asset_id": c.id,
+                        "asset_type": "character",
+                        "plot_stage": plot_stage,
+                        "scene_form": scene_form,
+                        "structure_summary": structure_summary,
+                        "used_fallback": not bool((c.meta or {}).get("structure_summary")),
+                    },
+                )
+                logger.info(
+                    "[S3_ASSET_STRUCTURED_FIELDS_BUILT] %s",
+                    {
+                        "project_id": body.project_id,
+                        "asset_type": "character",
+                        "asset_id": c.id,
+                        "display_name": display_name,
+                        "has_description": bool(display_desc.strip()),
+                        "has_appearance_or_location_or_form": bool(appearance.strip()),
+                        "has_story_usage": bool(story_usage.strip()),
+                        "has_structure_summary": bool(structure_summary.strip()),
+                        "workflow_language": project_config.get("workflow_language"),
+                        "missing_fields": missing_fields,
+                    },
+                )
+            scene_description_names: dict[str, list[str]] = {}
+            for idx, s in enumerate(bundle.scenes):
+                _trace(
+                    "S3_SPEC_BEFORE_SAVE",
+                    {
+                        "project_id": body.project_id,
+                        "asset_type": "scene",
+                        "asset_id": s.id,
+                        "name": s.name,
+                        "description": s.description,
+                        "visual_prompt": s.visual_prompt,
+                        "image_prompt": s.image_prompt,
+                        "type_fields": s.meta,
+                        "source_field": "bundle.scenes",
+                    },
+                )
+                original_name = s.name.strip() if isinstance(s.name, str) else ""
+                resolved_scene = resolve_scene_fields(
+                    scene=s,
+                    project_context=project_config,
+                    story_context={
+                        "story_framework": blueprint.story_framework if isinstance(blueprint.story_framework, dict) else {},
+                        "segment_plan": [
+                            item.model_dump()
+                            for item in (blueprint.segment_plan or [])
+                        ],
+                    },
+                    index=idx,
+                )
+                raw_story_usage = _as_text((s.meta or {}).get("story_usage"))
+                raw_location = resolved_scene.get("location", "")
+                story_usage = resolved_scene.get("story_usage", "")
+                lighting = resolved_scene.get("lighting", "")
+                atmosphere = resolved_scene.get("atmosphere", "")
+                props_text = resolved_scene.get("props", "")
+                props = [x.strip() for x in props_text.split("、") if x.strip()]
+                time_of_day = resolved_scene.get("time_of_day", "")
+                display_name = resolved_scene.get("display_name", "")
+                scene_name_reason = "composed_from_context"
+                if _is_bad_display_text(display_name):
+                    display_name = _zh_fallback_name("scene")
+                    scene_name_reason = "rewritten_bad_placeholder"
+                logger.info(
+                    "[S3_SCENE_NAME_RESOLVED] %s",
+                    {
+                        "project_id": body.project_id,
+                        "original_name": original_name,
+                        "primary_location": raw_location,
+                        "time_of_day": time_of_day,
+                        "atmosphere": atmosphere,
+                        "story_usage": story_usage,
+                        "resolved_name": display_name,
+                        "reason": scene_name_reason,
+                    },
+                )
+                display_desc = str(s.description or "").strip()
+                bad_scene_desc = _is_bad_display_text(display_desc) or _contains_any(
+                    display_desc,
+                    ["单一地点场景：", "可复用空间", "场景资产", "市场语境"],
+                )
+                location = raw_location or "地铁站台"
+                if bad_scene_desc:
+                    display_desc = resolved_scene.get("display_description", "")
+                if not props:
+                    props = ["生活化场景道具"]
+                plot_stage = resolved_scene.get("plot_stage", "生活场景")
+                scene_form = resolved_scene.get("scene_form", "单地点生活方式场景")
+                structure_summary = resolved_scene.get("structure_summary", "暂无结构摘要")
+                s_type_fields = {
+                    "name": display_name,
                     "asset_type": "scene",
-                    "asset_id": s.id,
-                    "display_name": display_name,
-                    "description_preview": _preview_text(display_desc),
-                    "has_structure_summary": bool(s_type_fields.get("structure_summary")),
-                    "has_image_prompt": bool(s.visual_prompt),
-                    "workflow_language": project_config.get("workflow_language"),
-                },
-            )
-            missing_fields = _missing_fields_of(
-                s_type_fields,
-                ["location", "lighting", "atmosphere", "props", "story_usage", "structure_summary"],
-            )
-            logger.info(
-                "[S3_SCENE_FIELDS_RESOLVED] %s",
-                {
-                    "project_id": body.project_id,
-                    "asset_id": s.id,
-                    "original_name": original_name,
-                    "resolved_name": display_name,
+                    "scene_position": s.scene_type or "生活场景",
+                    "market_context": project_config.get("target_market"),
+                    "location_type": location,
+                    "place_description": display_desc,
+                    "spatial_layout": (s.meta or {}).get("spatial_layout") or "单一可复用空间",
+                    "materials": (s.meta or {}).get("materials") or "",
+                    "camera_viewpoint": (s.meta or {}).get("camera_viewpoint") or "生活广告片自然视角",
+                    "foreground": (s.meta or {}).get("foreground") or "",
+                    "midground": (s.meta or {}).get("midground") or "",
+                    "background": (s.meta or {}).get("background") or "",
+                    "visual_anchor": (s.meta or {}).get("visual_anchor") or location,
+                    "memory_point": (s.meta or {}).get("memory_point") or "",
+                    "negative_constraints": (s.meta or {}).get("must_avoid") or s.boundary_warnings,
+                    "allowed_actions": (s.meta or {}).get("allowed_actions") or ["仅作为空间背景承载 shot 动作"],
+                    "disallowed_actions": (s.meta or {}).get("disallowed_actions") or ["场景资产不写人物剧情动作", "不要在场景图中生成主角执行动作"],
+                    "scene_type": s.scene_type or "",
+                    "scene_form": scene_form,
                     "location": location,
                     "time_of_day": time_of_day,
                     "lighting": lighting,
+                    "color_palette": (s.meta or {}).get("color_palette") or "",
+                    "materials": (s.meta or {}).get("materials") or "",
                     "atmosphere": atmosphere,
-                    "props_preview": _preview_text("、".join(props)),
-                    "story_usage_preview": _preview_text(story_usage),
-                    "plot_stage": plot_stage,
-                    "scene_form": scene_form,
-                    "description_preview": _preview_text(display_desc),
-                    "description_hash": resolved_scene.get("description_hash"),
-                    "used_generic_template": resolved_scene.get("used_generic_template") == "true",
-                },
-            )
-            logger.info(
-                "[S3_STRUCTURE_SUMMARY_RESOLVED] %s",
-                {
-                    "project_id": body.project_id,
-                    "asset_id": s.id,
-                    "asset_type": "scene",
-                    "plot_stage": plot_stage,
-                    "scene_form": scene_form,
+                    "props": props,
+                    "structured_prompt": s.image_prompt or s.visual_prompt or "",
                     "structure_summary": structure_summary,
-                    "used_fallback": not bool((s.meta or {}).get("structure_summary")),
-                },
-            )
-        if bundle.scenes:
-            unique_description_count = len(scene_description_names)
-            scene_count = len(bundle.scenes)
-            duplicate_detected = scene_count > 1 and unique_description_count < scene_count
-            duplicate_names = (
-                [name for names in scene_description_names.values() if len(names) > 1 for name in names]
-                if duplicate_detected
-                else []
-            )
-            logger.info(
-                "[S3_SCENE_DESCRIPTION_DUPLICATE_CHECK] %s",
-                {
-                    "project_id": body.project_id,
-                    "scene_count": scene_count,
-                    "unique_description_count": unique_description_count,
-                    "duplicate_detected": duplicate_detected,
-                    "duplicate_names": duplicate_names,
-                },
-            )
-            if scene_count > 1 and unique_description_count == 1:
-                logger.warning(
-                    "[S3_SCENE_DESCRIPTION_DUPLICATE_CHECK] duplicated descriptions for all scenes project_id=%s",
-                    body.project_id,
-                )
-            logger.info(
-                "[S3_ASSET_STRUCTURED_FIELDS_BUILT] %s",
-                {
-                    "project_id": body.project_id,
-                    "asset_type": "scene",
-                    "asset_id": s.id,
+                    "story_usage": story_usage,
+                    "narrative_function": s.narrative_function or "",
+                    "exposure_priority": s.exposure_priority,
                     "display_name": display_name,
-                    "has_description": bool(display_desc.strip()),
-                    "has_appearance_or_location_or_form": bool(location.strip()),
-                    "has_story_usage": bool(story_usage.strip()),
-                    "has_structure_summary": bool(structure_summary.strip()),
+                    "display_description": display_desc,
+                    "image_prompt": s.image_prompt or s.visual_prompt or "",
+                    "plot_stage": plot_stage,
                     "workflow_language": project_config.get("workflow_language"),
-                    "missing_fields": missing_fields,
-                },
-            )
-        for p in bundle.products:
-            _trace(
-                "S3_SPEC_BEFORE_SAVE",
-                {
-                    "project_id": body.project_id,
-                    "asset_type": "product",
-                    "asset_id": p.id,
-                    "name": p.name,
-                    "description": p.description,
-                    "visual_prompt": p.visual_prompt,
-                    "image_prompt": p.image_prompt,
-                    "type_fields": p.meta,
-                    "source_field": "bundle.products",
-                },
-            )
-            display_name = p.name.strip() if isinstance(p.name, str) else ""
-            if _is_bad_display_text(display_name):
-                display_name = product.product_name or _zh_fallback_name("product")
-            display_desc = str(p.description or "").strip()
-            bad_product_desc = _is_bad_display_text(display_desc) or _contains_any(
-                display_desc,
-                ["product-only reference asset", "产品资产", "市场语境", "结构摘要待完善"],
-            )
-            form = str((p.meta or {}).get("form") or "").strip() or (product.product_form or "产品主体结构")
-            material = str((p.meta or {}).get("material") or "").strip() or "以 S1 产品信息为准的真实材质"
-            color = str((p.meta or {}).get("color") or "").strip() or "以 S1 产品信息为准的真实颜色"
-            visual_features = (p.meta or {}).get("visual_features") or []
-            if not isinstance(visual_features, list) or not visual_features:
-                visual_features = product.visual_features or product.core_selling_points or ["产品外观与结构细节"]
-            story_usage = str((p.meta or {}).get("story_usage") or "").strip() or "产品在使用场景中自然露出，展示与 S1 信息一致的外观和功能。"
-            if bad_product_desc:
-                display_desc = _good_product_description(display_name, form, [str(x) for x in visual_features])
-            plot_stage = _infer_plot_stage(
-                _as_text(project_config.get("marketing_goal")),
-                story_usage,
-                _as_text(p.narrative_function),
-                "product",
-            )
-            scene_form = _infer_scene_form("product", story_usage)
-            structure_summary = str((p.meta or {}).get("structure_summary") or "").strip() or _build_structure_summary(
-                "product",
-                scene_form,
-                story_usage,
-                "产品外观、材质、结构和关键功能部件",
-            )
-            p_type_fields = {
-                "name": display_name,
-                "asset_type": "product",
-                "product_position": p.product_role or "主商品",
-                "category": product.product_category,
-                "brand": (p.meta or {}).get("brand") or "",
-                "model": (p.meta or {}).get("model") or "",
-                "market_context": project_config.get("target_market"),
-                "core_selling_points": product.core_selling_points,
-                "usage_scenarios": product.usage_scenarios,
-                "user_pain_points": [blueprint.core_pain or ""],
-                "purchase_reasons": product.emotional_value,
-                "product_shape": form,
-                "structure_details": (p.meta or {}).get("structure_details") or form,
-                "functional_parts": (p.meta or {}).get("functional_parts") or visual_features,
-                "key_closeups": (p.meta or {}).get("key_closeups") or visual_features[:4],
-                "usage_modes": (p.meta or {}).get("usage_modes") or product.usage_scenarios,
-                "packaging_or_label": (p.meta or {}).get("packaging_or_label") or "",
-                "negative_constraints": (p.meta or {}).get("must_avoid") or p.boundary_warnings,
-                "image_source": (p.meta or {}).get("image_source") or "generated",
-                "reference_images": (p.meta or {}).get("reference_images") or [],
-                "allow_redraw": (p.meta or {}).get("allow_redraw", True),
-                "allow_style_adaptation": (p.meta or {}).get("allow_style_adaptation", True),
-                "immutable_structure_constraints": p.immutable_structure_constraints
-                or (p.meta or {}).get("immutable_structure_constraints")
-                or [],
-                "product_role": p.product_role or "hero",
-                "form": form,
-                "color": color,
-                "material": material,
-                "visual_features": visual_features,
-                "structured_prompt": p.image_prompt or p.visual_prompt or "",
-                "structure_summary": structure_summary,
-                "story_usage": story_usage,
-                "narrative_function": p.narrative_function or "",
-                "exposure_priority": p.exposure_priority,
-                "display_name": display_name,
-                "display_description": display_desc,
-                "image_prompt": p.image_prompt or p.visual_prompt or "",
-                "plot_stage": plot_stage,
-                "scene_form": scene_form,
-                "workflow_language": project_config.get("workflow_language"),
-                "business_profile": p.business_profile,
-                "technical_constraints": p.technical_constraints,
-            }
-            db.add(
-                ProductAsset(
-                    project_id=body.project_id,
-                    name=display_name,
-                    description=display_desc,
-                    visual_prompt=p.visual_prompt,
-                    image_url=p.image_url,
-                    meta_json={
-                        **(p.meta or {}),
-                        "type_fields": p_type_fields,
-                        "asset_identity": p.asset_identity,
-                        "boundary_warnings": p.boundary_warnings,
-                        "product_role": p.product_role,
-                        "source_asset_version": p.source_asset_version,
-                        "exposure_priority": p.exposure_priority,
-                        "narrative_function": p.narrative_function,
-                        "purpose": p.purpose,
+                    "business_profile": s.business_profile,
+                    "technical_constraints": s.technical_constraints,
+                }
+                scene_description_names.setdefault(display_desc, []).append(display_name)
+                db.add(
+                    SceneAsset(
+                        project_id=body.project_id,
+                        name=display_name,
+                        scene_type=s.scene_type,
+                        description=display_desc,
+                        visual_prompt=s.visual_prompt,
+                        image_url=s.image_url,
+                        meta_json={
+                            **(s.meta or {}),
+                            "type_fields": s_type_fields,
+                            "asset_identity": s.asset_identity,
+                            "boundary_warnings": s.boundary_warnings,
+                            "scene_form": s.scene_form,
+                            "source_asset_version": s.source_asset_version,
+                            "exposure_priority": s.exposure_priority,
+                            "narrative_function": s.narrative_function,
+                            "purpose": s.purpose,
+                        },
+                    )
+                )
+                logger.info(
+                    "[S3_ASSET_DISPLAY_FIELDS_BUILT] %s",
+                    {
+                        "project_id": body.project_id,
+                        "asset_type": "scene",
+                        "asset_id": s.id,
+                        "display_name": display_name,
+                        "description_preview": _preview_text(display_desc),
+                        "has_structure_summary": bool(s_type_fields.get("structure_summary")),
+                        "has_image_prompt": bool(s.visual_prompt),
+                        "workflow_language": project_config.get("workflow_language"),
                     },
                 )
-            )
-            logger.info(
-                "[S3_ASSET_DISPLAY_FIELDS_BUILT] %s",
-                {
-                    "project_id": body.project_id,
+                missing_fields = _missing_fields_of(
+                    s_type_fields,
+                    ["location", "lighting", "atmosphere", "props", "story_usage", "structure_summary"],
+                )
+                logger.info(
+                    "[S3_SCENE_FIELDS_RESOLVED] %s",
+                    {
+                        "project_id": body.project_id,
+                        "asset_id": s.id,
+                        "original_name": original_name,
+                        "resolved_name": display_name,
+                        "location": location,
+                        "time_of_day": time_of_day,
+                        "lighting": lighting,
+                        "atmosphere": atmosphere,
+                        "props_preview": _preview_text("、".join(props)),
+                        "story_usage_preview": _preview_text(story_usage),
+                        "plot_stage": plot_stage,
+                        "scene_form": scene_form,
+                        "description_preview": _preview_text(display_desc),
+                        "description_hash": resolved_scene.get("description_hash"),
+                        "used_generic_template": resolved_scene.get("used_generic_template") == "true",
+                    },
+                )
+                logger.info(
+                    "[S3_STRUCTURE_SUMMARY_RESOLVED] %s",
+                    {
+                        "project_id": body.project_id,
+                        "asset_id": s.id,
+                        "asset_type": "scene",
+                        "plot_stage": plot_stage,
+                        "scene_form": scene_form,
+                        "structure_summary": structure_summary,
+                        "used_fallback": not bool((s.meta or {}).get("structure_summary")),
+                    },
+                )
+            if bundle.scenes:
+                unique_description_count = len(scene_description_names)
+                scene_count = len(bundle.scenes)
+                duplicate_detected = scene_count > 1 and unique_description_count < scene_count
+                duplicate_names = (
+                    [name for names in scene_description_names.values() if len(names) > 1 for name in names]
+                    if duplicate_detected
+                    else []
+                )
+                logger.info(
+                    "[S3_SCENE_DESCRIPTION_DUPLICATE_CHECK] %s",
+                    {
+                        "project_id": body.project_id,
+                        "scene_count": scene_count,
+                        "unique_description_count": unique_description_count,
+                        "duplicate_detected": duplicate_detected,
+                        "duplicate_names": duplicate_names,
+                    },
+                )
+                if scene_count > 1 and unique_description_count == 1:
+                    logger.warning(
+                        "[S3_SCENE_DESCRIPTION_DUPLICATE_CHECK] duplicated descriptions for all scenes project_id=%s",
+                        body.project_id,
+                    )
+                logger.info(
+                    "[S3_ASSET_STRUCTURED_FIELDS_BUILT] %s",
+                    {
+                        "project_id": body.project_id,
+                        "asset_type": "scene",
+                        "asset_id": s.id,
+                        "display_name": display_name,
+                        "has_description": bool(display_desc.strip()),
+                        "has_appearance_or_location_or_form": bool(location.strip()),
+                        "has_story_usage": bool(story_usage.strip()),
+                        "has_structure_summary": bool(structure_summary.strip()),
+                        "workflow_language": project_config.get("workflow_language"),
+                        "missing_fields": missing_fields,
+                    },
+                )
+            for p in bundle.products:
+                _trace(
+                    "S3_SPEC_BEFORE_SAVE",
+                    {
+                        "project_id": body.project_id,
+                        "asset_type": "product",
+                        "asset_id": p.id,
+                        "name": p.name,
+                        "description": p.description,
+                        "visual_prompt": p.visual_prompt,
+                        "image_prompt": p.image_prompt,
+                        "type_fields": p.meta,
+                        "source_field": "bundle.products",
+                    },
+                )
+                display_name = p.name.strip() if isinstance(p.name, str) else ""
+                if _is_bad_display_text(display_name):
+                    display_name = product.product_name or _zh_fallback_name("product")
+                display_desc = str(p.description or "").strip()
+                bad_product_desc = _is_bad_display_text(display_desc) or _contains_any(
+                    display_desc,
+                    ["product-only reference asset", "产品资产", "市场语境", "结构摘要待完善"],
+                )
+                form = str((p.meta or {}).get("form") or "").strip() or (product.product_form or "产品主体结构")
+                material = str((p.meta or {}).get("material") or "").strip() or "以 S1 产品信息为准的真实材质"
+                color = str((p.meta or {}).get("color") or "").strip() or "以 S1 产品信息为准的真实颜色"
+                visual_features = (p.meta or {}).get("visual_features") or []
+                if not isinstance(visual_features, list) or not visual_features:
+                    visual_features = product.visual_features or product.core_selling_points or ["产品外观与结构细节"]
+                story_usage = str((p.meta or {}).get("story_usage") or "").strip() or "产品在使用场景中自然露出，展示与 S1 信息一致的外观和功能。"
+                if bad_product_desc:
+                    display_desc = _good_product_description(display_name, form, [str(x) for x in visual_features])
+                plot_stage = _infer_plot_stage(
+                    _as_text(project_config.get("marketing_goal")),
+                    story_usage,
+                    _as_text(p.narrative_function),
+                    "product",
+                )
+                scene_form = _infer_scene_form("product", story_usage)
+                structure_summary = str((p.meta or {}).get("structure_summary") or "").strip() or _build_structure_summary(
+                    "product",
+                    scene_form,
+                    story_usage,
+                    "产品外观、材质、结构和关键功能部件",
+                )
+                p_type_fields = {
+                    "name": display_name,
                     "asset_type": "product",
-                    "asset_id": p.id,
+                    "product_position": p.product_role or "主商品",
+                    "category": product.product_category,
+                    "brand": (p.meta or {}).get("brand") or "",
+                    "model": (p.meta or {}).get("model") or "",
+                    "market_context": project_config.get("target_market"),
+                    "core_selling_points": product.core_selling_points,
+                    "usage_scenarios": product.usage_scenarios,
+                    "user_pain_points": [blueprint.core_pain or ""],
+                    "purchase_reasons": product.emotional_value,
+                    "product_shape": form,
+                    "structure_details": (p.meta or {}).get("structure_details") or form,
+                    "functional_parts": (p.meta or {}).get("functional_parts") or visual_features,
+                    "key_closeups": (p.meta or {}).get("key_closeups") or visual_features[:4],
+                    "usage_modes": (p.meta or {}).get("usage_modes") or product.usage_scenarios,
+                    "packaging_or_label": (p.meta or {}).get("packaging_or_label") or "",
+                    "negative_constraints": (p.meta or {}).get("must_avoid") or p.boundary_warnings,
+                    "image_source": (p.meta or {}).get("image_source") or "generated",
+                    "reference_images": (p.meta or {}).get("reference_images") or [],
+                    "allow_redraw": (p.meta or {}).get("allow_redraw", True),
+                    "allow_style_adaptation": (p.meta or {}).get("allow_style_adaptation", True),
+                    "immutable_structure_constraints": p.immutable_structure_constraints
+                    or (p.meta or {}).get("immutable_structure_constraints")
+                    or [],
+                    "product_role": p.product_role or "hero",
+                    "form": form,
+                    "color": color,
+                    "material": material,
+                    "visual_features": visual_features,
+                    "structured_prompt": p.image_prompt or p.visual_prompt or "",
+                    "structure_summary": structure_summary,
+                    "story_usage": story_usage,
+                    "narrative_function": p.narrative_function or "",
+                    "exposure_priority": p.exposure_priority,
                     "display_name": display_name,
-                    "description_preview": _preview_text(display_desc),
-                    "has_structure_summary": bool(p_type_fields.get("structure_summary")),
-                    "has_image_prompt": bool(p.visual_prompt),
-                    "workflow_language": project_config.get("workflow_language"),
-                },
-            )
-            missing_fields = _missing_fields_of(
-                p_type_fields,
-                ["form", "material", "color", "visual_features", "story_usage", "structure_summary"],
-            )
-            logger.info(
-                "[S3_PRODUCT_FIELDS_RESOLVED] %s",
-                {
-                    "project_id": body.project_id,
-                    "asset_id": p.id,
-                    "has_form": bool(form.strip()),
-                    "has_material": bool(material.strip()),
-                    "has_color": bool(color.strip()),
-                    "has_visual_features": bool(visual_features),
-                    "has_story_usage": bool(story_usage.strip()),
-                    "bad_fallback_detected": bad_product_desc,
-                },
-            )
-            logger.info(
-                "[S3_STRUCTURE_SUMMARY_RESOLVED] %s",
-                {
-                    "project_id": body.project_id,
-                    "asset_id": p.id,
-                    "asset_type": "product",
+                    "display_description": display_desc,
+                    "image_prompt": p.image_prompt or p.visual_prompt or "",
                     "plot_stage": plot_stage,
                     "scene_form": scene_form,
-                    "structure_summary": structure_summary,
-                    "used_fallback": not bool((p.meta or {}).get("structure_summary")),
-                },
-            )
-            logger.info(
-                "[S3_ASSET_STRUCTURED_FIELDS_BUILT] %s",
-                {
-                    "project_id": body.project_id,
-                    "asset_type": "product",
-                    "asset_id": p.id,
-                    "display_name": display_name,
-                    "has_description": bool(display_desc.strip()),
-                    "has_appearance_or_location_or_form": bool(form.strip()),
-                    "has_story_usage": bool(story_usage.strip()),
-                    "has_structure_summary": bool(structure_summary.strip()),
                     "workflow_language": project_config.get("workflow_language"),
-                    "missing_fields": missing_fields,
-                },
-            )
+                    "business_profile": p.business_profile,
+                    "technical_constraints": p.technical_constraints,
+                }
+                db.add(
+                    ProductAsset(
+                        project_id=body.project_id,
+                        name=display_name,
+                        description=display_desc,
+                        visual_prompt=p.visual_prompt,
+                        image_url=p.image_url,
+                        meta_json={
+                            **(p.meta or {}),
+                            "type_fields": p_type_fields,
+                            "asset_identity": p.asset_identity,
+                            "boundary_warnings": p.boundary_warnings,
+                            "product_role": p.product_role,
+                            "source_asset_version": p.source_asset_version,
+                            "exposure_priority": p.exposure_priority,
+                            "narrative_function": p.narrative_function,
+                            "purpose": p.purpose,
+                        },
+                    )
+                )
+                logger.info(
+                    "[S3_ASSET_DISPLAY_FIELDS_BUILT] %s",
+                    {
+                        "project_id": body.project_id,
+                        "asset_type": "product",
+                        "asset_id": p.id,
+                        "display_name": display_name,
+                        "description_preview": _preview_text(display_desc),
+                        "has_structure_summary": bool(p_type_fields.get("structure_summary")),
+                        "has_image_prompt": bool(p.visual_prompt),
+                        "workflow_language": project_config.get("workflow_language"),
+                    },
+                )
+                missing_fields = _missing_fields_of(
+                    p_type_fields,
+                    ["form", "material", "color", "visual_features", "story_usage", "structure_summary"],
+                )
+                logger.info(
+                    "[S3_PRODUCT_FIELDS_RESOLVED] %s",
+                    {
+                        "project_id": body.project_id,
+                        "asset_id": p.id,
+                        "has_form": bool(form.strip()),
+                        "has_material": bool(material.strip()),
+                        "has_color": bool(color.strip()),
+                        "has_visual_features": bool(visual_features),
+                        "has_story_usage": bool(story_usage.strip()),
+                        "bad_fallback_detected": bad_product_desc,
+                    },
+                )
+                logger.info(
+                    "[S3_STRUCTURE_SUMMARY_RESOLVED] %s",
+                    {
+                        "project_id": body.project_id,
+                        "asset_id": p.id,
+                        "asset_type": "product",
+                        "plot_stage": plot_stage,
+                        "scene_form": scene_form,
+                        "structure_summary": structure_summary,
+                        "used_fallback": not bool((p.meta or {}).get("structure_summary")),
+                    },
+                )
+                logger.info(
+                    "[S3_ASSET_STRUCTURED_FIELDS_BUILT] %s",
+                    {
+                        "project_id": body.project_id,
+                        "asset_type": "product",
+                        "asset_id": p.id,
+                        "display_name": display_name,
+                        "has_description": bool(display_desc.strip()),
+                        "has_appearance_or_location_or_form": bool(form.strip()),
+                        "has_story_usage": bool(story_usage.strip()),
+                        "has_structure_summary": bool(structure_summary.strip()),
+                        "workflow_language": project_config.get("workflow_language"),
+                        "missing_fields": missing_fields,
+                    },
+                )
 
         # Step3 UI now reads unified asset library tables.
         # Keep legacy generation flow, but immediately sync generated legacy rows into library entities.

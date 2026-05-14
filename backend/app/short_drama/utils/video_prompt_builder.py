@@ -423,7 +423,62 @@ def _summarize_visual_constraints(segment: SegmentScriptSchema) -> list[str]:
     return _dedupe_text_items(vals, max_items=2)
 
 
-def _budgeted_segment_prompt(segment: SegmentScriptSchema, *, aspect_ratio: str) -> tuple[str, dict]:
+def _segment_v2_video_prompt_pass_through(segment: SegmentScriptSchema) -> bool:
+    meta = segment.meta if isinstance(segment.meta, dict) else {}
+    if meta.get("video_prompt_v2_pass_through"):
+        return True
+    for shot in segment.shots or []:
+        sc = _get_shot_value(shot, "source_visual_constraints", {}) or {}
+        if isinstance(sc, dict) and sc.get("video_prompt_v2_pass_through"):
+            return True
+    return False
+
+
+def _v2_pass_through_segment_prompt(
+    segment: SegmentScriptSchema,
+    *,
+    project_id: int | None = None,
+) -> tuple[str, dict]:
+    shots = list(segment.shots or [])
+    if len(shots) != 1:
+        raise ShortDramaVideoInputError(
+            f"v2 video_generation_specs segment {segment.segment_id!r} must materialize to exactly one shot "
+            f"(found {len(shots)}); regenerate S2 with one spec per segment."
+        )
+    shot = shots[0]
+    text = str(_get_shot_value(shot, "video_prompt", "") or "").strip()
+    if not text:
+        raise ShortDramaVideoInputError(
+            f"Segment {segment.segment_id!r} missing video_prompt for v2 pass-through render."
+        )
+    if len(text) > _HARD_XAI_VIDEO_PROMPT_CHARS:
+        raise ShortDramaVideoInputError(
+            f"Segment {segment.segment_id!r} video_prompt length {len(text)} exceeds provider limit "
+            f"{_HARD_XAI_VIDEO_PROMPT_CHARS}; shorten S2 video_prompt (automatic truncation is disabled for v2)."
+        )
+    budget = {
+        "before_chars": len(text),
+        "after_chars": len(text),
+        "truncated": False,
+        "dropped_sections": [],
+        "final_prompt_preview": text[:500],
+        "shot_count": 1,
+        "included_product_refs": False,
+        "included_character_refs": False,
+        "included_scene_refs": False,
+        "safe_video_prompt_chars": SAFE_VIDEO_PROMPT_CHARS,
+        "hard_video_prompt_chars": _HARD_XAI_VIDEO_PROMPT_CHARS,
+        "v2_pass_through": True,
+    }
+    return text, budget
+
+
+def _budgeted_segment_prompt(
+    segment: SegmentScriptSchema,
+    *,
+    aspect_ratio: str,
+    project_id: int | None = None,
+) -> tuple[str, dict]:
     dropped_sections: list[str] = []
     shot_parts: list[str] = []
     shot_details: list[dict] = []
@@ -433,23 +488,37 @@ def _budgeted_segment_prompt(segment: SegmentScriptSchema, *, aspect_ratio: str)
     selected_shots = original_shots[:_SEGMENT_MAX_SHOTS]
     for shot in selected_shots:
         shot_id = str(_get_shot_value(shot, "shot_id", "") or "")
-        shot_prompt, detail = _build_compact_shot_prompt(shot)
-        if not shot_prompt:
-            fallback = _sanitize_prompt_text(
-                " ".join(
-                    x
-                    for x in (
-                        str(_get_shot_value(shot, "visual_description", "") or "").strip(),
-                        str(_get_shot_value(shot, "action_description", "") or "").strip(),
-                    )
-                    if x
-                )
+        manual = str(_get_shot_value(shot, "manual_video_prompt", "") or "").strip()
+        vp = manual or str(_get_shot_value(shot, "video_prompt", "") or "").strip()
+        if not vp:
+            logger.warning(
+                "[S4_VIDEO_PROMPT_MISSING] project_id=%s segment_id=%s missing_field=video_prompt",
+                project_id,
+                segment.segment_id,
             )
-            shot_prompt = _compact_text(fallback, _SHOT_MAX_CHARS) if fallback else ""
+            raise ShortDramaVideoInputError(
+                f"Segment {segment.segment_id!r} shot {shot_id!r} missing video_prompt; regenerate S4 segment script or set manual_video_prompt."
+            )
+        shot_prompt = _compact_text(_sanitize_prompt_text(vp), _SHOT_MAX_CHARS)
         if not shot_prompt:
-            continue
+            logger.warning(
+                "[S4_VIDEO_PROMPT_MISSING] project_id=%s segment_id=%s missing_field=video_prompt",
+                project_id,
+                segment.segment_id,
+            )
+            raise ShortDramaVideoInputError(
+                f"Segment {segment.segment_id!r} shot {shot_id!r} video_prompt empty after sanitize; fix input."
+            )
         shot_parts.append(f"Shot {shot_id}: {shot_prompt}".strip())
-        shot_details.append(detail)
+        shot_details.append(
+            {
+                "included_product_refs": False,
+                "included_character_refs": False,
+                "included_scene_refs": False,
+                "must_show": [],
+                "must_avoid": [],
+            }
+        )
 
     text = re.sub(r"\s+", " ", " ".join(shot_parts)).strip()
     before_chars = len(text)
@@ -541,11 +610,15 @@ def build_segment_video_plan(
     products: list[ProductAsset],
     project_aspect_ratio: str | None,
     resolved_character_assets: dict[int, dict[str, str]] | None = None,
+    project_id: int | None = None,
 ) -> SegmentVideoPlan:
     ar = (project_aspect_ratio or "9:16").strip()
     if ":" not in ar:
         ar = "9:16"
-    prompt, budget = _budgeted_segment_prompt(segment, aspect_ratio=ar)
+    if _segment_v2_video_prompt_pass_through(segment):
+        prompt, budget = _v2_pass_through_segment_prompt(segment, project_id=project_id)
+    else:
+        prompt, budget = _budgeted_segment_prompt(segment, aspect_ratio=ar, project_id=project_id)
     execution_shots = [s.model_dump() if hasattr(s, "model_dump") else dict(s) for s in (segment.shots or [])]
     _trace(
         "S4_VIDEO_BUILDER_INPUT",
@@ -630,9 +703,10 @@ def build_segment_video_plan(
                     product_ref_urls.append(row.image_url)
 
     if not requested_product_refs and not product_asset_id:
-        for p in sorted(products, key=lambda x: x.id):
-            if p.image_url:
-                product_ref_urls.append(p.image_url)
+        if not _segment_v2_video_prompt_pass_through(segment):
+            for p in sorted(products, key=lambda x: x.id):
+                if p.image_url:
+                    product_ref_urls.append(p.image_url)
 
     ref_urls = _dedupe_preserve(character_ref_urls + scene_ref_urls + product_ref_urls)
     selected_character_names = _dedupe_preserve(selected_character_names)
@@ -645,14 +719,18 @@ def build_segment_video_plan(
         ref_urls = ref_urls[:_MAX_REFS]
     manual_video_prompt_used = any(str(_get_shot_value(s, "manual_video_prompt", "") or "").strip() for s in segment.shots)
     manual_refs_used = _manual_refs_used(segment)
-    prompt_source = "ai_shot_video_prompt_merge" if any(str(_get_shot_value(s, "video_prompt", "") or "").strip() for s in segment.shots) else "builder_fallback"
+    prompt_source = "v2_video_generation_specs" if _segment_v2_video_prompt_pass_through(segment) else "ai_shot_video_prompt"
     _trace(
         "S4_VIDEO_BUILDER_OUTPUT",
         {
             "segment_id": segment.segment_id,
             "segment_video_prompt": prompt,
             "prompt_source": prompt_source,
-            "used_fields": ["visual_action", "scene_ref", "character_refs", "product_refs", "must_show", "must_avoid"],
+            "used_fields": (
+                ["video_prompt_v2_pass_through"]
+                if _segment_v2_video_prompt_pass_through(segment)
+                else ["visual_action", "scene_ref", "character_refs", "product_refs", "must_show", "must_avoid"]
+            ),
             "discarded_fields": budget.get("dropped_sections", []),
             "final_prompt_length": len(prompt),
         },

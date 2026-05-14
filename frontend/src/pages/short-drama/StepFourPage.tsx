@@ -238,7 +238,8 @@ export function ShortDramaStepFourPage() {
             </div>
             <div className="flex items-center gap-2">
               <span className="text-[12px]" style={{ color: '#8E8E93' }}>
-                {doneCount} / {displayTotal} 片段已生成
+                脚本 {hasBackendSegmentScripts ? segments.length : 0} /{' '}
+                {displayTotal || segments.length || 0} · 视频 {doneCount} / {displayTotal || segments.length || 0}
               </span>
               <div className="flex gap-1">
                 {segments.map((s) => (

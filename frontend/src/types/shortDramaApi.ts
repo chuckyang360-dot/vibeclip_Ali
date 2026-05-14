@@ -174,6 +174,17 @@ export type SegmentPlanItemDto = {
 };
 
 export type StoryBlueprintDto = {
+  blueprint_schema_version?: string;
+  story_overview?: Record<string, unknown>;
+  characters?: unknown[];
+  scenes?: unknown[];
+  product_assets?: unknown[];
+  asset_generation_specs?: unknown[];
+  video_generation_specs?: unknown[];
+  dialogue_or_voiceover?: unknown[];
+  subtitle_strategy?: Record<string, unknown>;
+  continuity_rules?: unknown[];
+  execution_notes?: unknown[];
   title?: string;
   script_title?: string;
   format?: string;

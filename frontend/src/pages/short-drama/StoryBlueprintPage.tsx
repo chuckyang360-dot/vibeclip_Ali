@@ -57,6 +57,23 @@ export function ShortDramaStoryBlueprintPage() {
   const hasBlueprint = Boolean(pipeline?.story_blueprint?.blueprint && Object.keys(pipeline.story_blueprint.blueprint).length);
   const step2Stale = pipeline?.project?.step_status?.step_2 === 'stale';
 
+  const blueprintRaw = pipeline?.story_blueprint?.blueprint;
+  const creativeBlueprintV2Debug = useMemo(() => {
+    if (!blueprintRaw) return null;
+    const hasSpecs =
+      Array.isArray(blueprintRaw.asset_generation_specs) && blueprintRaw.asset_generation_specs.length > 0;
+    if (blueprintRaw.blueprint_schema_version !== 'creative_blueprint_v2' && !hasSpecs) return null;
+    const n = (v: unknown) => (Array.isArray(v) ? v.length : 0);
+    return {
+      version: String(blueprintRaw.blueprint_schema_version || '—'),
+      characters: n(blueprintRaw.characters),
+      scenes: n(blueprintRaw.scenes),
+      product_assets: n(blueprintRaw.product_assets),
+      asset_generation_specs: n(blueprintRaw.asset_generation_specs),
+      video_generation_specs: n(blueprintRaw.video_generation_specs),
+    };
+  }, [blueprintRaw]);
+
   const storyRegenerateLocked = isStoryPipelineLockedForRegenerate(pipeline);
 
   const handleRegenerate = () => {
@@ -233,6 +250,40 @@ export function ShortDramaStoryBlueprintPage() {
               </button>
             </div>
           </div>
+
+          {creativeBlueprintV2Debug ? (
+            <details className="mb-6 rounded-xl border border-dashed border-[#C7C7CC] bg-[#FAFAFA] px-4 py-3 text-[12.5px] text-[#444444]">
+              <summary className="cursor-pointer select-none font-semibold text-[#1D1D1F]">
+                Creative Blueprint v2（调试）
+              </summary>
+              <dl className="mt-3 grid gap-2 sm:grid-cols-2">
+                <div>
+                  <dt className="text-[11px] uppercase tracking-wide text-[#8E8E93]">blueprint_schema_version</dt>
+                  <dd className="font-mono text-[12px] text-[#1D1D1F]">{creativeBlueprintV2Debug.version}</dd>
+                </div>
+                <div>
+                  <dt className="text-[11px] uppercase tracking-wide text-[#8E8E93]">characters</dt>
+                  <dd>{creativeBlueprintV2Debug.characters}</dd>
+                </div>
+                <div>
+                  <dt className="text-[11px] uppercase tracking-wide text-[#8E8E93]">scenes</dt>
+                  <dd>{creativeBlueprintV2Debug.scenes}</dd>
+                </div>
+                <div>
+                  <dt className="text-[11px] uppercase tracking-wide text-[#8E8E93]">product_assets</dt>
+                  <dd>{creativeBlueprintV2Debug.product_assets}</dd>
+                </div>
+                <div>
+                  <dt className="text-[11px] uppercase tracking-wide text-[#8E8E93]">asset_generation_specs</dt>
+                  <dd>{creativeBlueprintV2Debug.asset_generation_specs}</dd>
+                </div>
+                <div>
+                  <dt className="text-[11px] uppercase tracking-wide text-[#8E8E93]">video_generation_specs</dt>
+                  <dd>{creativeBlueprintV2Debug.video_generation_specs}</dd>
+                </div>
+              </dl>
+            </details>
+          ) : null}
 
           <div className="mb-8 space-y-3">
             <div className="grid gap-3 lg:grid-cols-2">

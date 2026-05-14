@@ -14,7 +14,7 @@ from ...database import SessionLocal
 from ..models import CharacterAsset, ProductAsset, SceneAsset, ShortDramaProject
 from ..providers.generated_image import GeneratedImage
 from ..providers.image_provider_factory import build_short_drama_image_provider
-from ..utils.image_prompts import prepare_image_prompt
+from ..utils.image_prompts import prepare_image_prompt, prepare_image_prompt_v2_asset_spec_pass_through
 from ..utils.image_storage import mime_to_ext, save_image_bytes
 from .workflow_orchestrator import orchestrator
 from .project_task_guard import current_stage
@@ -36,6 +36,15 @@ _CHARACTER_PROMPT_CORE_GUARDS = [
 
 def _trace(tag: str, payload: dict[str, Any]) -> None:
     logger.info("[AI_CHAIN_TRACE][%s] %s", tag, json.dumps(payload, ensure_ascii=False, default=str))
+
+
+def _should_skip_prompt_mutations(meta: dict[str, Any]) -> bool:
+    if meta.get("v2_asset_spec_pass_through"):
+        return True
+    tf = meta.get("type_fields")
+    if isinstance(tf, dict) and tf.get("asset_spec_source") == "s2_asset_generation_specs":
+        return True
+    return False
 
 
 def _enforce_character_prompt_constraints(prompt: str, *, project_id: int, asset_id: int) -> str:
@@ -118,16 +127,25 @@ class AssetImageService:
                         "row_type_fields": (row.meta_json or {}).get("type_fields"),
                     },
                 )
-                audited_prompt = _enforce_character_prompt_constraints(
-                    row.visual_prompt or "",
-                    project_id=project_id,
-                    asset_id=row.id,
-                )
+                meta0 = dict(row.meta_json or {})
+                base_vp = str(row.visual_prompt or "").strip()
+                if _should_skip_prompt_mutations(meta0):
+                    audited_prompt = base_vp
+                else:
+                    audited_prompt = _enforce_character_prompt_constraints(
+                        base_vp,
+                        project_id=project_id,
+                        asset_id=row.id,
+                    )
                 _trace(
                     "S3_IMAGE_PROMPT_BEFORE_PREPARE",
                     {"project_id": project_id, "asset_type": "character", "asset_id": row.id, "before_prompt": audited_prompt},
                 )
-                prompt = prepare_image_prompt(audited_prompt)
+                prompt = (
+                    prepare_image_prompt_v2_asset_spec_pass_through(audited_prompt)
+                    if _should_skip_prompt_mutations(meta0)
+                    else prepare_image_prompt(audited_prompt)
+                )
                 _trace(
                     "S3_IMAGE_PROMPT_AFTER_PREPARE",
                     {
@@ -208,7 +226,13 @@ class AssetImageService:
 
         def job(row: SceneAsset) -> tuple[int, str | None, GeneratedImage | None, Exception | None]:
             try:
-                prompt = prepare_image_prompt(row.visual_prompt)
+                meta0 = dict(row.meta_json or {})
+                base_vp = str(row.visual_prompt or "").strip()
+                prompt = (
+                    prepare_image_prompt_v2_asset_spec_pass_through(base_vp)
+                    if _should_skip_prompt_mutations(meta0)
+                    else prepare_image_prompt(base_vp)
+                )
                 meta = dict(row.meta_json or {})
                 seed = meta.get("generation_seed")
                 gen = self._provider.generate_from_text(
@@ -255,7 +279,13 @@ class AssetImageService:
 
         def job(row: ProductAsset) -> tuple[int, str | None, GeneratedImage | None, Exception | None]:
             try:
-                prompt = prepare_image_prompt(row.visual_prompt)
+                meta0 = dict(row.meta_json or {})
+                base_vp = str(row.visual_prompt or "").strip()
+                prompt = (
+                    prepare_image_prompt_v2_asset_spec_pass_through(base_vp)
+                    if _should_skip_prompt_mutations(meta0)
+                    else prepare_image_prompt(base_vp)
+                )
                 meta = dict(row.meta_json or {})
                 seed = meta.get("generation_seed")
                 gen = self._provider.generate_from_text(
@@ -337,7 +367,13 @@ class AssetImageService:
                     },
                 )
                 _trace("S3_IMAGE_PROMPT_BEFORE_PREPARE", {"project_id": project_id, "asset_type": "scene", "asset_id": row.id, "before_prompt": row.visual_prompt})
-                prompt = prepare_image_prompt(row.visual_prompt)
+                meta0 = dict(row.meta_json or {})
+                base_vp = str(row.visual_prompt or "").strip()
+                prompt = (
+                    prepare_image_prompt_v2_asset_spec_pass_through(base_vp)
+                    if _should_skip_prompt_mutations(meta0)
+                    else prepare_image_prompt(base_vp)
+                )
                 _trace("S3_IMAGE_PROMPT_AFTER_PREPARE", {"project_id": project_id, "asset_type": "scene", "asset_id": row.id, "before_prompt": row.visual_prompt, "after_prompt": prompt, "added_parts": [], "removed_parts": [], "source": "ai_visual_prompt"})
                 meta = dict(row.meta_json or {})
                 seed = meta.get("generation_seed")
@@ -420,7 +456,13 @@ class AssetImageService:
                     },
                 )
                 _trace("S3_IMAGE_PROMPT_BEFORE_PREPARE", {"project_id": project_id, "asset_type": "product", "asset_id": row.id, "before_prompt": row.visual_prompt})
-                prompt = prepare_image_prompt(row.visual_prompt)
+                meta0 = dict(row.meta_json or {})
+                base_vp = str(row.visual_prompt or "").strip()
+                prompt = (
+                    prepare_image_prompt_v2_asset_spec_pass_through(base_vp)
+                    if _should_skip_prompt_mutations(meta0)
+                    else prepare_image_prompt(base_vp)
+                )
                 _trace("S3_IMAGE_PROMPT_AFTER_PREPARE", {"project_id": project_id, "asset_type": "product", "asset_id": row.id, "before_prompt": row.visual_prompt, "after_prompt": prompt, "added_parts": [], "removed_parts": [], "source": "ai_visual_prompt"})
                 meta = dict(row.meta_json or {})
                 seed = meta.get("generation_seed")
