@@ -3,8 +3,8 @@ import { useNavigate, useLocation } from 'react-router-dom';
 import { getUser } from '../../services/api';
 import { ProjectCoverImage } from './components/ProjectCoverImage';
 import { ShortDramaLayout } from './components/ShortDramaLayout';
-import { listShortDramaGlobalAssetLibrary, listShortDramaProjects, ShortDramaApiError } from '@/services/shortDramaApi';
-import type { AssetLibrarySummaryDto, ShortDramaProjectDto } from '@/types/shortDramaApi';
+import { listShortDramaAssetLibrary, listShortDramaProjects, ShortDramaApiError } from '@/services/shortDramaApi';
+import type { AssetLibraryItemDto, AssetLibrarySummaryDto, ShortDramaProjectDto } from '@/types/shortDramaApi';
 import { resolveAssetImageUrl } from './utils/assetsPageAdapters';
 
 const PAGE_SIZE = 6;
@@ -252,6 +252,23 @@ function moduleToAssetType(module: AssetModule): 'character' | 'scene' | 'produc
   if (module === 'characters') return 'character';
   if (module === 'scenes') return 'scene';
   return 'product';
+}
+
+function assetLibraryItemToSummary(asset: AssetLibraryItemDto, projectName: string): AssetLibrarySummaryDto {
+  const coverUrl = asset.cover_image?.image_url || '';
+  const firstImageUrl = asset.images?.find((img) => String(img.status || 'active').toLowerCase() === 'active')?.image_url || '';
+  return {
+    id: asset.id,
+    project_id: asset.project_id,
+    project_name: projectName || `项目 ${asset.project_id}`,
+    asset_type: asset.asset_type,
+    name: asset.name,
+    description: asset.description,
+    image_url: coverUrl || firstImageUrl || null,
+    source: asset.source,
+    created_at: asset.created_at,
+    updated_at: asset.updated_at,
+  };
 }
 
 function projectSortTimeMs(p: ShortDramaProjectDto): number {
@@ -563,12 +580,20 @@ export function ShortDramaProjectsPage() {
     if (!user?.id || activeModule === 'projects') return;
     const module = activeModule;
     if (assetLoaded[module]) return;
+    if (loading) return;
     setAssetLoading(true);
     setAssetError(null);
     void (async () => {
       try {
-        const res = await listShortDramaGlobalAssetLibrary(user.id, moduleToAssetType(module));
-        setAssetRows((prev) => ({ ...prev, [module]: res.assets || [] }));
+        const assetType = moduleToAssetType(module);
+        const projectList = projects.filter((project) => typeof project.id === 'number');
+        const lists = await Promise.all(
+          projectList.map(async (project) => {
+            const res = await listShortDramaAssetLibrary(project.id, assetType);
+            return (res.assets || []).map((asset) => assetLibraryItemToSummary(asset, project.project_name || `项目 ${project.id}`));
+          }),
+        );
+        setAssetRows((prev) => ({ ...prev, [module]: lists.flat() }));
         setAssetLoaded((prev) => ({ ...prev, [module]: true }));
       } catch (e) {
         const msg = e instanceof ShortDramaApiError ? e.message : e instanceof Error ? e.message : '加载资产列表失败';
@@ -577,7 +602,7 @@ export function ShortDramaProjectsPage() {
         setAssetLoading(false);
       }
     })();
-  }, [activeModule, assetLoaded, user?.id]);
+  }, [activeModule, assetLoaded, loading, projects, user?.id]);
 
   const sorted = useMemo(
     () =>
