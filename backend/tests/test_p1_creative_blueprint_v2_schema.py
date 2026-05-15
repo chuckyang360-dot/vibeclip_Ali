@@ -12,6 +12,7 @@ from app.short_drama.schemas.story import (
     parse_story_blueprint_json,
 )
 from app.short_drama.services.story_planner_service import (
+    XAIStoryPlannerProvider,
     _normalize_blueprint_for_execution,
     _validate_creative_blueprint_v2,
 )
@@ -444,6 +445,111 @@ def test_v2_normalize_rejects_segment_duration_over_provider_max():
     with pytest.raises(ShortDramaInvalidModelOutputError) as ei:
         _normalize_blueprint_for_execution(parse_story_blueprint_json(raw), _product(), _project_config())
     assert "10" in str(ei.value) or "duration" in str(ei.value).lower()
+    assert ei.value.code == "s2_provider_duration_exceeded"
+    assert ei.value.duration_seconds == 12.0
+
+
+def test_v2_normalize_rejects_video_spec_duration_over_provider_max():
+    raw = _v2_normalize_shell(
+        segment_plan=[
+            {
+                "segment_id": "seg_1",
+                "segment_title": "T",
+                "segment_goal": "g",
+                "summary": "s",
+                "duration_seconds": 10.0,
+                "required_assets": ["r1"],
+            }
+        ]
+    )
+    raw["video_generation_specs"] = [
+        {**raw["video_generation_specs"][0], "duration_sec": 12.0},
+    ]
+    with pytest.raises(ShortDramaInvalidModelOutputError) as ei:
+        _normalize_blueprint_for_execution(parse_story_blueprint_json(raw), _product(), _project_config())
+    assert ei.value.code == "s2_provider_duration_exceeded"
+    assert ei.value.segment_id == "seg_1"
+    assert ei.value.duration_seconds == 12.0
+
+
+class _FakeStoryTextProvider:
+    def __init__(self, outputs: list[dict]):
+        self.outputs = list(outputs)
+        self.stages: list[str] = []
+
+    def generate_structured_json(self, **kwargs):
+        self.stages.append(str(kwargs.get("stage") or ""))
+        if not self.outputs:
+            raise AssertionError("unexpected extra model call")
+        return self.outputs.pop(0)
+
+
+def test_xai_story_planner_repairs_provider_duration_error_once():
+    bad = _v2_normalize_shell(
+        segment_plan=[
+            {
+                "segment_id": "seg_1",
+                "segment_title": "T",
+                "segment_goal": "g",
+                "summary": "s",
+                "duration_seconds": 12.0,
+                "required_assets": ["r1"],
+            }
+        ]
+    )
+    repaired = _v2_normalize_shell(
+        segment_plan=[
+            {
+                "segment_id": "seg_1",
+                "segment_title": "T",
+                "segment_goal": "g",
+                "summary": "s",
+                "duration_seconds": 8.0,
+                "required_assets": ["r1"],
+            }
+        ]
+    )
+    provider = _FakeStoryTextProvider([bad, repaired])
+    out = XAIStoryPlannerProvider(provider).plan(123, _product(), _project_config())
+
+    assert provider.stages == ["STORY_GENERATION", "STORY_GENERATION_REPAIR"]
+    assert out.segment_plan[0].duration_seconds == 8.0
+    assert all(float(v.duration_sec or 0.0) <= 10.0 for v in out.video_generation_specs)
+
+
+def test_xai_story_planner_repair_failure_keeps_specific_duration_error():
+    bad = _v2_normalize_shell(
+        segment_plan=[
+            {
+                "segment_id": "seg_1",
+                "segment_title": "T",
+                "segment_goal": "g",
+                "summary": "s",
+                "duration_seconds": 12.0,
+                "required_assets": ["r1"],
+            }
+        ]
+    )
+    still_bad = _v2_normalize_shell(
+        segment_plan=[
+            {
+                "segment_id": "seg_1",
+                "segment_title": "T",
+                "segment_goal": "g",
+                "summary": "s",
+                "duration_seconds": 11.0,
+                "required_assets": ["r1"],
+            }
+        ]
+    )
+    provider = _FakeStoryTextProvider([bad, still_bad])
+
+    with pytest.raises(ShortDramaInvalidModelOutputError) as ei:
+        XAIStoryPlannerProvider(provider).plan(123, _product(), _project_config())
+
+    assert provider.stages == ["STORY_GENERATION", "STORY_GENERATION_REPAIR"]
+    assert ei.value.code == "s2_provider_duration_exceeded"
+    assert ei.value.duration_seconds == 11.0
 
 
 def test_normalize_rejects_segment_without_asset_hints():

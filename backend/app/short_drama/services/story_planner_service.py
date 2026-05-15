@@ -17,11 +17,12 @@ from ..schemas.story import (
     parse_story_blueprint_json,
 )
 from ..utils.creative_brief import build_creative_brief
-from ..utils.prompts import STORY_PLANNER_SYSTEM_PROMPT
+from ..utils.prompts import STORY_PLANNER_REPAIR_SYSTEM_PROMPT, STORY_PLANNER_SYSTEM_PROMPT
 
 logger = logging.getLogger(__name__)
 
 CREATIVE_BLUEPRINT_V2_SCHEMA = "creative_blueprint_v2"
+PROVIDER_MAX_VIDEO_DURATION_SECONDS = 10.0
 _S2_PAYLOAD_MAX_CHARS = 200_000
 _S2_STRING_MAX_CHARS = 5_000
 _S2_IMAGE_DATA_KEY_MARKERS = (
@@ -756,6 +757,92 @@ class XAIStoryPlannerProvider:
     def __init__(self, text_provider: XAITextProvider):
         self._text = text_provider
 
+    def _repair_provider_duration_error(
+        self,
+        *,
+        project_id: int,
+        product: ProductContextSchema,
+        project_config: Dict[str, Any],
+        original_blueprint_data: Dict[str, Any],
+        validation_error: ShortDramaInvalidModelOutputError,
+        repair_attempt: int = 1,
+    ) -> StoryBlueprintSchema:
+        error_payload = {
+            "reason": getattr(validation_error, "reason", None) or "provider_duration_exceeded",
+            "segment_id": getattr(validation_error, "segment_id", None),
+            "duration_seconds": getattr(validation_error, "duration_seconds", None),
+            "provider_max_duration_seconds": (
+                getattr(validation_error, "provider_max_duration_seconds", None)
+                or PROVIDER_MAX_VIDEO_DURATION_SECONDS
+            ),
+            "missing_fields": getattr(validation_error, "missing_fields", []),
+            "message": str(validation_error),
+            "action": "shorten or split this segment so every executable duration is within provider limit",
+            "output": "complete valid JSON",
+        }
+        logger.info(
+            "[S2_BLUEPRINT_REPAIR_START] %s",
+            json.dumps(
+                {
+                    "project_id": project_id,
+                    "repair_attempt": repair_attempt,
+                    "reason": error_payload["reason"],
+                },
+                ensure_ascii=False,
+                default=str,
+            ),
+        )
+        repair_payload = {
+            "project_id": project_id,
+            "validation_error": error_payload,
+            "provider_constraints": {
+                "provider_max_duration_seconds": PROVIDER_MAX_VIDEO_DURATION_SECONDS,
+                "do_not_hardcode_segment_count_from_total_duration": True,
+            },
+            "original_blueprint": original_blueprint_data,
+        }
+        try:
+            repaired_data = self._text.generate_structured_json(
+                project_id=project_id,
+                service_name="story_planner_repair",
+                system_prompt=STORY_PLANNER_REPAIR_SYSTEM_PROMPT,
+                user_payload=repair_payload,
+                image_urls=None,
+                expected_schema_name="StoryBlueprint",
+                stage="STORY_GENERATION_REPAIR",
+                model=effective_xai_story_model(),
+                max_output_tokens=effective_xai_story_max_output_tokens(),
+            )
+            repaired_blueprint = parse_story_blueprint_json(repaired_data)
+            repaired_blueprint = _normalize_blueprint_for_execution(repaired_blueprint, product, project_config)
+            logger.info(
+                "[S2_BLUEPRINT_REPAIR_SUCCESS] %s",
+                json.dumps(
+                    {
+                        "project_id": project_id,
+                        "repair_attempt": repair_attempt,
+                        "video_generation_specs_count": len(repaired_blueprint.video_generation_specs or []),
+                    },
+                    ensure_ascii=False,
+                    default=str,
+                ),
+            )
+            return repaired_blueprint
+        except Exception as repair_error:
+            logger.warning(
+                "[S2_BLUEPRINT_REPAIR_FAILED] %s",
+                json.dumps(
+                    {
+                        "project_id": project_id,
+                        "repair_attempt": repair_attempt,
+                        "error": str(repair_error),
+                    },
+                    ensure_ascii=False,
+                    default=str,
+                ),
+            )
+            raise
+
     def plan(
         self,
         project_id: int,
@@ -818,7 +905,19 @@ class XAIStoryPlannerProvider:
             blueprint = parse_story_blueprint_json(data)
             before_normalize = blueprint.model_dump()
             _trace("S2_BEFORE_NORMALIZE", {"project_id": project_id, "blueprint": before_normalize})
-            blueprint = _normalize_blueprint_for_execution(blueprint, product, project_config)
+            try:
+                blueprint = _normalize_blueprint_for_execution(blueprint, product, project_config)
+            except ShortDramaInvalidModelOutputError as e:
+                if not _is_provider_duration_error(e):
+                    raise
+                blueprint = self._repair_provider_duration_error(
+                    project_id=project_id,
+                    product=product,
+                    project_config=project_config,
+                    original_blueprint_data=data,
+                    validation_error=e,
+                    repair_attempt=1,
+                )
             after_normalize = blueprint.model_dump()
             _trace("S2_AFTER_NORMALIZE", {"project_id": project_id, "blueprint": after_normalize})
             overwrites = _collect_non_empty_overwrites(before_normalize, after_normalize)
@@ -913,6 +1012,67 @@ def _segment_durations(total: float, count: int) -> list[float]:
 def _contains_terms(text: str, terms: tuple[str, ...]) -> bool:
     blob = str(text or "")
     return any(term in blob for term in terms)
+
+
+def _log_s2_duration_validate_failed(
+    *,
+    project_id: Any,
+    reason: str,
+    segment_id: str,
+    duration_seconds: float,
+    provider_max_duration_seconds: float = PROVIDER_MAX_VIDEO_DURATION_SECONDS,
+) -> None:
+    logger.warning(
+        "[S2_BLUEPRINT_VALIDATE_FAILED] %s",
+        json.dumps(
+            {
+                "project_id": project_id,
+                "reason": reason,
+                "segment_id": segment_id,
+                "duration_seconds": duration_seconds,
+                "provider_max_duration_seconds": provider_max_duration_seconds,
+            },
+            ensure_ascii=False,
+            default=str,
+        ),
+    )
+
+
+def _duration_exceeded_error(
+    *,
+    project_id: Any,
+    segment_id: str,
+    duration_seconds: float,
+    field: str,
+    provider_max_duration_seconds: float = PROVIDER_MAX_VIDEO_DURATION_SECONDS,
+) -> ShortDramaInvalidModelOutputError:
+    reason = f"{field}_provider_max_exceeded"
+    _log_s2_duration_validate_failed(
+        project_id=project_id,
+        reason=reason,
+        segment_id=segment_id,
+        duration_seconds=duration_seconds,
+        provider_max_duration_seconds=provider_max_duration_seconds,
+    )
+    return ShortDramaInvalidModelOutputError(
+        (
+            f"S2 segment {segment_id} {field} {duration_seconds} exceeds provider maximum "
+            f"{provider_max_duration_seconds}; shorten segment or split; regenerate S2."
+        ),
+        segment_id=segment_id,
+        code="s2_provider_duration_exceeded",
+        missing_fields=[field],
+        reason=reason,
+        duration_seconds=duration_seconds,
+        provider_max_duration_seconds=provider_max_duration_seconds,
+    )
+
+
+def _is_provider_duration_error(exc: Exception) -> bool:
+    return (
+        isinstance(exc, ShortDramaInvalidModelOutputError)
+        and getattr(exc, "code", None) == "s2_provider_duration_exceeded"
+    )
 
 
 def _looks_english_like_text(value: Any) -> bool:
@@ -1137,6 +1297,14 @@ def _validate_creative_blueprint_v2(blueprint: StoryBlueprintSchema, *, project_
             _fail(
                 f"S2 video_generation_specs[{vidx}] requires duration_sec > 0.",
                 missing_fields=["video_generation_specs.duration_sec"],
+            )
+        duration_value = float(vs.duration_sec or 0.0)
+        if duration_value > PROVIDER_MAX_VIDEO_DURATION_SECONDS:
+            raise _duration_exceeded_error(
+                project_id=project_id,
+                segment_id=str(vs.segment_id or "").strip() or f"video_generation_specs[{vidx}]",
+                duration_seconds=duration_value,
+                field="video_generation_specs.duration_sec",
             )
         for rk in vs.reference_asset_keys or []:
             rks = str(rk).strip()
@@ -1645,18 +1813,12 @@ def _normalize_blueprint_v2_for_execution(
             is_brand_seeding=is_brand_seeding,
         )
         raw_duration = float(item.duration_seconds or item.duration_sec or 0.0)
-        if raw_duration > 10.0:
-            logger.warning(
-                "[AI_BLUEPRINT_VALIDATE_FAILED] project_id=%s segment_id=%s missing_field=%s",
-                pid,
-                sid,
-                "duration_seconds_over_provider_max",
-            )
-            raise ShortDramaInvalidModelOutputError(
-                f"S2 segment {sid} duration_seconds {raw_duration} exceeds provider maximum 10.0; shorten segment or split; regenerate S2.",
+        if raw_duration > PROVIDER_MAX_VIDEO_DURATION_SECONDS:
+            raise _duration_exceeded_error(
+                project_id=pid,
                 segment_id=sid,
-                code="ai_blueprint_validate_failed",
-                missing_fields=["duration_seconds"],
+                duration_seconds=raw_duration,
+                field="duration_seconds",
             )
         normalized_duration = raw_duration
         next_plan.append(

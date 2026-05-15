@@ -13,12 +13,18 @@ class ShortDramaInvalidModelOutputError(Exception):
         shot_id: str | None = None,
         missing_fields: list[str] | None = None,
         code: str | None = None,
+        reason: str | None = None,
+        duration_seconds: float | None = None,
+        provider_max_duration_seconds: float | None = None,
     ):
         super().__init__(message)
         self.segment_id = segment_id
         self.shot_id = shot_id
         self.missing_fields = list(missing_fields or [])
         self.code = code
+        self.reason = reason
+        self.duration_seconds = duration_seconds
+        self.provider_max_duration_seconds = provider_max_duration_seconds
 
     def http_detail(self) -> str | dict:
         if self.segment_id is not None or self.shot_id is not None or self.missing_fields or self.code:
@@ -29,6 +35,9 @@ class ShortDramaInvalidModelOutputError(Exception):
                 "shot_id": self.shot_id,
                 "missing_fields": self.missing_fields,
                 "code": self.code,
+                "reason": self.reason,
+                "duration_seconds": self.duration_seconds,
+                "provider_max_duration_seconds": self.provider_max_duration_seconds,
             }
         return str(self)
 

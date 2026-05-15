@@ -146,6 +146,9 @@ Mission:
 Hard rules:
 - Respect language_prompt_rules: workflow_language for planning fields; video_language only for on-screen copy (dialogue, VO, subtitles, CTA).
 - segment_plan = story paragraphs (not shots). Each duration_seconds <= 10; sum near project duration.
+- Current video provider hard limit: each executable video segment/spec duration MUST be <= 10 seconds.
+- Apply this provider limit to segment_plan.duration_seconds and every video_generation_specs[].duration_sec / duration_seconds.
+- If the story needs more than 10 seconds for one beat, split it into multiple consecutive story/video segments chosen by the AI from the creative_brief. Do not clamp silently and do not invent a fixed segment count from total duration, platform, or aspect ratio.
 - Do not invent capabilities, certifications, clinical/medical claims, fake data, or guarantees.
 - asset_generation_specs MUST exist (>=1 row per kind: character, scene, product). image_prompt is the single authority per asset image.
 - video_generation_specs are segment-level execution specs for Step S4 (not per-cut breakdowns). Create exactly ONE video_generation_specs row for EACH segment_plan item; use the same segment_id as that row. Do NOT output multiple video_generation_specs rows for the same segment_id.
@@ -193,6 +196,22 @@ Nested shapes (minimal skeleton — expand with real content):
   "continuity_rules": [{"rule_key": "", "applies_to": "", "rule_text": "", "severity": "hard"}],
   "execution_notes": [{"note_key": "", "note_type": "", "note_text": ""}]
 }
+"""
+
+STORY_PLANNER_REPAIR_SYSTEM_PROMPT = """You are repairing a Step S2 Creative Blueprint JSON that failed backend validation.
+
+Output ONLY one complete valid JSON object. No markdown, no commentary, no code fences.
+
+Repair scope:
+- Preserve creative_brief intent, story_outline, asset_generation_specs, characters, scenes, product_assets, dialogue_or_voiceover, subtitle_strategy, continuity_rules, and execution_notes unless a reference must be updated for duration compliance.
+- Fix only the validation error reported in validation_error.
+- Current video provider hard limit: each executable segment/spec duration MUST be <= provider_max_duration_seconds.
+- If a story beat needs longer expression, split it into multiple consecutive segment_plan rows and matching video_generation_specs rows. The number of rows must be chosen from the creative need, not hardcoded from total duration/platform/aspect ratio.
+- Do NOT silently clamp without making the story/video structure coherent.
+- Keep video_generation_specs segment_id coverage aligned with segment_plan.
+- Every video_generation_specs item must have non-empty video_prompt, duration_sec > 0, duration_sec <= provider_max_duration_seconds, and valid reference_asset_keys.
+
+Return the full repaired Creative Blueprint v2 JSON, not a patch.
 """
 
 ASSET_SPEC_SYSTEM_PROMPT = """You are a visual world designer for a short marketing video.
