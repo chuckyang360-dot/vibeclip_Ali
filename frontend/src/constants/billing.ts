@@ -17,8 +17,7 @@ export const SUBSCRIPTION_PLANS: Record<
   basic: {
     key: 'basic',
     name: '基础会员',
-    // TEMP: basic monthly price set to 1 CNY for Alipay production payment testing. Restore to 79 after verification.
-    monthlyPrice: 1,
+    monthlyPrice: 79,
     creditsPerMonth: 1000,
     queueLabel: '普通生成队列',
     hdExport: '标准高清导出',
@@ -58,8 +57,7 @@ export const CREDIT_PACKS: { id: CreditPackId; price: number; points: number }[]
 
 /** 年付应付金额与 backend/app/routes/billing.py PLAN_PRICE yearly 一致（以后端为准）。 */
 const BACKEND_YEARLY_PAYABLE_BY_MONTHLY: Record<number, number> = {
-  // TEMP: keyed by current monthly display price for basic (1 during Alipay test); yearly basic still ¥758 on backend.
-  1: 758,
+  79: 758,
   209: 2006,
   529: 5078,
 };

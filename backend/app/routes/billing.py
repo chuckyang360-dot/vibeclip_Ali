@@ -41,8 +41,7 @@ router = APIRouter()
 
 
 PLAN_PRICE: dict[str, dict[str, Decimal]] = {
-    # TEMP: basic monthly price set to 1 CNY for Alipay production payment testing. Restore to 79 after verification.
-    "basic": {"monthly": Decimal("1.00"), "yearly": Decimal("758.00")},
+    "basic": {"monthly": Decimal("79.00"), "yearly": Decimal("758.00")},
     "standard": {"monthly": Decimal("209.00"), "yearly": Decimal("2006.00")},
     "pro": {"monthly": Decimal("529.00"), "yearly": Decimal("5078.00")},
 }
