@@ -107,6 +107,10 @@ function computeS3PipelineWorkInProgress(input: {
   return pipelineGen || autoBootstrap || listSyncHint;
 }
 
+function isS3AutoRequestPhase(phase: Step3AutoPhase): boolean {
+  return phase === 'checking' || phase === 'generating_specs' || phase === 'generating_images';
+}
+
 /** 连续 pipeline 快照均满足时才累计 streak；与 computeS3PipelineWorkInProgress 互斥，避免误判 */
 const S3_PIPELINE_FAILURE_STREAK_THRESHOLD = 3;
 
@@ -426,6 +430,14 @@ function extractFailedAssetIds(errors: Record<string, unknown>[] | undefined): S
 }
 
 function pipelineHasS2AssetGenerationSpecs(pipeline: PipelineSummaryDto): boolean {
+  const directHas = (pipeline as unknown as { has_asset_generation_specs?: unknown }).has_asset_generation_specs;
+  if (typeof directHas === 'boolean') return directHas;
+  const directCount = (pipeline as unknown as { asset_generation_specs_count?: unknown }).asset_generation_specs_count;
+  if (typeof directCount === 'number') return directCount > 0;
+  if (typeof directCount === 'string') {
+    const n = Number(directCount);
+    if (Number.isFinite(n)) return n > 0;
+  }
   const specs = pipeline.story_blueprint?.blueprint?.asset_generation_specs;
   return Array.isArray(specs) && specs.length > 0;
 }
@@ -438,6 +450,12 @@ function assetImageGenerationFailed(row: AssetLibraryItemDto): boolean {
     || String(tf.image_generation_status || '').toLowerCase() === 'failed';
   const failedImageRow = (row.images ?? []).some((img) => String(img.status || '').toLowerCase() === 'failed');
   return failedInMeta || failedImageRow;
+}
+
+function assetImageGenerationStatus(row: AssetLibraryItemDto): string {
+  const extra = row.extra && typeof row.extra === 'object' ? row.extra as Record<string, unknown> : {};
+  const tf = extra.type_fields && typeof extra.type_fields === 'object' ? extra.type_fields as Record<string, unknown> : {};
+  return String(extra.image_generation_status || tf.image_generation_status || '').trim().toLowerCase();
 }
 
 function normalizeLibraryItem(row: AssetLibraryItemDto): AssetLibraryItemDto | null {
@@ -566,6 +584,7 @@ export function ShortDramaAssetsPage() {
   const [pipelineImageUrlFilled, setPipelineImageUrlFilled] = useState(0);
   const [pipelineStepStatus, setPipelineStepStatus] = useState<Record<string, string>>({});
   const [pipelineHasStoryBlueprint, setPipelineHasStoryBlueprint] = useState(false);
+  const [pipelineHasAssetGenerationSpecs, setPipelineHasAssetGenerationSpecs] = useState(false);
   const [imageLoadFailedIds, setImageLoadFailedIds] = useState<Set<number>>(() => new Set());
   const [imageGenerationFailedIds, setImageGenerationFailedIds] = useState<Set<number>>(() => new Set());
   const [generatingImageAssetIds, setGeneratingImageAssetIds] = useState<Set<number>>(() => new Set());
@@ -595,6 +614,7 @@ export function ShortDramaAssetsPage() {
     s3FailureStreakRef.current = 0;
     confirmedS3PipelineFailureRef.current = false;
     setConfirmedS3PipelineFailure(false);
+    setPipelineHasAssetGenerationSpecs(false);
   }, [effectiveProjectId]);
 
   const hasVisibleAssets = useMemo(
@@ -652,6 +672,8 @@ export function ShortDramaAssetsPage() {
     setPipelineAssetRowsTotal(Number(p.asset_rows_total || 0));
     setPipelineImageUrlFilled(Number(p.image_url_filled || 0));
     setPipelineHasStoryBlueprint(Boolean(p.has_story_blueprint));
+    const hasAssetGenerationSpecs = pipelineHasS2AssetGenerationSpecs(p);
+    setPipelineHasAssetGenerationSpecs((prev) => prev || hasAssetGenerationSpecs);
   }, []);
 
   useEffect(() => {
@@ -978,6 +1000,15 @@ export function ShortDramaAssetsPage() {
   const createLabel = activeTab === 'characters' ? '添加角色' : activeTab === 'scenes' ? '添加场景' : '添加产品';
   const currentRows = data[activeTab];
   const listedAssetTotal = data.characters.length + data.scenes.length + data.assets.length;
+  const pipelineRowsNeedMaterialize = pipelineAssetRowsTotal === 0 && pipelineHasAssetGenerationSpecs;
+  const pipelineRowsNeedImages = pipelineAssetRowsTotal > 0 && pipelineImageUrlFilled < pipelineAssetRowsTotal;
+  const autoPreparing =
+    !confirmedS3PipelineFailure
+    && (
+      isS3AutoRequestPhase(autoPhase)
+      || pipelineRowsNeedMaterialize
+      || pipelineRowsNeedImages
+    );
 
   const workInProgress = computeS3PipelineWorkInProgress({
     listedAssetTotal,
@@ -988,7 +1019,7 @@ export function ShortDramaAssetsPage() {
     pipelineTaskRunning,
     pipelineOverallStatus,
     autoPhase,
-  });
+  }) || autoPreparing;
 
   const step3Failed =
     String(pipelineStepStatus.step_3 || '').toLowerCase() === 'failed'
@@ -1007,6 +1038,7 @@ export function ShortDramaAssetsPage() {
     Boolean(toPositiveInt(effectiveProjectId))
     && (
       workInProgress
+      || autoPreparing
       || pipelineFailureWatchActive
       || (listedAssetTotal === 0 && pipelineAssetRowsTotal > 0 && !confirmedS3PipelineFailure)
     );
@@ -1021,6 +1053,7 @@ export function ShortDramaAssetsPage() {
     && pipelineHasStoryBlueprint
     && listedAssetTotal === 0
     && pipelineAssetRowsTotal === 0
+    && !autoPreparing
     && !workInProgress;
 
   const hasVisibleAssetImages = useMemo(() => {
@@ -1148,7 +1181,9 @@ export function ShortDramaAssetsPage() {
       taskRunning: pipelineTaskRunning,
       assetRowsTotal: pipelineAssetRowsTotal,
       imageUrlFilled: pipelineImageUrlFilled,
+      hasAssetGenerationSpecs: pipelineHasAssetGenerationSpecs,
       hasVisibleAssets: hasVisibleAssetImages,
+      autoPreparing,
       workInProgress,
       s3AssetGridUi,
       shouldPollPipeline,
@@ -1161,7 +1196,9 @@ export function ShortDramaAssetsPage() {
     pipelineTaskRunning,
     pipelineAssetRowsTotal,
     pipelineImageUrlFilled,
+    pipelineHasAssetGenerationSpecs,
     hasVisibleAssetImages,
+    autoPreparing,
     workInProgress,
     s3AssetGridUi,
     shouldPollPipeline,
@@ -1360,10 +1397,16 @@ export function ShortDramaAssetsPage() {
               const roleLabel = resolveAssetRoleLabel(row);
               const imageLoadFailed = imageLoadFailedIds.has(row.id);
               const cardImageGenerating = generatingImageAssetIds.has(row.id);
-              const isImageGenerating = cardImageGenerating || (workInProgress && !visualAnchor && !imageLoadFailed);
+              const rowImageStatus = assetImageGenerationStatus(row);
+              const rowMarkedGenerating = rowImageStatus === 'generating' || rowImageStatus === 'processing';
               const hasFailedImage =
                 !visualAnchor &&
                 (imageGenerationFailedIds.has(row.id) || assetImageGenerationFailed(row));
+              const isImageGenerating =
+                !hasFailedImage
+                && !visualAnchor
+                && !imageLoadFailed
+                && (cardImageGenerating || rowMarkedGenerating || autoPreparing || workInProgress);
               return (
                 <div key={row.id} className="flex h-full flex-col overflow-hidden rounded-2xl" style={{ background: '#fff', border: '1px solid #EAEAEA' }}>
                   <div
@@ -1393,14 +1436,25 @@ export function ShortDramaAssetsPage() {
                       </div>
                     ) : hasFailedImage ? (
                       <div className="flex h-full w-full items-center justify-center bg-[#F7F8FA] px-3 text-center text-[12px] text-[#B42318]">
-                        图片生成失败，可重试
+                        图片生成失败
                       </div>
                     ) : (
-                      <div className="flex h-full w-full items-center justify-center bg-[#F7F8FA] px-3 text-center text-[12px] text-[#8E8E93]">
-                        待生成图片
+                      <div className="flex h-full w-full items-center justify-center bg-[#ECEDEF]">
+                        <div className="text-center text-[12px] text-[#6E6E73]">
+                          <i className="ri-loader-4-line mb-1 block animate-spin text-[18px]" aria-hidden />
+                          资产图片生成中...
+                        </div>
                       </div>
                     )}
-                    {hasFailedImage && (!visualAnchor || imageLoadFailed) && !workInProgress ? (
+                    {isImageGenerating ? (
+                      <button
+                        type="button"
+                        disabled
+                        className="absolute bottom-3 left-1/2 -translate-x-1/2 rounded-lg bg-[#1D1D1F] px-3 py-1.5 text-[11px] font-semibold text-white shadow-sm opacity-60"
+                      >
+                        生成中…
+                      </button>
+                    ) : hasFailedImage && (!visualAnchor || imageLoadFailed) && !autoPreparing && !workInProgress ? (
                       <button
                         type="button"
                         disabled={cardImageGenerating}
@@ -1496,10 +1550,10 @@ export function ShortDramaAssetsPage() {
                       overflow: 'hidden',
                     }}
                   >
-                    正在生成角色与场景资产
+                    正在准备资产数据
                   </h3>
                   <p className="mt-2 text-[12px] leading-relaxed text-[#6E6E73]">
-                    系统正在根据剧本大纲生成角色、场景和产品资产，请稍候。
+                    系统正在根据 S2 已确定的资产 prompt 创建资产并生成图片，请稍候。
                   </p>
                 </div>
               </div>
@@ -1520,7 +1574,7 @@ export function ShortDramaAssetsPage() {
                     onClick={() => void handleGenerateS3Assets()}
                     className="mt-4 rounded-xl bg-[#1D1D1F] px-4 py-2 text-[12px] font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50"
                   >
-                    重新生成角色与场景资产
+                    重试生成资产
                   </button>
                 </div>
               </div>
