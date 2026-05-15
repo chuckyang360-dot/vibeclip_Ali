@@ -733,26 +733,38 @@ export function ShortDramaAssetsPage() {
           setAutoPhase('generating_images');
           setAutoHint('正在生成资产，请稍候…');
           console.info('[S3_AUTO_TRIGGER_ASSETS]', JSON.stringify({ project_id: projectId }));
-          void (async () => {
-            try {
-              const result = await generateShortDramaAssetSpecs(projectId, { trigger: 'auto' });
-              setImageGenerationFailedIds(extractFailedAssetIds(result.image_generation?.errors));
-              const nextPipeline = await getShortDramaPipeline(projectId);
+          try {
+            const result = await generateShortDramaAssetSpecs(projectId, { trigger: 'auto' });
+            setImageGenerationFailedIds(extractFailedAssetIds(result.image_generation?.errors));
+            let nextPipeline = await getShortDramaPipeline(projectId);
+            setCachedShortDramaPipeline(projectId, nextPipeline);
+            applyPipelineSnapshot(nextPipeline);
+            await reload({ background: true, reason: 'auto_assets_generated' });
+
+            const rowsAfterSpecs = Number(nextPipeline.asset_rows_total || 0);
+            const imagesAfterSpecs = Number(nextPipeline.image_url_filled || 0);
+            if (rowsAfterSpecs > 0 && imagesAfterSpecs < rowsAfterSpecs) {
+              console.info('[S3_AUTO_TRIGGER_IMAGES_AFTER_SPECS]', JSON.stringify({
+                project_id: projectId,
+                asset_rows_total: rowsAfterSpecs,
+                image_url_filled: imagesAfterSpecs,
+              }));
+              const imageResult = await generateShortDramaAssetImages(projectId);
+              setImageGenerationFailedIds(extractFailedAssetIds(imageResult.errors));
+              nextPipeline = await getShortDramaPipeline(projectId);
               setCachedShortDramaPipeline(projectId, nextPipeline);
               applyPipelineSnapshot(nextPipeline);
-              await reload({ background: true, reason: 'auto_assets_generated' });
-              setAutoPhase('ready');
-              setAutoHint(null);
-            } catch (e) {
-              console.error('[S3_AUTO_ASSET_GENERATION_FAILED]', { project_id: projectId, error: e });
-              setAutoPhase('error');
-              setAutoHint('资产图片生成失败，请稍后重试');
-              setError('资产图片生成失败，请稍后重试');
-              await reload({ background: true, reason: 'auto_assets_error' });
+              await reload({ background: true, reason: 'auto_images_after_specs_generated' });
             }
-          })();
-          await new Promise((resolve) => window.setTimeout(resolve, 300));
-          await reload({ background: true, reason: 'auto_assets_started' });
+            setAutoPhase('ready');
+            setAutoHint(null);
+          } catch (e) {
+            console.error('[S3_AUTO_ASSET_GENERATION_FAILED]', { project_id: projectId, error: e });
+            setAutoPhase('error');
+            setAutoHint('资产图片生成失败，请稍后重试');
+            setError('资产图片生成失败，请稍后重试');
+            await reload({ background: true, reason: 'auto_assets_error' });
+          }
           return;
         }
 
@@ -764,25 +776,22 @@ export function ShortDramaAssetsPage() {
             asset_rows_total: assetRowsTotal,
             image_url_filled: imageUrlFilled,
           }));
-          void (async () => {
-            try {
-              const imageResult = await generateShortDramaAssetImages(projectId);
-              setImageGenerationFailedIds(extractFailedAssetIds(imageResult.errors));
-              const nextPipeline = await getShortDramaPipeline(projectId);
-              setCachedShortDramaPipeline(projectId, nextPipeline);
-              applyPipelineSnapshot(nextPipeline);
-              await reload({ background: true, reason: 'auto_missing_images_generated' });
-              setAutoPhase('ready');
-              setAutoHint(null);
-            } catch (e) {
-              console.error('[S3_AUTO_MISSING_IMAGES_FAILED]', { project_id: projectId, error: e });
-              setAutoPhase('error');
-              setAutoHint('资产图片生成失败，请稍后重试');
-              setError('资产图片生成失败，请稍后重试');
-              await reload({ background: true, reason: 'auto_missing_images_error' });
-            }
-          })();
-          await reload({ background: true, reason: 'auto_missing_images_started' });
+          try {
+            const imageResult = await generateShortDramaAssetImages(projectId);
+            setImageGenerationFailedIds(extractFailedAssetIds(imageResult.errors));
+            const nextPipeline = await getShortDramaPipeline(projectId);
+            setCachedShortDramaPipeline(projectId, nextPipeline);
+            applyPipelineSnapshot(nextPipeline);
+            await reload({ background: true, reason: 'auto_missing_images_generated' });
+            setAutoPhase('ready');
+            setAutoHint(null);
+          } catch (e) {
+            console.error('[S3_AUTO_MISSING_IMAGES_FAILED]', { project_id: projectId, error: e });
+            setAutoPhase('error');
+            setAutoHint('资产图片生成失败，请稍后重试');
+            setError('资产图片生成失败，请稍后重试');
+            await reload({ background: true, reason: 'auto_missing_images_error' });
+          }
           return;
         }
 
@@ -1441,15 +1450,7 @@ export function ShortDramaAssetsPage() {
                         </div>
                       </div>
                     )}
-                    {isImageGenerating ? (
-                      <button
-                        type="button"
-                        disabled
-                        className="absolute bottom-3 left-1/2 -translate-x-1/2 rounded-lg bg-[#1D1D1F] px-3 py-1.5 text-[11px] font-semibold text-white shadow-sm opacity-60"
-                      >
-                        生成中…
-                      </button>
-                    ) : hasFailedImage && (!visualAnchor || imageLoadFailed) && !autoPreparing && !workInProgress ? (
+                    {hasFailedImage && (!visualAnchor || imageLoadFailed) && !autoPreparing && !workInProgress ? (
                       <button
                         type="button"
                         disabled={cardImageGenerating}
@@ -1459,7 +1460,7 @@ export function ShortDramaAssetsPage() {
                         }}
                         className="absolute bottom-3 left-1/2 -translate-x-1/2 rounded-lg bg-[#1D1D1F] px-3 py-1.5 text-[11px] font-semibold text-white shadow-sm disabled:opacity-60"
                       >
-                        {cardImageGenerating ? '生成中…' : '重试生成图片'}
+                        重试生成图片
                       </button>
                     ) : null}
                   </div>
