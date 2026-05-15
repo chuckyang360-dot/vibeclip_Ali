@@ -67,7 +67,7 @@ export function ShortDramaCreateProjectPage() {
   const routedProjectId = useMemo(() => parseProjectId(searchParams), [searchParams]);
   const [projectId, setProjectId] = useState<number | null>(routedProjectId);
   const [intent, setIntent] = useState<CreativeIntentInputDto>(emptyIntent);
-  const [optionalOpen, setOptionalOpen] = useState(true);
+  const [optionalOpen, setOptionalOpen] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
 

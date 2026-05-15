@@ -3,12 +3,24 @@ import { useNavigate, useLocation } from 'react-router-dom';
 import { getUser } from '../../services/api';
 import { ProjectCoverImage } from './components/ProjectCoverImage';
 import { ShortDramaLayout } from './components/ShortDramaLayout';
-import { listShortDramaProjects, ShortDramaApiError } from '@/services/shortDramaApi';
-import type { ShortDramaProjectDto } from '@/types/shortDramaApi';
+import { listShortDramaGlobalAssetLibrary, listShortDramaProjects, ShortDramaApiError } from '@/services/shortDramaApi';
+import type { AssetLibrarySummaryDto, ShortDramaProjectDto } from '@/types/shortDramaApi';
+import { resolveAssetImageUrl } from './utils/assetsPageAdapters';
 
 const PAGE_SIZE = 6;
 
 type ProjectStatusFilter = 'all' | 'draft' | 'generating' | 'stale' | 'completed' | 'failed';
+type ManagementModule = 'projects' | 'characters' | 'scenes' | 'products';
+type AssetModule = Exclude<ManagementModule, 'projects'>;
+type AssetImageFilter = 'all' | 'with_image' | 'without_image';
+type AssetSortKey = 'recent' | 'oldest' | 'name_az';
+
+type AssetFilterState = {
+  query: string;
+  imageStatus: AssetImageFilter;
+  sourceProject: string;
+  sort: AssetSortKey;
+};
 
 const STATUS_FILTERS: { key: ProjectStatusFilter; label: string }[] = [
   { key: 'all', label: '全部' },
@@ -18,6 +30,80 @@ const STATUS_FILTERS: { key: ProjectStatusFilter; label: string }[] = [
   { key: 'completed', label: '已完成' },
   { key: 'failed', label: '异常' },
 ];
+
+const MANAGEMENT_MODULES: {
+  key: ManagementModule;
+  title: string;
+  shortTitle: string;
+  icon: string;
+  description: string;
+}[] = [
+  {
+    key: 'projects',
+    title: '项目管理',
+    shortTitle: '项目管理',
+    icon: 'ri-folder-3-line',
+    description: '查看、继续编辑、删除、复制项目，管理每个短剧项目的创作进度。',
+  },
+  {
+    key: 'characters',
+    title: '人物资产管理',
+    shortTitle: '人物资产',
+    icon: 'ri-user-star-line',
+    description: '管理可复用的人物角色资产，包括角色图、角色描述、风格标签、使用记录。',
+  },
+  {
+    key: 'scenes',
+    title: '场景资产管理',
+    shortTitle: '场景资产',
+    icon: 'ri-landscape-line',
+    description: '管理可复用场景资产，包括场景图、场景描述、适用风格、使用记录。',
+  },
+  {
+    key: 'products',
+    title: '产品资产管理',
+    shortTitle: '产品资产',
+    icon: 'ri-archive-line',
+    description: '管理商品/产品资产，包括产品图、产品描述、卖点信息、使用记录。',
+  },
+];
+
+const ASSET_MODULE_META: Record<AssetModule, {
+  title: string;
+  icon: string;
+  emptyTitle: string;
+  emptyHint: string;
+  searchPlaceholder: string;
+}> = {
+  characters: {
+    title: '人物资产',
+    icon: 'ri-user-star-line',
+    emptyTitle: '暂无人物资产',
+    emptyHint: '项目中生成的人物角色，后续会在这里汇总展示。',
+    searchPlaceholder: '搜索人物名称、描述、来源项目',
+  },
+  scenes: {
+    title: '场景资产',
+    icon: 'ri-landscape-line',
+    emptyTitle: '暂无场景资产',
+    emptyHint: '项目中生成的场景资产，后续会在这里汇总展示。',
+    searchPlaceholder: '搜索场景名称、描述、来源项目',
+  },
+  products: {
+    title: '产品资产',
+    icon: 'ri-archive-line',
+    emptyTitle: '暂无产品资产',
+    emptyHint: '项目中生成的产品资产，后续会在这里汇总展示。',
+    searchPlaceholder: '搜索产品名称、描述、来源项目',
+  },
+};
+
+const DEFAULT_ASSET_FILTER: AssetFilterState = {
+  query: '',
+  imageStatus: 'all',
+  sourceProject: 'all',
+  sort: 'recent',
+};
 
 function overallStatusLabel(status: ShortDramaProjectDto['overall_status']): string {
   if (status === 'completed') return '已完成';
@@ -81,6 +167,93 @@ function formatUpdatedAt(value: string | null | undefined): string {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
 
+function assetKindLabel(assetType: string): string {
+  if (assetType === 'character') return '人物角色';
+  if (assetType === 'scene') return '场景资产';
+  if (assetType === 'product') return '产品资产';
+  return assetType || '资产';
+}
+
+function descriptionSummary(value: string | null | undefined): string {
+  const text = String(value || '').replace(/\s+/g, ' ').trim();
+  if (!text) return '暂无描述';
+  return text.length > 72 ? `${text.slice(0, 72)}...` : text;
+}
+
+function assetRecord(asset: AssetLibrarySummaryDto): Record<string, unknown> {
+  return asset as unknown as Record<string, unknown>;
+}
+
+function assetText(asset: AssetLibrarySummaryDto, keys: string[]): string {
+  const record = assetRecord(asset);
+  return keys
+    .map((key) => {
+      const value = record[key];
+      if (Array.isArray(value)) return value.join(' ');
+      if (value && typeof value === 'object') return JSON.stringify(value);
+      return String(value || '');
+    })
+    .join(' ')
+    .trim();
+}
+
+function assetDisplayName(asset: AssetLibrarySummaryDto): string {
+  return assetText(asset, ['name', 'title']) || `资产 ${asset.id}`;
+}
+
+function assetDisplayDescription(asset: AssetLibrarySummaryDto): string {
+  return assetText(asset, ['description', 'display_description', 'summary', 'selling_points']);
+}
+
+function assetSourceProjectName(asset: AssetLibrarySummaryDto): string {
+  return assetText(asset, ['source_project_name', 'project_name']) || `项目 ${asset.project_id}`;
+}
+
+function assetImageValue(asset: AssetLibrarySummaryDto): string {
+  const record = assetRecord(asset);
+  for (const key of ['image_url', 'imageUrl', 'thumbnail_url', 'preview_url']) {
+    const value = String(record[key] || '').trim();
+    if (value) return value;
+  }
+  return '';
+}
+
+function assetHasImage(asset: AssetLibrarySummaryDto): boolean {
+  return Boolean(assetImageValue(asset));
+}
+
+function assetTimeMs(asset: AssetLibrarySummaryDto): number {
+  const value = assetText(asset, ['updated_at', 'modified_at', 'created_at']);
+  const time = value ? new Date(value).getTime() : NaN;
+  return Number.isNaN(time) ? 0 : time;
+}
+
+function assetMatchesQuery(asset: AssetLibrarySummaryDto, query: string): boolean {
+  const normalized = query.trim().toLowerCase();
+  if (!normalized) return true;
+  const haystack = [
+    'name',
+    'title',
+    'description',
+    'display_description',
+    'source_project_name',
+    'project_name',
+    'asset_type',
+    'role',
+    'role_type',
+    'tag',
+    'tags',
+    'category',
+  ];
+  return assetText(asset, haystack).toLowerCase().includes(normalized);
+}
+
+function moduleToAssetType(module: AssetModule): 'character' | 'scene' | 'product' {
+  if (module === 'characters') return 'character';
+  if (module === 'scenes') return 'scene';
+  return 'product';
+}
+
 function projectSortTimeMs(p: ShortDramaProjectDto): number {
   const updated = p.updated_at ? new Date(p.updated_at).getTime() : NaN;
   if (!Number.isNaN(updated)) return updated;
@@ -108,6 +281,232 @@ function coverEmptyTitle(p: ShortDramaProjectDto): string {
   return hasAssetContext ? '暂无项目封面' : '待生成角色资产';
 }
 
+function AssetManagementEmptyState({
+  title,
+  icon,
+  hint,
+}: {
+  title: string;
+  icon: string;
+  hint: string;
+}) {
+  return (
+    <div className="rounded-3xl border border-dashed border-[#D1D1D6] bg-white px-6 py-12 text-center">
+      <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl bg-[#F5F5F7] text-[#6E6E73]">
+        <i className={`${icon} text-[24px]`} aria-hidden />
+      </div>
+      <p className="mt-4 text-[15px] font-bold text-[#1D1D1F]">{title}</p>
+      <p className="mx-auto mt-2 max-w-lg text-[13px] leading-relaxed text-[#8E8E93]">{hint}</p>
+    </div>
+  );
+}
+
+function AssetFilterEmptyState() {
+  return (
+    <div className="rounded-3xl border border-dashed border-[#D1D1D6] bg-white px-6 py-12 text-center">
+      <p className="text-[15px] font-bold text-[#1D1D1F]">没有匹配的资产</p>
+      <p className="mt-2 text-[13px] text-[#8E8E93]">可以调整筛选条件后重试。</p>
+    </div>
+  );
+}
+
+function AssetSummaryCard({ asset }: { asset: AssetLibrarySummaryDto }) {
+  const image = resolveAssetImageUrl(assetImageValue(asset)).src;
+  const updatedText =
+    formatUpdatedAt(assetText(asset, ['updated_at'])) ||
+    formatUpdatedAt(assetText(asset, ['modified_at'])) ||
+    formatUpdatedAt(assetText(asset, ['created_at'])) ||
+    '未知时间';
+  const isCharacter = asset.asset_type === 'character';
+  const isProduct = asset.asset_type === 'product';
+  const imageClass = isCharacter
+    ? 'object-contain object-top'
+    : isProduct
+      ? 'object-contain object-center'
+      : 'object-cover object-center';
+  const imageBg = isCharacter || isProduct ? 'bg-[#FAFAFB]' : 'bg-[#F5F5F7]';
+  return (
+    <div className="overflow-hidden rounded-2xl border border-[#EAEAEA] bg-white shadow-[0_8px_28px_rgba(15,23,42,0.04)]">
+      <div className={`relative h-44 ${imageBg}`}>
+        {image ? (
+          <img
+            src={image}
+            alt={assetDisplayName(asset)}
+            className={`h-full w-full ${imageClass}`}
+          />
+        ) : (
+          <div className="flex h-full w-full items-center justify-center px-4 text-center text-[12px] text-[#8E8E93]">
+            暂无资产图片
+          </div>
+        )}
+        <span className="absolute right-3 top-3 rounded-full border border-white/70 bg-white/90 px-2.5 py-1 text-[11px] font-semibold text-[#444444] backdrop-blur">
+          {assetKindLabel(asset.asset_type)}
+        </span>
+      </div>
+      <div className="p-4">
+        <h3 className="truncate text-[15px] font-bold text-[#1D1D1F]">{assetDisplayName(asset)}</h3>
+        <p
+          className="mt-2 min-h-[38px] overflow-hidden text-[12px] leading-relaxed text-[#6E6E73]"
+          style={{ display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical' }}
+        >
+          {descriptionSummary(assetDisplayDescription(asset))}
+        </p>
+        <div className="mt-3 space-y-1.5 rounded-xl bg-[#F7F8FA] p-3 text-[11.5px] text-[#6E6E73]">
+          <div className="flex items-center justify-between gap-3">
+            <span>来源项目</span>
+            <span className="truncate font-medium text-[#1D1D1F]">{assetSourceProjectName(asset)}</span>
+          </div>
+          <div className="flex items-center justify-between gap-3">
+            <span>更新时间</span>
+            <span className="font-medium text-[#1D1D1F]">{updatedText}</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function AssetPagination({
+  page,
+  totalPages,
+  totalCount,
+  onPageChange,
+}: {
+  page: number;
+  totalPages: number;
+  totalCount: number;
+  onPageChange: (page: number) => void;
+}) {
+  if (totalCount <= PAGE_SIZE) return null;
+  return (
+    <div className="mt-6 flex flex-col items-center justify-between gap-3 rounded-2xl border border-[#EAEAEA] bg-white px-4 py-3 sm:flex-row">
+      <p className="text-[12px] text-[#8E8E93]">
+        第 {page} / {totalPages} 页 · 共 {totalCount} 个资产
+      </p>
+      <div className="flex items-center gap-2">
+        <button
+          type="button"
+          disabled={page <= 1}
+          onClick={() => onPageChange(Math.max(1, page - 1))}
+          className="rounded-lg px-3 py-1.5 text-[12px] font-semibold"
+          style={{
+            background: page <= 1 ? '#F5F5F7' : '#ffffff',
+            color: page <= 1 ? '#AEAEB2' : '#444444',
+            border: '1px solid #EAEAEA',
+            cursor: page <= 1 ? 'not-allowed' : 'pointer',
+          }}
+        >
+          上一页
+        </button>
+        <span className="rounded-lg bg-[#F7F8FA] px-3 py-1.5 text-[12px] font-semibold text-[#1D1D1F]">{page}</span>
+        <button
+          type="button"
+          disabled={page >= totalPages}
+          onClick={() => onPageChange(Math.min(totalPages, page + 1))}
+          className="rounded-lg px-3 py-1.5 text-[12px] font-semibold"
+          style={{
+            background: page >= totalPages ? '#F5F5F7' : '#ffffff',
+            color: page >= totalPages ? '#AEAEB2' : '#444444',
+            border: '1px solid #EAEAEA',
+            cursor: page >= totalPages ? 'not-allowed' : 'pointer',
+          }}
+        >
+          下一页
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function AssetModulePanel({
+  module,
+  loading,
+  error,
+  assets,
+  filteredAssets,
+  pagedAssets,
+  filters,
+  sourceOptions,
+  page,
+  totalPages,
+  onFilterChange,
+  onPageChange,
+}: {
+  module: AssetModule;
+  loading: boolean;
+  error: string | null;
+  assets: AssetLibrarySummaryDto[];
+  filteredAssets: AssetLibrarySummaryDto[];
+  pagedAssets: AssetLibrarySummaryDto[];
+  filters: AssetFilterState;
+  sourceOptions: string[];
+  page: number;
+  totalPages: number;
+  onFilterChange: (patch: Partial<AssetFilterState>) => void;
+  onPageChange: (page: number) => void;
+}) {
+  const meta = ASSET_MODULE_META[module];
+  return (
+    <>
+      {loading ? <div className="text-[13px] text-[#8E8E93]">加载{meta.title}中...</div> : null}
+      {error ? <div className="rounded-xl border border-red-200 bg-red-50 p-4 text-[13px] text-red-800">{error}</div> : null}
+      {!loading && !error && assets.length > 0 ? (
+        <div className="mb-5 rounded-2xl border border-[#EAEAEA] bg-white p-4 shadow-[0_8px_28px_rgba(15,23,42,0.04)]">
+          <div className="grid grid-cols-1 gap-3 lg:grid-cols-[1fr_140px_160px_140px]">
+            <input
+              value={filters.query}
+              onChange={(event) => onFilterChange({ query: event.target.value })}
+              placeholder={meta.searchPlaceholder}
+              className="rounded-xl border border-[#EAEAEA] bg-[#FAFAFB] px-3 py-2 text-[13px] text-[#1D1D1F] outline-none focus:border-[#1D1D1F]"
+            />
+            <select
+              value={filters.imageStatus}
+              onChange={(event) => onFilterChange({ imageStatus: event.target.value as AssetImageFilter })}
+              className="rounded-xl border border-[#EAEAEA] bg-[#FAFAFB] px-3 py-2 text-[13px] text-[#1D1D1F] outline-none focus:border-[#1D1D1F]"
+            >
+              <option value="all">全部</option>
+              <option value="with_image">有图片</option>
+              <option value="without_image">无图片</option>
+            </select>
+            <select
+              value={filters.sourceProject}
+              onChange={(event) => onFilterChange({ sourceProject: event.target.value })}
+              disabled={sourceOptions.length === 0}
+              className="rounded-xl border border-[#EAEAEA] bg-[#FAFAFB] px-3 py-2 text-[13px] text-[#1D1D1F] outline-none focus:border-[#1D1D1F] disabled:text-[#AEAEB2]"
+            >
+              <option value="all">全部项目</option>
+              {sourceOptions.map((name) => (
+                <option key={name} value={name}>{name}</option>
+              ))}
+            </select>
+            <select
+              value={filters.sort}
+              onChange={(event) => onFilterChange({ sort: event.target.value as AssetSortKey })}
+              className="rounded-xl border border-[#EAEAEA] bg-[#FAFAFB] px-3 py-2 text-[13px] text-[#1D1D1F] outline-none focus:border-[#1D1D1F]"
+            >
+              <option value="recent">最近更新</option>
+              <option value="oldest">最早更新</option>
+              <option value="name_az">名称 A-Z</option>
+            </select>
+          </div>
+        </div>
+      ) : null}
+      {!loading && !error && assets.length === 0 ? (
+        <AssetManagementEmptyState title={meta.emptyTitle} icon={meta.icon} hint={meta.emptyHint} />
+      ) : null}
+      {!loading && !error && assets.length > 0 && filteredAssets.length === 0 ? <AssetFilterEmptyState /> : null}
+      {!loading && !error && filteredAssets.length > 0 ? (
+        <>
+          <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
+            {pagedAssets.map((asset) => <AssetSummaryCard key={asset.id} asset={asset} />)}
+          </div>
+          <AssetPagination page={page} totalPages={totalPages} totalCount={filteredAssets.length} onPageChange={onPageChange} />
+        </>
+      ) : null}
+    </>
+  );
+}
+
 export function ShortDramaProjectsPage() {
   const navigate = useNavigate();
   const location = useLocation();
@@ -116,7 +515,31 @@ export function ShortDramaProjectsPage() {
   const [error, setError] = useState<string | null>(null);
   const [projects, setProjects] = useState<ShortDramaProjectDto[]>([]);
   const [activeFilter, setActiveFilter] = useState<ProjectStatusFilter>('all');
+  const [activeModule, setActiveModule] = useState<ManagementModule>('projects');
+  const [assetLoading, setAssetLoading] = useState(false);
+  const [assetError, setAssetError] = useState<string | null>(null);
+  const [assetRows, setAssetRows] = useState<Record<AssetModule, AssetLibrarySummaryDto[]>>({
+    characters: [],
+    scenes: [],
+    products: [],
+  });
+  const [assetLoaded, setAssetLoaded] = useState<Record<AssetModule, boolean>>({
+    characters: false,
+    scenes: false,
+    products: false,
+  });
+  const [assetFilters, setAssetFilters] = useState<Record<AssetModule, AssetFilterState>>({
+    characters: { ...DEFAULT_ASSET_FILTER },
+    scenes: { ...DEFAULT_ASSET_FILTER },
+    products: { ...DEFAULT_ASSET_FILTER },
+  });
+  const [assetPages, setAssetPages] = useState<Record<AssetModule, number>>({
+    characters: 1,
+    scenes: 1,
+    products: 1,
+  });
   const [currentPage, setCurrentPage] = useState(1);
+  const selectedAssetModule: AssetModule = activeModule === 'projects' ? 'characters' : activeModule;
 
   useEffect(() => {
     if (!user?.id) return;
@@ -135,6 +558,26 @@ export function ShortDramaProjectsPage() {
       }
     })();
   }, [user?.id]);
+
+  useEffect(() => {
+    if (!user?.id || activeModule === 'projects') return;
+    const module = activeModule;
+    if (assetLoaded[module]) return;
+    setAssetLoading(true);
+    setAssetError(null);
+    void (async () => {
+      try {
+        const res = await listShortDramaGlobalAssetLibrary(user.id, moduleToAssetType(module));
+        setAssetRows((prev) => ({ ...prev, [module]: res.assets || [] }));
+        setAssetLoaded((prev) => ({ ...prev, [module]: true }));
+      } catch (e) {
+        const msg = e instanceof ShortDramaApiError ? e.message : e instanceof Error ? e.message : '加载资产列表失败';
+        setAssetError(msg);
+      } finally {
+        setAssetLoading(false);
+      }
+    })();
+  }, [activeModule, assetLoaded, user?.id]);
 
   const sorted = useMemo(
     () =>
@@ -174,6 +617,55 @@ export function ShortDramaProjectsPage() {
     return filteredProjects.slice(start, start + PAGE_SIZE);
   }, [currentPage, filteredProjects]);
 
+  const currentAssetRows = assetRows[selectedAssetModule] || [];
+  const currentAssetFilters = assetFilters[selectedAssetModule];
+  const currentAssetPage = assetPages[selectedAssetModule] || 1;
+
+  const currentAssetSourceOptions = useMemo(() => {
+    return Array.from(new Set(currentAssetRows.map((asset) => assetSourceProjectName(asset)).filter(Boolean))).sort((a, b) =>
+      a.localeCompare(b),
+    );
+  }, [currentAssetRows]);
+
+  const filteredAssets = useMemo(() => {
+    const filtered = currentAssetRows.filter((asset) => {
+      if (!assetMatchesQuery(asset, currentAssetFilters.query)) return false;
+      if (currentAssetFilters.imageStatus === 'with_image' && !assetHasImage(asset)) return false;
+      if (currentAssetFilters.imageStatus === 'without_image' && assetHasImage(asset)) return false;
+      if (currentAssetFilters.sourceProject !== 'all' && assetSourceProjectName(asset) !== currentAssetFilters.sourceProject) return false;
+      return true;
+    });
+    return [...filtered].sort((a, b) => {
+      if (currentAssetFilters.sort === 'name_az') {
+        return assetDisplayName(a).localeCompare(assetDisplayName(b));
+      }
+      const diff = assetTimeMs(a) - assetTimeMs(b);
+      if (currentAssetFilters.sort === 'oldest') return diff || assetDisplayName(a).localeCompare(assetDisplayName(b));
+      return -diff || assetDisplayName(a).localeCompare(assetDisplayName(b));
+    });
+  }, [currentAssetFilters, currentAssetRows]);
+
+  const assetTotalPages = Math.max(1, Math.ceil(filteredAssets.length / PAGE_SIZE));
+  const pagedAssets = useMemo(() => {
+    const start = (currentAssetPage - 1) * PAGE_SIZE;
+    return filteredAssets.slice(start, start + PAGE_SIZE);
+  }, [currentAssetPage, filteredAssets]);
+
+  const updateCurrentAssetFilter = (patch: Partial<AssetFilterState>) => {
+    setAssetFilters((prev) => ({
+      ...prev,
+      [selectedAssetModule]: {
+        ...prev[selectedAssetModule],
+        ...patch,
+      },
+    }));
+    setAssetPages((prev) => ({ ...prev, [selectedAssetModule]: 1 }));
+  };
+
+  const updateCurrentAssetPage = (page: number) => {
+    setAssetPages((prev) => ({ ...prev, [selectedAssetModule]: page }));
+  };
+
   useEffect(() => {
     setCurrentPage(1);
   }, [activeFilter]);
@@ -181,6 +673,12 @@ export function ShortDramaProjectsPage() {
   useEffect(() => {
     if (currentPage > totalPages) setCurrentPage(1);
   }, [currentPage, totalPages]);
+
+  useEffect(() => {
+    if (currentAssetPage > assetTotalPages) {
+      setAssetPages((prev) => ({ ...prev, [selectedAssetModule]: 1 }));
+    }
+  }, [assetTotalPages, currentAssetPage, selectedAssetModule]);
 
   return (
     <ShortDramaLayout headerMode="landing">
@@ -212,14 +710,50 @@ export function ShortDramaProjectsPage() {
           </div>
         ) : (
           <>
-        <div className="mb-6">
+        <div className="mb-7">
           <div>
-            <h1 className="text-2xl font-black text-[#1D1D1F]" style={{ fontFamily: "'Syne', sans-serif" }}>VibeClip 项目</h1>
-            <p className="mt-1 text-[13px] text-[#8E8E93]">继续编辑草稿、处理中和已完成的商品营销短视频项目。</p>
+            <span className="text-[11px] font-bold uppercase tracking-[0.2em] text-[#8E8E93]">Management Center</span>
+            <h1 className="mt-2 text-3xl font-black text-[#1D1D1F]" style={{ fontFamily: "'Syne', sans-serif" }}>VibeClip 管理中心</h1>
+            <p className="mt-2 max-w-2xl text-[13px] leading-relaxed text-[#8E8E93]">
+              统一管理短剧项目和未来可跨项目复用的人物、场景、产品资产。项目内资产生成与编辑仍在各项目 S3 页面完成。
+            </p>
           </div>
         </div>
-        {loading ? <div className="text-[13px] text-[#8E8E93]">加载中...</div> : null}
-        {error ? <div className="rounded-xl border border-red-200 bg-red-50 p-4 text-[13px] text-red-800">{error}</div> : null}
+
+        <div className="mb-7 grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-4">
+          {MANAGEMENT_MODULES.map((module) => {
+            const active = activeModule === module.key;
+            return (
+              <button
+                key={module.key}
+                type="button"
+                onClick={() => setActiveModule(module.key)}
+                className="rounded-2xl border p-4 text-left transition-all duration-150"
+                style={{
+                  background: active ? '#1D1D1F' : '#ffffff',
+                  borderColor: active ? '#1D1D1F' : '#EAEAEA',
+                  boxShadow: active ? '0 14px 34px rgba(29,29,31,0.16)' : '0 8px 28px rgba(15,23,42,0.04)',
+                }}
+              >
+                <div
+                  className="mb-3 flex h-10 w-10 items-center justify-center rounded-xl"
+                  style={{ background: active ? 'rgba(255,255,255,0.12)' : '#F5F5F7', color: active ? '#ffffff' : '#6E6E73' }}
+                >
+                  <i className={`${module.icon} text-[20px]`} aria-hidden />
+                </div>
+                <h2 className="text-[14px] font-bold" style={{ color: active ? '#ffffff' : '#1D1D1F' }}>{module.title}</h2>
+                <p className="mt-2 text-[12px] leading-relaxed" style={{ color: active ? 'rgba(255,255,255,0.72)' : '#8E8E93' }}>
+                  {module.description}
+                </p>
+              </button>
+            );
+          })}
+        </div>
+
+        {activeModule === 'projects' ? (
+          <>
+            {loading ? <div className="text-[13px] text-[#8E8E93]">加载中...</div> : null}
+            {error ? <div className="rounded-xl border border-red-200 bg-red-50 p-4 text-[13px] text-red-800">{error}</div> : null}
           <div className="mb-5 flex flex-wrap gap-2">
             {STATUS_FILTERS.map((filter) => {
               const active = activeFilter === filter.key;
@@ -367,6 +901,53 @@ export function ShortDramaProjectsPage() {
               </div>
             </div>
           ) : null}
+          </>
+        ) : activeModule === 'characters' ? (
+          <AssetModulePanel
+            module="characters"
+            loading={assetLoading}
+            error={assetError}
+            assets={assetRows.characters}
+            filteredAssets={filteredAssets}
+            pagedAssets={pagedAssets}
+            filters={currentAssetFilters}
+            sourceOptions={currentAssetSourceOptions}
+            page={currentAssetPage}
+            totalPages={assetTotalPages}
+            onFilterChange={updateCurrentAssetFilter}
+            onPageChange={updateCurrentAssetPage}
+          />
+        ) : activeModule === 'scenes' ? (
+          <AssetModulePanel
+            module="scenes"
+            loading={assetLoading}
+            error={assetError}
+            assets={assetRows.scenes}
+            filteredAssets={filteredAssets}
+            pagedAssets={pagedAssets}
+            filters={currentAssetFilters}
+            sourceOptions={currentAssetSourceOptions}
+            page={currentAssetPage}
+            totalPages={assetTotalPages}
+            onFilterChange={updateCurrentAssetFilter}
+            onPageChange={updateCurrentAssetPage}
+          />
+        ) : (
+          <AssetModulePanel
+            module="products"
+            loading={assetLoading}
+            error={assetError}
+            assets={assetRows.products}
+            filteredAssets={filteredAssets}
+            pagedAssets={pagedAssets}
+            filters={currentAssetFilters}
+            sourceOptions={currentAssetSourceOptions}
+            page={currentAssetPage}
+            totalPages={assetTotalPages}
+            onFilterChange={updateCurrentAssetFilter}
+            onPageChange={updateCurrentAssetPage}
+          />
+        )}
           </>
         )}
         </div>

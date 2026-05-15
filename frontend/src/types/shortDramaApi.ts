@@ -638,6 +638,25 @@ export type AssetLibraryListResponseDto = {
   assets: AssetLibraryItemDto[];
 };
 
+export type AssetLibrarySummaryDto = {
+  id: number;
+  project_id: number;
+  project_name: string;
+  asset_type: 'character' | 'scene' | 'product' | string;
+  name: string;
+  description?: string | null;
+  image_url?: string | null;
+  source: string;
+  created_at?: string | null;
+  updated_at?: string | null;
+};
+
+export type AssetLibrarySummaryListResponseDto = {
+  user_id: number;
+  asset_type: string;
+  assets: AssetLibrarySummaryDto[];
+};
+
 export type CreateAssetLibraryBody = {
   project_id: number;
   asset_type: 'character' | 'scene' | 'product';
