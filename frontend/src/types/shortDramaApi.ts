@@ -414,6 +414,8 @@ export type PipelineSummaryDto = {
   lightweight?: boolean;
   has_product_context?: boolean;
   has_story_blueprint?: boolean;
+  has_asset_generation_specs?: boolean;
+  asset_generation_specs_count?: number;
   asset_counts?: { characters: number; scenes: number; products: number };
   segment_scripts_count?: number;
   product_context?: PipelineProductContextBlockDto | null;

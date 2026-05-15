@@ -160,5 +160,7 @@ class PipelineSummaryResponse(BaseModel):
     lightweight: bool = False
     has_product_context: Optional[bool] = None
     has_story_blueprint: Optional[bool] = None
+    has_asset_generation_specs: bool = False
+    asset_generation_specs_count: int = 0
     asset_counts: Optional[Dict[str, int]] = None
     segment_scripts_count: Optional[int] = None

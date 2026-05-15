@@ -430,14 +430,9 @@ function extractFailedAssetIds(errors: Record<string, unknown>[] | undefined): S
 }
 
 function pipelineHasS2AssetGenerationSpecs(pipeline: PipelineSummaryDto): boolean {
-  const directHas = (pipeline as unknown as { has_asset_generation_specs?: unknown }).has_asset_generation_specs;
-  if (typeof directHas === 'boolean') return directHas;
-  const directCount = (pipeline as unknown as { asset_generation_specs_count?: unknown }).asset_generation_specs_count;
+  const directCount = pipeline.asset_generation_specs_count;
   if (typeof directCount === 'number') return directCount > 0;
-  if (typeof directCount === 'string') {
-    const n = Number(directCount);
-    if (Number.isFinite(n)) return n > 0;
-  }
+  if (pipeline.has_asset_generation_specs === true) return true;
   const specs = pipeline.story_blueprint?.blueprint?.asset_generation_specs;
   return Array.isArray(specs) && specs.length > 0;
 }

@@ -580,6 +580,12 @@ async def get_pipeline(project_id: int, lightweight: bool = Query(default=False)
             "scenes": len(scenes),
             "products": len(products),
         }
+        asset_generation_specs_count = 0
+        if sb and isinstance(sb.blueprint_json, dict):
+            specs = sb.blueprint_json.get("asset_generation_specs")
+            if isinstance(specs, list):
+                asset_generation_specs_count = len(specs)
+        has_asset_generation_specs = asset_generation_specs_count > 0
 
         def char_row(c) -> dict:
             return {
@@ -807,6 +813,8 @@ async def get_pipeline(project_id: int, lightweight: bool = Query(default=False)
                 lightweight=True,
                 has_product_context=pc is not None,
                 has_story_blueprint=sb is not None,
+                has_asset_generation_specs=has_asset_generation_specs,
+                asset_generation_specs_count=asset_generation_specs_count,
                 asset_counts=asset_counts,
                 image_url_filled=image_url_filled,
                 asset_rows_total=asset_rows_total,
@@ -849,6 +857,8 @@ async def get_pipeline(project_id: int, lightweight: bool = Query(default=False)
             lightweight=False,
             has_product_context=pc is not None,
             has_story_blueprint=sb is not None,
+            has_asset_generation_specs=has_asset_generation_specs,
+            asset_generation_specs_count=asset_generation_specs_count,
             asset_counts=asset_counts,
             segment_scripts_count=len(segs),
             product_context=(
