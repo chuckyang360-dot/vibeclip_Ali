@@ -22,6 +22,7 @@ export function ShortDramaStepFourPage() {
     segmentScriptsError,
     segmentScriptsBusyError,
     segmentScriptsBlocked,
+    autoMaterializingSegments,
     generateError,
     mergeError,
     segments,
@@ -38,6 +39,7 @@ export function ShortDramaStepFourPage() {
     doneCount,
     displayTotal,
     projectStatus,
+    isVideoRenderActive,
     assetLibraryVm,
     stepFourVideoLanguage,
     handleGenerateAll,
@@ -72,17 +74,22 @@ export function ShortDramaStepFourPage() {
     if (st === 'completed' || projectStatus === 'completed') {
       return '项目状态：已完成（含最终成片）';
     }
-    if (st === 'final_rendering') return '项目状态：最终成片合成中…';
+    if (st === 'final_rendering' && isVideoRenderActive) return '项目状态：最终成片合成中…';
     if (st === 'segments_complete_pending_final') return '项目状态：片段已全部就绪，可合成完整视频';
-    if (st === 'segment_rendering') return '项目状态：片段视频生成中…';
+    if (st === 'segment_rendering' && isVideoRenderActive) return '项目状态：片段视频生成中…';
     if (projectStatus === 'video_segments_ready') return '项目状态：片段已齐，待合成最终成片';
-    if (projectStatus === 'video_rendering') return '项目状态：视频流程进行中（片段或成片）';
+    if (isVideoRenderActive && projectStatus === 'video_rendering') return '项目状态：片段视频生成中…';
+    if (hasBackendSegmentScripts && displayTotal > 0 && doneCount < displayTotal) return '片段脚本已准备，等待生成视频';
     return '';
   }, [
     pipeline?.final_render_status,
     pipelineVm.currentVideoStage,
     projectStatus,
     finalErrorDisplay,
+    isVideoRenderActive,
+    hasBackendSegmentScripts,
+    displayTotal,
+    doneCount,
   ]);
 
   const videoActionsDisabled = !hasBackendSegmentScripts || !canGenerateVideos || batchGenerating;
@@ -121,11 +128,11 @@ export function ShortDramaStepFourPage() {
           <div className="flex flex-col items-center gap-3">
             <i className="ri-loader-4-line text-2xl animate-spin" style={{ color: '#1D1D1F' }} />
             <p className="text-[13px]" style={{ color: '#8E8E93' }}>
-              {phase === 'generating_segments' ? '正在生成片段脚本...' : SHORT_DRAMA_UI.loading.pipeline}
+              {phase === 'generating_segments' ? '正在准备片段数据...' : SHORT_DRAMA_UI.loading.pipeline}
             </p>
             {phase === 'generating_segments' ? (
               <p className="text-[12px] text-center max-w-md" style={{ color: '#8E8E93' }}>
-                正在生成导演分镜，正在结合商品理解、剧本和资产，生成可执行镜头。
+                正在同步已生成的片段脚本，请稍候。
               </p>
             ) : null}
           </div>
@@ -173,6 +180,7 @@ export function ShortDramaStepFourPage() {
         <div className="flex flex-col flex-1 overflow-hidden">
           {(segmentScriptsBlocked ||
             segmentScriptsError ||
+            autoMaterializingSegments ||
             !canGenerateVideos ||
             generateError ||
             mergeError ||
@@ -187,6 +195,11 @@ export function ShortDramaStepFourPage() {
               {segmentScriptsError && (
                 <div className="text-[12px] px-3 py-2 rounded-lg" style={{ background: 'rgba(220,38,38,0.06)', color: '#B91C1C', border: '1px solid rgba(220,38,38,0.2)' }}>
                   {segmentScriptsBusyError ? '当前服务繁忙，请稍后重试。' : '生成失败，请稍后重试。'}
+                </div>
+              )}
+              {autoMaterializingSegments && (
+                <div className="text-[12px] px-3 py-2 rounded-lg" style={{ background: 'rgba(51,65,85,0.06)', color: '#334155', border: '1px solid rgba(51,65,85,0.15)' }}>
+                  正在准备片段数据...
                 </div>
               )}
               {hasBackendSegmentScripts && !canGenerateVideos && (
@@ -294,10 +307,12 @@ export function ShortDramaStepFourPage() {
             <div className="flex-1 flex flex-col items-center justify-center px-8 py-12" style={{ background: '#ffffff' }}>
               <i className="ri-file-list-3-line text-3xl mb-3" style={{ color: '#AEAEB2' }} />
               <p className="text-[14px] font-semibold text-center mb-1" style={{ color: '#1D1D1F' }}>
-                片段脚本暂未生成
+                {autoMaterializingSegments ? '正在准备片段数据...' : '片段脚本暂未生成'}
               </p>
               <p className="text-[12px] text-center max-w-md" style={{ color: '#8E8E93' }}>
-                {segmentScriptsError
+                {autoMaterializingSegments
+                  ? '正在同步 S2 已生成的片段脚本，完成后会自动展示。'
+                  : segmentScriptsError
                   ? '本次生成未完成，项目内容已保存。'
                   : segmentScriptsBlocked || '请先完成前置流程，或返回「角色场景」页确认资产规范已生成。'}
               </p>

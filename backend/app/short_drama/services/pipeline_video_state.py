@@ -8,6 +8,37 @@ from ..models import RenderJob
 from ..utils.enums import RenderJobStatus, RenderTargetType
 from .read_models import all_segment_scripts_have_video, latest_final_render_job, latest_final_video_url, list_segment_scripts
 
+_ACTIVE_RENDER_JOB_STATUSES = frozenset(
+    {
+        RenderJobStatus.QUEUED.value,
+        RenderJobStatus.PENDING.value,
+        RenderJobStatus.RUNNING.value,
+        "submitted",
+        "polling",
+        "processing",
+    }
+)
+
+
+def _active_render_jobs(db: Session, project_id: int) -> list[RenderJob]:
+    return (
+        db.query(RenderJob)
+        .filter(
+            RenderJob.project_id == project_id,
+            RenderJob.target_type.in_(
+                (
+                    RenderTargetType.SEGMENT.value,
+                    RenderTargetType.SEGMENT_VIDEO.value,
+                    RenderTargetType.FINAL.value,
+                    RenderTargetType.MERGED_VIDEO.value,
+                )
+            ),
+            RenderJob.status.in_(tuple(_ACTIVE_RENDER_JOB_STATUSES)),
+        )
+        .order_by(RenderJob.id.desc())
+        .all()
+    )
+
 
 def build_pipeline_video_state(db: Session, project_id: int, project_status: str) -> dict:
     segs = list_segment_scripts(db, project_id)
@@ -16,6 +47,16 @@ def build_pipeline_video_state(db: Session, project_id: int, project_status: str
     final_url = latest_final_video_url(db, project_id)
     has_final_video = bool((final_url or "").strip())
     final_job = latest_final_render_job(db, project_id)
+    active_jobs = _active_render_jobs(db, project_id)
+    has_active_render_job = bool(active_jobs)
+    has_active_segment_render_job = any(
+        job.target_type in (RenderTargetType.SEGMENT.value, RenderTargetType.SEGMENT_VIDEO.value)
+        for job in active_jobs
+    )
+    has_active_final_render_job = any(
+        job.target_type in (RenderTargetType.FINAL.value, RenderTargetType.MERGED_VIDEO.value)
+        for job in active_jobs
+    )
 
     final_render_error: str | None = None
     if final_job and (final_job.status or "").lower() == RenderJobStatus.FAILED.value:
@@ -41,7 +82,7 @@ def build_pipeline_video_state(db: Session, project_id: int, project_status: str
         current_video_stage = "completed"
     elif final_render_status == "failed":
         current_video_stage = "final_failed"
-    elif final_render_status == "running":
+    elif final_render_status == "running" or has_active_final_render_job:
         current_video_stage = "final_rendering"
     elif has_final_video:
         current_video_stage = "completed"
@@ -50,7 +91,7 @@ def build_pipeline_video_state(db: Session, project_id: int, project_status: str
         "video_rendering",
     ):
         current_video_stage = "segments_complete_pending_final"
-    elif project_status == "video_rendering":
+    elif project_status == "video_rendering" and has_active_segment_render_job:
         current_video_stage = "segment_rendering"
     elif project_status == "video_segments_ready":
         current_video_stage = "segments_complete_pending_final"
@@ -65,6 +106,9 @@ def build_pipeline_video_state(db: Session, project_id: int, project_status: str
         "final_render_error": final_render_error,
         "final_render_job_id": final_job.id if final_job else None,
         "segment_count": segment_count,
+        "has_active_render_job": has_active_render_job,
+        "video_render_task_running": has_active_render_job,
+        "active_render_jobs_count": len(active_jobs),
     }
 
 

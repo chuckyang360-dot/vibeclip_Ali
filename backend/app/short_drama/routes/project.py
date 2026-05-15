@@ -230,6 +230,57 @@ def _project_to_response(
     )
 
 
+def _project_to_lightweight_response(
+    db: Session,
+    p: ShortDramaProject,
+    *,
+    effective_status: str | None,
+    suggested_status: str | None,
+    status_recoverable: bool,
+    task_running: bool,
+    current_stage_value: str,
+    has_final_video: bool,
+    has_all_segment_videos: bool,
+    segment_video_count: int,
+    segment_video_total: int,
+) -> ShortDramaProjectResponse:
+    step_status = {k: v for k, v in normalize_step_status(p.step_status).items() if isinstance(v, str)}
+    final_video = latest_final_video_url(db, p.id)
+    return ShortDramaProjectResponse(
+        id=p.id,
+        user_id=p.user_id,
+        project_name=p.project_name,
+        status=p.status,
+        effective_status=effective_status,
+        suggested_status=suggested_status,
+        status_recoverable=status_recoverable,
+        duration=p.duration,
+        format=p.format,
+        style=_normalize_story_style(p.style),
+        visual_style=p.visual_style,
+        aspect_ratio=p.aspect_ratio,
+        workflow_language=p.workflow_language,
+        video_language=p.video_language,
+        last_active_step=p.last_active_step,
+        step_status=step_status,
+        overall_status=compute_overall_status(db, p, final_video_url=final_video),
+        task_running=task_running,
+        current_stage=current_stage_value or None,
+        failed_stage=failed_stage(p) or None,
+        error_message=error_message(p) or None,
+        error_type=error_type(p) or None,
+        can_retry=can_retry(p),
+        final_video_url=_public_media_url(final_video),
+        has_final_video=has_final_video,
+        has_all_segment_videos=has_all_segment_videos,
+        segment_video_count=segment_video_count,
+        segment_video_total=segment_video_total,
+        cover_asset=ProjectCoverAsset(asset_type=None, name=None, image_url=None, status="missing"),
+        created_at=p.created_at,
+        updated_at=p.updated_at,
+    )
+
+
 @router.post("", response_model=CreateShortDramaProjectResponse)
 async def create_project(body: CreateShortDramaProjectRequest, db: Session = Depends(get_db)):
     log_api_request(
@@ -507,7 +558,10 @@ async def touch_project_step(
 @router.get("/{project_id}/pipeline", response_model=PipelineSummaryResponse)
 async def get_pipeline(project_id: int, lightweight: bool = Query(default=False), db: Session = Depends(get_db)):
     started_at = time.perf_counter()
-    log_api_request(logger, "GET /project/{id}/pipeline", project_id=project_id)
+    if lightweight:
+        logger.debug("[PIPELINE_LIGHTWEIGHT_REQUEST] project_id=%s", project_id)
+    else:
+        log_api_request(logger, "GET /project/{id}/pipeline", project_id=project_id)
     try:
         project = db.query(ShortDramaProject).filter(ShortDramaProject.id == project_id).first()
         if not project:
@@ -613,12 +667,20 @@ async def get_pipeline(project_id: int, lightweight: bool = Query(default=False)
             str(item.get("segment_id")): str(item.get("video_url") or "")
             for item in seg_payload
         }
-        logger.info(
-            "[PIPELINE_SEGMENT_VIDEO_URLS] project_id=%s segment_video_urls=%s final_video_url=%s",
-            project_id,
-            segment_video_map,
-            final_u or "",
-        )
+        if lightweight:
+            logger.debug(
+                "[PIPELINE_SEGMENT_VIDEO_URLS] project_id=%s segment_video_urls=%s final_video_url=%s",
+                project_id,
+                segment_video_map,
+                final_u or "",
+            )
+        else:
+            logger.info(
+                "[PIPELINE_SEGMENT_VIDEO_URLS] project_id=%s segment_video_urls=%s final_video_url=%s",
+                project_id,
+                segment_video_map,
+                final_u or "",
+            )
 
         def _nonempty_url(u: str | None) -> bool:
             return bool((u or "").strip())
@@ -639,17 +701,21 @@ async def get_pipeline(project_id: int, lightweight: bool = Query(default=False)
         suggested_status = str(effective_info.get("suggested_status") or "")
         status_recoverable = bool(effective_info.get("status_recoverable", False))
         current_status = str(project.status or "").strip()
+        has_active_render_job = bool(video_state.get("has_active_render_job"))
         task_running = bool(effective_info.get("task_running", False))
+        video_render_task_running = has_active_render_job
         current_stage = str(effective_info.get("current_stage") or "").strip()
-        logger.info(
+        log_status = logger.debug if lightweight else logger.info
+        log_status(
             "[PROJECT_EFFECTIVE_STATUS] project_id=%s raw_status=%s effective_status=%s task_running=%s "
-            "current_stage=%s asset_rows_total=%s image_url_filled=%s segment_scripts_count=%s "
-            "has_all_segment_videos=%s has_final_video=%s status_recoverable=%s",
+            "current_stage=%s has_active_render_job=%s asset_rows_total=%s image_url_filled=%s "
+            "segment_scripts_count=%s has_all_segment_videos=%s has_final_video=%s status_recoverable=%s",
             project_id,
             current_status,
             effective_status,
             task_running,
             current_stage,
+            has_active_render_job,
             asset_rows_total,
             image_url_filled,
             segment_scripts_count,
@@ -657,7 +723,7 @@ async def get_pipeline(project_id: int, lightweight: bool = Query(default=False)
             has_final_video,
             status_recoverable,
         )
-        logger.info(
+        log_status(
             "[PROJECT_STATUS_ARTIFACT_CHECK] project_id=%s current_status=%s suggested_status=%s status_recoverable=%s "
             "asset_rows_total=%s image_url_filled=%s segment_scripts_count=%s has_final_video=%s "
             "has_all_segment_videos=%s",
@@ -672,44 +738,67 @@ async def get_pipeline(project_id: int, lightweight: bool = Query(default=False)
             has_all_segment_videos,
         )
 
-        log_api_success(
-            logger,
-            "GET /project/{id}/pipeline",
-            project_id=project_id,
-            status=project.status,
-            has_product_context=has_product_context,
-            has_story_blueprint=has_story_blueprint,
-            asset_counts={
-                "characters": len(chars),
-                "scenes": len(scenes),
-                "products": len(products),
-            },
-            image_url_filled=image_url_filled,
-            asset_rows_total=asset_rows_total,
-            segment_scripts_count=segment_scripts_count,
-            has_final_video=has_final_video,
-            final_video_url=final_u or "",
-        )
-        logger.info(
+        if not lightweight:
+            log_api_success(
+                logger,
+                "GET /project/{id}/pipeline",
+                project_id=project_id,
+                status=project.status,
+                has_product_context=has_product_context,
+                has_story_blueprint=has_story_blueprint,
+                asset_counts={
+                    "characters": len(chars),
+                    "scenes": len(scenes),
+                    "products": len(products),
+                },
+                image_url_filled=image_url_filled,
+                asset_rows_total=asset_rows_total,
+                segment_scripts_count=segment_scripts_count,
+                has_final_video=has_final_video,
+                final_video_url=final_u or "",
+            )
+        log_status(
             "[PIPELINE_VIDEO_STATE] project_id=%s has_all_segment_videos=%s has_final_video=%s "
-            "final_render_status=%s project_status=%s current_video_stage=%s",
+            "final_render_status=%s project_status=%s current_video_stage=%s has_active_render_job=%s",
             project_id,
             video_state.get("has_all_segment_videos"),
             video_state.get("has_final_video"),
             video_state.get("final_render_status"),
             project.status,
             video_state.get("current_video_stage"),
+            has_active_render_job,
         )
 
         if lightweight:
-            logger.info("[PIPELINE_LIGHTWEIGHT_QUERY] project_id=%s", project_id)
+            minimal_segment_statuses = [
+                {
+                    "id": item.get("id"),
+                    "segment_id": item.get("segment_id"),
+                    "version": item.get("version"),
+                    "script": {},
+                    "video_url": item.get("video_url"),
+                    "video_render": {
+                        "video_url": item.get("video_url"),
+                        "render_job_id": item.get("render_job_id"),
+                        "status": item.get("render_status"),
+                        "error": item.get("render_error"),
+                    },
+                    "render_status": item.get("render_status"),
+                    "render_job_id": item.get("render_job_id"),
+                    "render_error": item.get("render_error"),
+                    "created_at": item.get("created_at"),
+                }
+                for item in seg_payload
+            ]
             response = PipelineSummaryResponse(
-                project=_project_to_response(
+                project=_project_to_lightweight_response(
                     db,
                     project,
                     effective_status=effective_status,
                     suggested_status=suggested_status,
                     status_recoverable=status_recoverable,
+                    task_running=task_running,
+                    current_stage_value=current_stage,
                     has_final_video=has_final_video,
                     has_all_segment_videos=has_all_segment_videos,
                     segment_video_count=sum(1 for item in seg_payload if str(item.get("video_url") or "").strip()),
@@ -729,9 +818,20 @@ async def get_pipeline(project_id: int, lightweight: bool = Query(default=False)
                 final_render_status=video_state.get("final_render_status"),
                 final_render_error=video_state.get("final_render_error"),
                 final_render_job_id=video_state.get("final_render_job_id"),
+                has_active_render_job=has_active_render_job,
+                video_render_task_running=video_render_task_running,
+                segment_render_statuses=minimal_segment_statuses,
+                segment_scripts=minimal_segment_statuses,
             )
             elapsed_ms = int((time.perf_counter() - started_at) * 1000)
-            logger.info("[PIPELINE_QUERY_DURATION] project_id=%s elapsed_ms=%s", project_id, elapsed_ms)
+            logger.debug(
+                "[PIPELINE_LIGHTWEIGHT_QUERY_DURATION] project_id=%s elapsed_ms=%s active_render=%s segment_videos=%s/%s",
+                project_id,
+                elapsed_ms,
+                has_active_render_job,
+                response.project.segment_video_count,
+                response.project.segment_video_total,
+            )
             return response
 
         response = PipelineSummaryResponse(
@@ -792,6 +892,18 @@ async def get_pipeline(project_id: int, lightweight: bool = Query(default=False)
             final_render_status=video_state.get("final_render_status"),
             final_render_error=video_state.get("final_render_error"),
             final_render_job_id=video_state.get("final_render_job_id"),
+            has_active_render_job=has_active_render_job,
+            video_render_task_running=video_render_task_running,
+            segment_render_statuses=[
+                {
+                    "segment_id": item.get("segment_id"),
+                    "video_url": item.get("video_url"),
+                    "render_status": item.get("render_status"),
+                    "render_job_id": item.get("render_job_id"),
+                    "render_error": item.get("render_error"),
+                }
+                for item in seg_payload
+            ],
             image_url_filled=image_url_filled,
             asset_rows_total=asset_rows_total,
         )

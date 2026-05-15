@@ -89,6 +89,7 @@ class ShortDramaProjectResponse(BaseModel):
     last_active_step: Optional[Literal["step_0", "step_1", "step_2", "step_3", "step_4", "overview"]] = None
     step_status: Dict[str, str] = Field(default_factory=dict)
     overall_status: Optional[Literal["draft", "stale", "generating", "completed", "failed"]] = None
+    task_running: Optional[bool] = None
     current_stage: Optional[str] = None
     failed_stage: Optional[str] = None
     error_message: Optional[str] = None
@@ -149,6 +150,9 @@ class PipelineSummaryResponse(BaseModel):
     final_render_status: Optional[str] = None
     final_render_error: Optional[str] = None
     final_render_job_id: Optional[int] = None
+    has_active_render_job: bool = False
+    video_render_task_running: bool = False
+    segment_render_statuses: List[Dict[str, Any]] = Field(default_factory=list)
     #: 角色+场景+产品资产行中 image_url 非空的数量（与 DB 一致）
     image_url_filled: int = 0
     #: 角色+场景+产品资产总行数

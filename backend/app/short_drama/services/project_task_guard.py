@@ -155,7 +155,7 @@ def compute_project_effective_status(db: Session, project: ShortDramaProject) ->
     lock_acquired_at = runtime.get("lock_acquired_at")
     lock_dt = _parse_datetime_iso(lock_acquired_at)
     lock_age_seconds = int((_utc_now() - lock_dt).total_seconds()) if lock_dt else None
-    active_render_jobs_count = _active_s4_render_jobs_count(db, project.id) if current_stage_value == "s4_video" else 0
+    active_render_jobs_count = _active_s4_render_jobs_count(db, project.id)
     suggested_status, suggested_reason, stats = _infer_status_from_artifacts(db, project.id)
     treat_running = False
     if task_running:
@@ -166,8 +166,10 @@ def compute_project_effective_status(db: Session, project: ShortDramaProject) ->
         elif lock_dt is not None and lock_age_seconds is not None and lock_age_seconds < _RUNNING_LOCK_TIMEOUT_SECONDS:
             treat_running = True
     effective_status = "processing" if treat_running else suggested_status
+    if current_status == "video_rendering" and active_render_jobs_count > 0:
+        effective_status = "video_rendering"
     status_recoverable = bool(
-        current_status == "processing"
+        current_status in {"processing", "video_rendering"}
         and not treat_running
         and effective_status != "processing"
         and effective_status != current_status

@@ -35,16 +35,40 @@ const VIDEO_ALLOWED_STATUSES = new Set([
 ]);
 
 const PIPELINE_POLLING_ACTIVE_STATUSES = new Set([
-  'video_rendering',
   'segment_rendering',
   'generating',
   'pending',
+  'queued',
+  'running',
 ]);
+
+const STATUS_REFRESH_ERROR_MESSAGE = '片段状态暂时无法刷新，可稍后重试。';
 
 function pipelineHasSegmentScripts(p: PipelineSummaryDto | null): boolean {
   const rows = p?.segment_scripts;
   if (!Array.isArray(rows) || rows.length === 0) return false;
   return rows.some((r) => r != null && typeof r === 'object' && 'segment_id' in r);
+}
+
+function pipelineHasVideoGenerationSpecs(p: PipelineSummaryDto | null): boolean {
+  const blueprint = p?.story_blueprint?.blueprint;
+  const specs = blueprint?.video_generation_specs;
+  return Array.isArray(specs) && specs.length > 0;
+}
+
+function pipelineHasAnySegmentVideo(p: PipelineSummaryDto | null | undefined): boolean {
+  const rows = p?.segment_scripts;
+  if (!Array.isArray(rows)) return false;
+  return rows.some((row) => {
+    const videoUrl = typeof row?.video_url === 'string' ? row.video_url.trim() : '';
+    const renderStatus = String(row?.render_status || '').trim().toLowerCase();
+    const nested = row?.video_render;
+    const nestedUrl =
+      nested && typeof nested === 'object' && typeof (nested as { video_url?: unknown }).video_url === 'string'
+        ? (nested as { video_url: string }).video_url.trim()
+        : '';
+    return Boolean(videoUrl || nestedUrl || renderStatus === 'completed');
+  });
 }
 
 function pipelineAssetsCount(p: PipelineSummaryDto | null | undefined): number {
@@ -68,6 +92,26 @@ function mergeLightweightPipeline(
   if (!next.lightweight) return next;
   if (!prev) return next;
 
+  const minimalSegments = Array.isArray(next.segment_scripts) ? next.segment_scripts : [];
+  const segmentUpdates = new Map(minimalSegments.map((row) => [String(row.segment_id || ''), row]));
+  const mergedSegments = Array.isArray(prev.segment_scripts)
+    ? prev.segment_scripts.map((row) => {
+      const update = segmentUpdates.get(String(row.segment_id || ''));
+      if (!update) return row;
+      return {
+        ...row,
+        video_url: update.video_url ?? row.video_url,
+        video_render: {
+          ...(row.video_render || {}),
+          ...(update.video_render || {}),
+        },
+        render_status: update.render_status ?? row.render_status,
+        render_job_id: update.render_job_id ?? row.render_job_id,
+        render_error: update.render_error ?? row.render_error,
+      };
+    })
+    : minimalSegments;
+
   const merged: PipelineSummaryDto = {
     ...prev,
     ...next,
@@ -76,7 +120,7 @@ function mergeLightweightPipeline(
       ...next.project,
     },
     assets: prev.assets,
-    segment_scripts: prev.segment_scripts,
+    segment_scripts: mergedSegments,
     product_context: prev.product_context,
     story_blueprint: prev.story_blueprint,
   };
@@ -94,6 +138,17 @@ function mergeLightweightPipeline(
   return merged;
 }
 
+function pipelineHasActiveVideoWork(p: PipelineSummaryDto | null | undefined): boolean {
+  if (!p) return false;
+  if (p.has_active_render_job === true || p.video_render_task_running === true) return true;
+  const activeStatuses = PIPELINE_POLLING_ACTIVE_STATUSES;
+  const rows = p.segment_render_statuses ?? p.segment_scripts ?? [];
+  return rows.some((row) => {
+    const status = String(row?.render_status || '').trim().toLowerCase();
+    return Boolean(row?.render_job_id && activeStatuses.has(status));
+  });
+}
+
 export type StepFourPhase = 'idle' | 'no_project' | 'loading' | 'generating_segments' | 'ready' | 'error';
 
 export function useStepFourPage() {
@@ -107,6 +162,7 @@ export function useStepFourPage() {
   const [segmentScriptsErrorRaw, setSegmentScriptsErrorRaw] = useState<string | null>(null);
   const [segmentScriptsBusyError, setSegmentScriptsBusyError] = useState(false);
   const [segmentScriptsBlocked, setSegmentScriptsBlocked] = useState<string | null>(null);
+  const [autoMaterializingSegments, setAutoMaterializingSegments] = useState(false);
   const [generateError, setGenerateError] = useState<string | null>(null);
   const [mergeError, setMergeError] = useState<string | null>(null);
 
@@ -165,8 +221,6 @@ export function useStepFourPage() {
 
   const shouldKeepPipelinePolling = useCallback((p: PipelineSummaryDto | null | undefined): boolean => {
     if (!p) return false;
-    const stage = String(p.current_video_stage || '').trim();
-    if (stage === 'segment_rendering' || stage === 'final_rendering') return true;
 
     const effectiveStatus = String(p.project?.effective_status || p.project?.status || '').trim().toLowerCase();
     const isExplicitFailure =
@@ -175,8 +229,8 @@ export function useStepFourPage() {
       !!String(p.final_render_error || '').trim();
     if (isExplicitFailure) return false;
 
-    return PIPELINE_POLLING_ACTIVE_STATUSES.has(effectiveStatus);
-  }, []);
+    return batchGenerating || pipelineHasActiveVideoWork(p);
+  }, [batchGenerating]);
 
   const stopSegmentJobPolling = useCallback((segmentUiId: number) => {
     const timerId = segmentJobPollersRef.current[segmentUiId];
@@ -291,7 +345,13 @@ export function useStepFourPage() {
           if (pipelinePollFailureRef.current >= 3) {
             window.clearInterval(id);
             console.info('[STEP4_POLLING_STOP]', { reason: 'fetch_error_3x' });
-            setGenerateError('当前片段生成状态查询失败，请稍后重试当前片段。');
+            if (pipelineHasAnySegmentVideo(pipeline)) {
+              console.warn('[STEP4_POLLING_REFRESH_SKIPPED_ERROR]', {
+                reason: 'fetch_error_3x_but_segment_video_exists',
+              });
+            } else {
+              setGenerateError(STATUS_REFRESH_ERROR_MESSAGE);
+            }
             pollEpochRef.current += 1;
           }
         }
@@ -330,6 +390,7 @@ export function useStepFourPage() {
         setSegmentScriptsErrorRaw(null);
         setSegmentScriptsBusyError(false);
         setSegmentScriptsBlocked(null);
+        setAutoMaterializingSegments(false);
         return;
       }
 
@@ -338,6 +399,7 @@ export function useStepFourPage() {
       setSegmentScriptsErrorRaw(null);
       setSegmentScriptsBusyError(false);
       setSegmentScriptsBlocked(null);
+      setAutoMaterializingSegments(false);
 
       try {
         const cached = getCachedShortDramaPipeline(projectId);
@@ -368,7 +430,13 @@ export function useStepFourPage() {
 
         if (!hasScripts) {
           if (st === 'asset_specs_generated' || st === 'assets_ready') {
-            setPhase('generating_segments');
+            const canMaterializeFromVideoSpecs = pipelineHasVideoGenerationSpecs(p);
+            if (canMaterializeFromVideoSpecs) {
+              setAutoMaterializingSegments(true);
+              setPhase('ready');
+            } else {
+              setPhase('generating_segments');
+            }
             try {
               await generateShortDramaSegmentScripts(projectId);
               p = await getShortDramaPipeline(projectId);
@@ -398,6 +466,10 @@ export function useStepFourPage() {
                 }
               } catch {
                 /* keep last pipeline */
+              }
+            } finally {
+              if (!cancelled && canMaterializeFromVideoSpecs) {
+                setAutoMaterializingSegments(false);
               }
             }
           } else {
@@ -485,6 +557,12 @@ export function useStepFourPage() {
 
   const pipelineVm = useMemo(() => pipelineToStepFourViewModel(pipeline), [pipeline]);
 
+  useEffect(() => {
+    if (generateError === STATUS_REFRESH_ERROR_MESSAGE && pipelineHasAnySegmentVideo(pipeline)) {
+      setGenerateError(null);
+    }
+  }, [generateError, pipeline]);
+
   const assetLibraryVm: StepFourAssetLibraryVm = useMemo(
     () => pipelineAssetsToStepFourLibraryVm(pipeline?.assets),
     [pipeline?.assets],
@@ -492,6 +570,7 @@ export function useStepFourPage() {
   const stepFourVideoLanguage = useMemo(() => resolveStepFourVideoLanguage(pipeline), [pipeline]);
 
   const projectStatus = pipelineVm.projectStatus;
+  const isVideoRenderActive = batchGenerating || pipelineHasActiveVideoWork(pipeline);
   const pipelineEffectiveStatus = String(pipeline?.project?.effective_status || '').trim();
   const suggestedStatus = String(pipeline?.project?.suggested_status || '').trim();
   const statusRecoverable = Boolean(pipeline?.project?.status_recoverable);
@@ -545,12 +624,16 @@ export function useStepFourPage() {
     for (const seg of pipelineVm.coreSegments) {
       const row = pipeline?.segment_scripts?.find((x) => x.segment_id === seg.backendSegmentId);
       if (!row?.render_job_id) continue;
+      if (seg.videoUrl || row.video_url) {
+        stopSegmentJobPolling(seg.id);
+        continue;
+      }
       const st = (row.render_status || '').toLowerCase();
       if (st === 'running' || st === 'queued' || st === 'pending') {
         startSegmentJobPolling(seg.id, row.render_job_id);
       }
     }
-  }, [pipeline?.segment_scripts, pipelineVm.coreSegments, startSegmentJobPolling]);
+  }, [pipeline?.segment_scripts, pipelineVm.coreSegments, startSegmentJobPolling, stopSegmentJobPolling]);
 
   const runtimeStatusOverrides = useMemo(() => {
     const o: Partial<Record<number, Step4VideoStatus>> = {};
@@ -834,6 +917,7 @@ export function useStepFourPage() {
     segmentScriptsErrorRaw,
     segmentScriptsBusyError,
     segmentScriptsBlocked,
+    autoMaterializingSegments,
     generateError,
     mergeError,
     segments,
@@ -853,6 +937,7 @@ export function useStepFourPage() {
     doneCount,
     displayTotal,
     projectStatus,
+    isVideoRenderActive,
     effectiveStatus,
     assetLibraryVm,
     stepFourVideoLanguage,

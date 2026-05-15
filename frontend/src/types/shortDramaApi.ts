@@ -432,6 +432,9 @@ export type PipelineSummaryDto = {
   final_render_status?: string | null;
   final_render_error?: string | null;
   final_render_job_id?: number | null;
+  has_active_render_job?: boolean;
+  video_render_task_running?: boolean;
+  segment_render_statuses?: SegmentScriptPipelineRowDto[];
   image_url_filled?: number;
   asset_rows_total?: number;
 };
@@ -530,6 +533,7 @@ export type UpdateSegmentShotResponseDto = {
 export type GenerateAssetSpecsResponseDto = {
   project_id: number;
   assets: PipelineAssetsBundleDto;
+  image_generation?: AssetImageBatchResponseDto | null;
 };
 
 /** POST /assets/images/generate */
