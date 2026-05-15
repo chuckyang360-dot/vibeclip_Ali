@@ -11,7 +11,7 @@ export function StoryBlueprintRightRail({ sections, className = '' }: Props) {
     <aside
       className={`hidden shrink-0 flex-col overflow-y-auto border-[#EAEAEA] bg-[#F7F8FA] p-6 pt-10 xl:flex xl:w-64 xl:border-l ${className}`}
     >
-      <h3 className="mb-5 text-[12px] font-bold uppercase tracking-wider text-[#8E8E93]">结构分析</h3>
+      <h3 className="mb-5 text-[12px] font-bold uppercase tracking-wider text-[#8E8E93]">制作准备</h3>
       <div className="space-y-3">
         {sections.map((section) => (
           <div

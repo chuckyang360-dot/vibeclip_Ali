@@ -47,7 +47,7 @@ from ..services.project_task_guard import (
 )
 from ..utils.enums import WorkflowStep
 from ..utils.flow_logging import log_api_error, log_api_request, log_api_success
-from ..utils.language import build_language_policy, language_prompt_rules
+from ..utils.language import build_language_policy, language_prompt_rules, resolve_project_language_policy
 
 logger = logging.getLogger(__name__)
 
@@ -413,7 +413,7 @@ async def generate_segments(body: GenerateSegmentsRequest, db: Session = Depends
         )
 
         raw_inputs = pc_row.raw_inputs_json if pc_row else {}
-        language_policy = build_language_policy(
+        inferred_language_policy = build_language_policy(
             workflow_source={"product": product_ctx.model_dump(), "raw_inputs": raw_inputs, "blueprint": blueprint.model_dump()},
             market_source={
                 "raw_inputs": raw_inputs,
@@ -421,6 +421,11 @@ async def generate_segments(body: GenerateSegmentsRequest, db: Session = Depends
                 "usage_scenarios": product_ctx.usage_scenarios,
             },
             explicit_target_market=(project.target_market or "North America"),
+        )
+        language_policy = resolve_project_language_policy(
+            project,
+            inferred_language_policy,
+            stage="S4_segment_director",
         )
 
         project_config = {

@@ -16,6 +16,75 @@ def _trace(tag: str, payload: dict[str, Any]) -> None:
     logger.info("[AI_CHAIN_TRACE][%s] %s", tag, json.dumps(payload, ensure_ascii=False, default=str))
 
 
+_S1_CONTEXT_BUILDER_IMAGE_CAPTION_MAX_CHARS = 500
+
+
+def _clip_text(value: Any, max_chars: int = _S1_CONTEXT_BUILDER_IMAGE_CAPTION_MAX_CHARS) -> str:
+    text = str(value or "").strip()
+    lowered = text.lower()
+    if "data:image" in lowered or "base64" in lowered:
+        return "[redacted_image_text]"
+    return text if len(text) <= max_chars else text[: max_chars - 3] + "..."
+
+
+def _sanitize_raw_input_for_context_builder(raw_input: ProductRawInputSchema) -> tuple[dict[str, Any], bool]:
+    raw = raw_input.model_dump()
+    image_rows = list(raw_input.product_images or [])
+    sanitized_items: list[dict[str, Any]] = []
+    for idx, row in enumerate(image_rows):
+        sanitized_items.append(
+            {
+                "image_order": int(row.image_order if row.image_order is not None else idx),
+                "is_main_image": bool(row.is_main_image),
+                "image_caption_raw": _clip_text(row.image_caption_raw),
+            }
+        )
+    raw["product_images"] = {
+        "image_count": len(image_rows),
+        "items": sanitized_items,
+    }
+    return raw, bool(image_rows)
+
+
+def _payload_has_base64(value: Any) -> bool:
+    if isinstance(value, str):
+        text = value.lower()
+        return "base64," in text or "data:image" in text
+    if isinstance(value, dict):
+        return any(_payload_has_base64(v) for v in value.values())
+    if isinstance(value, list):
+        return any(_payload_has_base64(v) for v in value)
+    return False
+
+
+def build_product_context_builder_payload(
+    *,
+    project_id: int,
+    raw_input: ProductRawInputSchema,
+    image_understanding: ProductImageUnderstandingSchema,
+    project_constraints: dict[str, Any] | None = None,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    sanitized_raw_input, raw_product_images_sanitized = _sanitize_raw_input_for_context_builder(raw_input)
+    constraints = project_constraints or {}
+    payload = {
+        "project_id": project_id,
+        "raw_input": sanitized_raw_input,
+        "image_understanding": image_understanding.model_dump(),
+        "project_constraints": constraints,
+        "creative_intent": constraints.get("creative_intent") or constraints.get("legacy_creative_intent_summary") or "",
+        "language_policy": constraints.get("language_policy", {}),
+        "language_prompt_rules": constraints.get("language_prompt_rules", ""),
+    }
+    audit = {
+        "project_id": project_id,
+        "user_payload_chars": len(json.dumps(payload, ensure_ascii=False, default=str)),
+        "raw_product_images_count": len(raw_input.product_images or []),
+        "raw_product_images_sanitized": raw_product_images_sanitized,
+        "has_base64_in_payload": _payload_has_base64(payload),
+    }
+    return payload, audit
+
+
 class ProductContextBuilderService:
     def __init__(self, text_provider: XAITextProvider | None = None):
         self._text = text_provider or get_xai_text_provider()
@@ -56,15 +125,13 @@ class ProductContextBuilderService:
             logger.info("[S1_CONTEXT_BUILDER_RESULT] project_id=%s result=%s", project_id, out.model_dump())
             return out
 
-        payload = {
-            "project_id": project_id,
-            "raw_input": raw_input.model_dump(),
-            "image_understanding": image_understanding.model_dump(),
-            "project_constraints": project_constraints or {},
-            "creative_intent": (project_constraints or {}).get("creative_intent") or (project_constraints or {}).get("legacy_creative_intent_summary") or "",
-            "language_policy": (project_constraints or {}).get("language_policy", {}),
-            "language_prompt_rules": (project_constraints or {}).get("language_prompt_rules", ""),
-        }
+        payload, audit = build_product_context_builder_payload(
+            project_id=project_id,
+            raw_input=raw_input,
+            image_understanding=image_understanding,
+            project_constraints=project_constraints,
+        )
+        logger.info("[S1_CONTEXT_BUILDER_PAYLOAD_AUDIT] %s", json.dumps(audit, ensure_ascii=False))
         _trace(
             "S1_CONTEXT_BUILDER_PROMPT",
             {

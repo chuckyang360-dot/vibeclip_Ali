@@ -140,6 +140,8 @@ Mission:
 - S0/S1 only produced a brief. S2 is the ONLY creative authoring step for this pipeline.
 - S3/S4 execute your specs; the backend will NOT invent, rewrite, or auto-fill missing creative fields.
 - blueprint_schema_version MUST be exactly: creative_blueprint_v2
+- Read creative_brief and source_inputs as upstream understanding. Platform, duration, and aspect ratio values inside
+  source_inputs are hints only; do not treat them as fixed segment counts, fixed story structures, or shot templates.
 
 Hard rules:
 - Respect language_prompt_rules: workflow_language for planning fields; video_language only for on-screen copy (dialogue, VO, subtitles, CTA).
@@ -154,7 +156,9 @@ Hard rules:
 - asset_generation_specs[].display_name must be a clean user-facing asset name only: do NOT include purpose suffixes such as 参考, 参考图, reference, reference image, asset reference, character reference, scene reference, product reference (reference_role already encodes character_reference / scene_reference / product_reference; display_name must not repeat that meaning).
 - Good display_name examples: 主角Alex, 阳光公园场景, 绿色华为手机壳. Bad: 主角Alex参考, 阳光公园场景参考, 绿色华为手机壳产品参考, Character Reference.
 - negative_prompt and immutable_constraints on each asset row must be meaningful (non-empty when possible).
-- Legacy fields may be brief, but v2 fields must be complete and strictly typed.
+- story_outline is the user-facing story structure. Choose structure_type and story_beats from the creative_brief; do not use a fixed template and do not force premise/hook/conflict/twist/resolution as the main structure.
+- story_outline.story_beats count, titles, purpose, and content are AI-authored from creative understanding. Do not hardcode count from duration, platform, aspect ratio, or legacy story formulas.
+- Legacy fields premise/hook/core_conflict/twist/resolution may be brief for compatibility, but v2 user-facing fields must be complete and strictly typed.
 
 S3 reference-image constraints (write in ENGLISH inside image_prompt AND reflect in negative_prompt AND immutable_constraints for that row):
 - character: white background OR clean plain background; only the character; no scene environment; no product; no extra people; no story action; reusable character reference image.
@@ -169,7 +173,7 @@ script_structure_type, script_type_display, structure_type_display, structure_re
 hook, core_conflict, twist, resolution, segment_plan, scene_goals, product_selling_point_mapping, target_user_expression,
 visual_requirements, dialogue_tone, must_show_elements, must_avoid_elements, language_policy, marketing_strategy, story_structure, story_framework,
 asset_requirements, shot_plan, spoken_strategy, market_visual_constraints, visual_style_constraints,
-story_overview, characters, scenes, product_assets, asset_generation_specs, video_generation_specs,
+story_outline, story_overview, characters, scenes, product_assets, asset_generation_specs, video_generation_specs,
 dialogue_or_voiceover, subtitle_strategy, continuity_rules, execution_notes, meta (object, may be {}).
 
 Nested shapes (minimal skeleton — expand with real content):
@@ -177,6 +181,7 @@ Nested shapes (minimal skeleton — expand with real content):
   "blueprint_schema_version": "creative_blueprint_v2",
   "segment_plan": [{"segment_id": "seg_1", "segment_title": "", "segment_goal": "", "summary": "", "duration_seconds": 0, "transition_to_next": "", "required_assets": []}],
   "shot_plan": {"segments": [{"id": "seg_1", "name": "", "shots": [{"id": "seg_1_shot_1", "video_prompt": ""}]}]},
+  "story_outline": {"title": "", "summary": "", "structure_type": "", "structure_reasoning": "", "story_beats": [{"title": "", "purpose": "", "content": ""}]},
   "story_overview": {"title": "", "premise": "", "hook": "", "target_audience": "", "marketing_goal": "", "creative_intent_summary": "", "story_angle": "", "emotional_arc": [], "conversion_goal": ""},
   "characters": [{"character_key": "", "display_name": "", "role_in_story": "", "description": "", "personality": "", "visual_identity": "", "wardrobe": "", "continuity_notes": ""}],
   "scenes": [{"scene_key": "", "display_name": "", "location_type": "", "description": "", "atmosphere": "", "lighting": "", "props": [], "continuity_notes": ""}],

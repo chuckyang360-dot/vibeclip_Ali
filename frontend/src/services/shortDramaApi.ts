@@ -7,6 +7,9 @@ import {
 import type {
   AssetImageBatchResponseDto,
   CreateShortDramaProjectResponseDto,
+  CreativeBriefDto,
+  CreativeIntentInputDto,
+  GenerateCreativeBriefResponseDto,
   GenerateAssetSpecsResponseDto,
   GenerateSegmentScriptsResponseDto,
   GenerateStoryResponseDto,
@@ -15,6 +18,7 @@ import type {
   ProjectEntryRedirectResponseDto,
   PipelineSummaryDto,
   ProductInputPayload,
+  ProductInputDto,
   RenderJobStatusResponseDto,
   RegenerateOneAssetImageBody,
   RegenerateOneAssetImageResponseDto,
@@ -26,6 +30,8 @@ import type {
   CreateAssetLibraryBody,
   ShortDramaProjectDto,
   ShortDramaProjectListResponseDto,
+  SaveCreativeIntentResponseDto,
+  SaveProductInputResponseDto,
   SingleSegmentVideoResponseDto,
   UpdateProductContextResponseDto,
   UpdateAssetBody,
@@ -152,6 +158,36 @@ export async function createShortDramaProject(body: CreateProjectBody): Promise<
 export async function getShortDramaProject(projectId: number): Promise<ShortDramaProjectDto> {
   return sdFetchJson<ShortDramaProjectDto>(`/api/short-drama/project/${projectId}`);
 }
+
+export async function saveShortDramaCreativeIntent(
+  projectId: number,
+  body: CreativeIntentInputDto,
+): Promise<SaveCreativeIntentResponseDto> {
+  return sdFetchJson<SaveCreativeIntentResponseDto>(`/api/short-drama/project/${projectId}/creative-intent`, {
+    method: 'PATCH',
+    body: JSON.stringify(body),
+  });
+}
+
+export async function saveShortDramaProductInput(
+  projectId: number,
+  body: ProductInputDto,
+): Promise<SaveProductInputResponseDto> {
+  return sdFetchJson<SaveProductInputResponseDto>(`/api/short-drama/project/${projectId}/product-input`, {
+    method: 'PATCH',
+    body: JSON.stringify(body),
+  });
+}
+
+export async function generateShortDramaCreativeBrief(
+  projectId: number,
+): Promise<GenerateCreativeBriefResponseDto> {
+  return sdFetchJson<GenerateCreativeBriefResponseDto>(`/api/short-drama/project/${projectId}/creative-brief/generate`, {
+    method: 'POST',
+  });
+}
+
+export type { CreativeBriefDto, CreativeIntentInputDto, ProductInputDto };
 
 export async function listShortDramaProjects(userId: number): Promise<ShortDramaProjectListResponseDto> {
   return sdFetchJson<ShortDramaProjectListResponseDto>(`/api/short-drama/project?user_id=${encodeURIComponent(String(userId))}`);

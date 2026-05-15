@@ -1,71 +1,140 @@
-import { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useEffect, useMemo, useState } from 'react';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { getUser } from '../../services/api';
-import { createFlowSidebarSteps, defaultProjectDraft } from './data/mockShortDrama';
-import { ProjectCreateForm } from './components/ProjectCreateForm';
 import { SDWorkflowNav } from './components/SDWorkflowNav';
-import { ShortDramaApiError, createShortDramaProject } from '@/services/shortDramaApi';
-import type { NarrativeStyle, ShortDramaProjectDraft } from '@/types/shortDrama';
-import { normalizeTargetMarket } from './utils/projectLocales';
+import {
+  ShortDramaApiError,
+  createShortDramaProject,
+  getShortDramaProject,
+  saveShortDramaCreativeIntent,
+} from '@/services/shortDramaApi';
+import type { CreativeIntentInputDto } from '@/types/shortDramaApi';
 import { useShortDramaProject } from './hooks/useShortDramaProject';
 import { ri, sdColors, sdFontHeading } from './utils/shortDramaHelpers';
 import { withProjectQuery } from './utils/shortDramaRoutes';
 
+const platformOptions = ['TikTok', '抖音', '小红书', 'Amazon', 'Instagram', 'YouTube'];
+const durationOptions = ['15s', '30s', '45s', '60s'];
+const aspectRatioOptions = ['9:16', '16:9'];
+
+const emptyIntent: CreativeIntentInputDto = {
+  intent_text: '',
+  platform_hints: [],
+  duration_hint: '',
+  aspect_ratio_hint: '',
+};
+
+function parseProjectId(searchParams: URLSearchParams): number | null {
+  const raw = searchParams.get('projectId') ?? searchParams.get('project_id');
+  const n = Number(raw);
+  return Number.isFinite(n) && n > 0 ? Math.trunc(n) : null;
+}
+
+function projectNameFromIntent(text: string): string {
+  const cleaned = text.trim().replace(/\s+/g, ' ');
+  return cleaned ? cleaned.slice(0, 28) : '未命名 VibeClip 项目';
+}
+
+function Chip({
+  active,
+  children,
+  onClick,
+}: {
+  active: boolean;
+  children: string;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className="rounded-full border px-4 py-2 text-[13px] font-medium transition-all"
+      style={{
+        borderColor: active ? '#1D1D1F' : '#E5E5EA',
+        background: active ? '#1D1D1F' : '#F7F8FA',
+        color: active ? '#ffffff' : '#444444',
+      }}
+    >
+      {children}
+    </button>
+  );
+}
+
 export function ShortDramaCreateProjectPage() {
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const { setSession } = useShortDramaProject();
-  const [draft, setDraft] = useState<ShortDramaProjectDraft>(defaultProjectDraft);
+  const routedProjectId = useMemo(() => parseProjectId(searchParams), [searchParams]);
+  const [projectId, setProjectId] = useState<number | null>(routedProjectId);
+  const [intent, setIntent] = useState<CreativeIntentInputDto>(emptyIntent);
+  const [optionalOpen, setOptionalOpen] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
 
-  const setNarrativeStyle = (v: NarrativeStyle) => {
-    setDraft((prev) => ({ ...prev, narrativeStyle: v }));
+  const user = getUser();
+  const canSubmit = Boolean(intent.intent_text.trim() && user && !submitting);
+
+  useEffect(() => {
+    if (routedProjectId == null) return;
+    setProjectId(routedProjectId);
+    let cancelled = false;
+    void (async () => {
+      try {
+        const project = await getShortDramaProject(routedProjectId);
+        if (cancelled) return;
+        if (project.creative_intent_input) {
+          setIntent({
+            intent_text: project.creative_intent_input.intent_text || '',
+            platform_hints: project.creative_intent_input.platform_hints || [],
+            duration_hint: project.creative_intent_input.duration_hint || '',
+            aspect_ratio_hint: project.creative_intent_input.aspect_ratio_hint || '',
+          });
+        }
+        setSession(project.id, project.project_name);
+      } catch {
+        if (!cancelled) setProjectId(null);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [routedProjectId, setSession]);
+
+  const ensureProject = async (): Promise<number> => {
+    if (projectId) return projectId;
+    if (!user) throw new Error('请先登录后再创建项目。');
+    const res = await createShortDramaProject({
+      user_id: user.id,
+      project_name: projectNameFromIntent(intent.intent_text),
+      duration: intent.duration_hint || undefined,
+      aspect_ratio: intent.aspect_ratio_hint || undefined,
+      creative_intent: intent.intent_text.trim(),
+    });
+    const p = res.project;
+    setProjectId(p.id);
+    setSession(p.id, p.project_name);
+    return p.id;
   };
 
-  const user = getUser();
-  const canSubmit = Boolean(draft.projectName.trim() && user && !submitting);
+  const persistIntent = async (): Promise<number> => {
+    const id = await ensureProject();
+    await saveShortDramaCreativeIntent(id, {
+      ...intent,
+      intent_text: intent.intent_text.trim(),
+    });
+    return id;
+  };
 
   const handleNext = async () => {
-    console.info('[S0_CREATE_CLICK]', { has_user: Boolean(user), project_name_len: draft.projectName.trim().length });
     if (!user) {
       setSubmitError('请先登录后再创建项目。');
       return;
     }
-    const requestBody = {
-      user_id: user.id,
-      project_name: draft.projectName.trim(),
-      duration: draft.duration,
-      format: draft.format,
-      style: draft.narrativeStyle || 'light_conflict',
-      visual_style: draft.visualStyle,
-      aspect_ratio: draft.aspectRatio,
-      target_market: normalizeTargetMarket(draft.targetMarket),
-      marketing_goal: draft.marketingGoal || 'brand_seeding',
-      target_audience: draft.targetAudience || '',
-      brand_tone: draft.brandTone || 'natural',
-      creative_intent: draft.creativeIntent || '',
-      creative_brief: draft.creativeBrief || '',
-    };
-    console.info('[S0_CREATE_REQUEST]', {
-      user_id: requestBody.user_id,
-      has_project_name: Boolean(requestBody.project_name),
-      duration: requestBody.duration,
-      format: requestBody.format,
-      visual_style: requestBody.visual_style,
-      aspect_ratio: requestBody.aspect_ratio,
-      target_market: requestBody.target_market,
-      marketing_goal: requestBody.marketing_goal,
-      brand_tone: requestBody.brand_tone,
-    });
     setSubmitting(true);
     setSubmitError(null);
     try {
-      const res = await createShortDramaProject(requestBody);
-      const p = res.project;
-      console.info('[S0_CREATE_SUCCESS]', { project_id: p.id, project_name: p.project_name });
-      setSession(p.id, p.project_name);
-      const nextPath = withProjectQuery('/short-drama/product-input', p.id);
-      console.info('[S0_CREATE_NAVIGATE]', { project_id: p.id, to: nextPath });
+      const id = await persistIntent();
+      const nextPath = withProjectQuery('/short-drama/product-input', id);
       navigate(nextPath);
     } catch (e) {
       const msg = e instanceof ShortDramaApiError ? e.message : e instanceof Error ? e.message : '创建失败';
@@ -75,95 +144,105 @@ export function ShortDramaCreateProjectPage() {
     }
   };
 
+  const saveDraft = async () => {
+    if (!canSubmit) return;
+    setSubmitting(true);
+    setSubmitError(null);
+    try {
+      await persistIntent();
+    } catch (e) {
+      setSubmitError(e instanceof ShortDramaApiError ? e.message : e instanceof Error ? e.message : '保存失败');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
   return (
-    <div className="min-h-screen bg-white" style={{ fontFamily: "'Inter', sans-serif" }}>
-      <SDWorkflowNav allowSaveAndLeave={false} />
-      <div className="flex min-h-screen pt-14">
-        <aside
-          className="hidden w-72 shrink-0 flex-col border-r border-[#EAEAEA] bg-[#F7F8FA] p-8 pt-10 lg:flex"
-        >
-          <div className="mb-8">
-            <div
-              className="mb-4 inline-flex items-center gap-2 rounded-full border border-[#E5E5EA] bg-[#F5F5F7] px-3 py-1.5 text-[10px] font-semibold uppercase tracking-widest text-[#6E6E73]"
-            >
-              <i className={ri('ri-add-circle-line', 'text-[12px]')} aria-hidden />
-              新建项目
-            </div>
-            <h2 className="mb-3 text-xl font-black" style={{ ...sdFontHeading, color: sdColors.ink }}>
-              创建 VibeClip 项目
-            </h2>
-            <p className="text-[13px] leading-relaxed text-[#8E8E93]">
-              设置基础参数，系统将根据这些设定规划剧情节奏与视觉风格。
-            </p>
-          </div>
-          <div className="space-y-1">
-            {createFlowSidebarSteps.map((s) => (
-              <div
-                key={s.title}
-                className="flex items-start gap-3 rounded-xl p-3 transition-colors"
-                style={{
-                  background: s.step === 0 ? '#ffffff' : 'transparent',
-                  border: s.step === 0 ? '1px solid #EAEAEA' : '1px solid transparent',
-                }}
-              >
-                <div
-                  className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg"
-                  style={{ background: s.step === 0 ? sdColors.ink : '#EAEAEA' }}
-                >
-                  <i
-                    className={ri(s.icon, 'text-[13px]')}
-                    style={{ color: s.step === 0 ? '#ffffff' : '#8E8E93' }}
-                    aria-hidden
-                  />
-                </div>
-                <div>
-                  <p
-                    className="text-[12.5px] font-semibold"
-                    style={{ color: s.step === 0 ? sdColors.ink : '#8E8E93' }}
-                  >
-                    {s.title}
-                  </p>
-                  <p className="text-[11px] text-[#AEAEB2]">{s.desc}</p>
-                </div>
-              </div>
-            ))}
-          </div>
-        </aside>
-
-        <main className="max-w-[680px] flex-1 overflow-y-auto p-6 lg:p-12">
-          <div className="mb-8">
-            <span className="text-[11px] font-bold uppercase tracking-widest text-[#8E8E93]">新建项目</span>
-            <h1 className="mt-1 text-2xl font-black" style={{ ...sdFontHeading, color: sdColors.ink }}>
-              创建 VibeClip 项目
+    <div className="min-h-screen bg-[#F7F8FA]" style={{ fontFamily: "'Inter', sans-serif" }}>
+      <SDWorkflowNav currentStep={0} projectId={projectId} allowSaveAndLeave={false} />
+      <div className="pt-14">
+        <main className="mx-auto max-w-3xl px-5 py-12 lg:py-16">
+          <header className="mb-8 text-center">
+            <span className="text-[11px] font-bold uppercase tracking-[0.2em] text-[#8E8E93]">S0 创作意图</span>
+            <h1 className="mx-auto mt-3 max-w-xl text-4xl font-black leading-tight" style={{ ...sdFontHeading, color: sdColors.ink }}>
+              先告诉 AI，<br />你想做什么视频。
             </h1>
-          </div>
+          </header>
 
-          <ProjectCreateForm
-            projectName={draft.projectName}
-            setProjectName={(v) => setDraft((p) => ({ ...p, projectName: v }))}
-            duration={draft.duration}
-            setDuration={(v) => setDraft((p) => ({ ...p, duration: v }))}
-            format={draft.format}
-            setFormat={(v) => setDraft((p) => ({ ...p, format: v }))}
-            narrativeStyle={draft.narrativeStyle}
-            setNarrativeStyle={setNarrativeStyle}
-            visualStyle={draft.visualStyle}
-            setVisualStyle={(v) => setDraft((p) => ({ ...p, visualStyle: v }))}
-            aspectRatio={draft.aspectRatio}
-            setAspectRatio={(v) => setDraft((p) => ({ ...p, aspectRatio: v }))}
-            targetMarket={draft.targetMarket}
-            setTargetMarket={(v) => setDraft((p) => ({ ...p, targetMarket: v }))}
-            marketingGoal={draft.marketingGoal}
-            setMarketingGoal={(v) => setDraft((p) => ({ ...p, marketingGoal: v }))}
-            targetAudience={draft.targetAudience}
-            setTargetAudience={(v) => setDraft((p) => ({ ...p, targetAudience: v }))}
-            brandTone={draft.brandTone}
-            setBrandTone={(v) => setDraft((p) => ({ ...p, brandTone: v }))}
-            creativeIntent={draft.creativeIntent}
-            setCreativeIntent={(v) => setDraft((p) => ({ ...p, creativeIntent: v }))}
-            creativeBrief={draft.creativeBrief}
-            setCreativeBrief={(v) => setDraft((p) => ({ ...p, creativeBrief: v }))}
-          />
+          <section className="rounded-[28px] border border-[#EAEAEA] bg-white p-6 shadow-[0_18px_60px_rgba(0,0,0,0.06)] sm:p-8">
+            <div>
+              <label className="mb-2 block text-[15px] font-bold text-[#1D1D1F]">描述你的创作想法</label>
+              <p className="mb-4 text-[13px] text-[#8E8E93]">一句话也可以，越具体越好。</p>
+              <textarea
+                className="min-h-[180px] w-full resize-none rounded-3xl border border-[#E5E5EA] bg-[#FAFAFA] px-5 py-4 text-[15px] leading-relaxed text-[#1D1D1F] outline-none transition-colors placeholder:text-[#AEAEB2] focus:border-[#1D1D1F] focus:bg-white"
+                value={intent.intent_text}
+                onChange={(e) => setIntent((p) => ({ ...p, intent_text: e.target.value }))}
+                placeholder="例如：我想给这个鼻毛器做一个适合 TikTok 的欧美风短剧，感觉真实一点，不要太像硬广，突出便携、安全、不尴尬。"
+              />
+            </div>
+
+            <section className="mt-6 rounded-3xl border border-[#EAEAEA] bg-[#F7F8FA]">
+              <button
+                type="button"
+                onClick={() => setOptionalOpen((v) => !v)}
+                className="flex w-full items-center justify-between px-5 py-4 text-left"
+              >
+                <span>
+                  <span className="block text-[15px] font-bold text-[#1D1D1F]">可选提示信息</span>
+                  <span className="mt-1 block text-[12.5px] text-[#8E8E93]">只作为 AI 理解方向的参考，不会成为固定规则。</span>
+                </span>
+                <i className={ri(optionalOpen ? 'ri-arrow-up-s-line' : 'ri-arrow-down-s-line', 'text-[18px] text-[#8E8E93]')} aria-hidden />
+              </button>
+              {optionalOpen ? (
+                <div className="space-y-5 border-t border-[#EAEAEA] px-5 py-5">
+                  <div>
+                    <p className="mb-3 text-[13px] font-semibold text-[#444444]">参考平台</p>
+                    <div className="flex flex-wrap gap-2">
+                      {platformOptions.map((p) => (
+                        <Chip
+                          key={p}
+                          active={intent.platform_hints.includes(p)}
+                          onClick={() =>
+                            setIntent((prev) => ({
+                              ...prev,
+                              platform_hints: prev.platform_hints.includes(p)
+                                ? prev.platform_hints.filter((x) => x !== p)
+                                : [...prev.platform_hints, p],
+                            }))
+                          }
+                        >
+                          {p}
+                        </Chip>
+                      ))}
+                    </div>
+                  </div>
+                  <div>
+                    <p className="mb-3 text-[13px] font-semibold text-[#444444]">大概时长</p>
+                    <div className="flex flex-wrap gap-2">
+                      {durationOptions.map((p) => (
+                        <Chip key={p} active={intent.duration_hint === p} onClick={() => setIntent((prev) => ({ ...prev, duration_hint: prev.duration_hint === p ? '' : p }))}>
+                          {p}
+                        </Chip>
+                      ))}
+                    </div>
+                  </div>
+                  <div>
+                    <p className="mb-3 text-[13px] font-semibold text-[#444444]">画面比例</p>
+                    <div className="flex flex-wrap gap-2">
+                      {aspectRatioOptions.map((p) => (
+                        <Chip key={p} active={intent.aspect_ratio_hint === p} onClick={() => setIntent((prev) => ({ ...prev, aspect_ratio_hint: prev.aspect_ratio_hint === p ? '' : p }))}>
+                          {p}
+                        </Chip>
+                      ))}
+                    </div>
+                  </div>
+                  <p className="rounded-2xl bg-white px-4 py-3 text-[12.5px] leading-relaxed text-[#8E8E93]">
+                    这些信息只是帮助 AI 理解你的创作意图，不会变成固定规则。
+                  </p>
+                </div>
+              ) : null}
+            </section>
+          </section>
 
           {!user ? (
             <p className="mt-6 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-[13px] text-amber-900">
@@ -176,14 +255,15 @@ export function ShortDramaCreateProjectPage() {
             </p>
           ) : null}
 
-          <div className="mt-10 flex items-center justify-between border-t border-[#EAEAEA] pt-8">
+          <div className="mt-8 flex items-center justify-between">
             <button
               type="button"
-              onClick={() => navigate('/short-drama')}
-              className="flex items-center gap-2 whitespace-nowrap rounded-xl border border-[#EAEAEA] bg-[#F7F8FA] px-5 py-3 text-[13.5px] text-[#444444] transition-colors hover:bg-[#EAEAEA]"
+              onClick={() => void saveDraft()}
+              disabled={!canSubmit}
+              className="flex items-center gap-2 whitespace-nowrap rounded-xl border border-[#EAEAEA] bg-white px-5 py-3 text-[13.5px] text-[#444444] transition-colors hover:bg-[#F5F5F7] disabled:cursor-not-allowed disabled:text-[#AEAEB2]"
             >
-              <i className={ri('ri-arrow-left-line', 'text-[13px]')} aria-hidden />
-              返回
+              <i className={ri('ri-save-line', 'text-[13px]')} aria-hidden />
+              保存草稿
             </button>
             <button
               type="button"
@@ -202,7 +282,7 @@ export function ShortDramaCreateProjectPage() {
                 </>
               ) : (
                 <>
-                  下一步：输入产品信息
+                  下一步：上传商品
                   <i className={ri('ri-arrow-right-line', 'text-[13px]')} aria-hidden />
                 </>
               )}

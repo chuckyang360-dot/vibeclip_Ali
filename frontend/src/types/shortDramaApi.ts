@@ -42,6 +42,10 @@ export type ShortDramaProjectDto = {
     image_url: string | null;
     status: 'ready' | 'missing';
   };
+  creative_intent_input?: CreativeIntentInputDto | null;
+  product_input?: ProductInputDto | null;
+  product_understanding?: Record<string, unknown> | null;
+  creative_brief_structured?: CreativeBriefDto | null;
   created_at?: string | null;
   updated_at?: string | null;
 };
@@ -60,8 +64,53 @@ export type ProjectEntryRedirectResponseDto = {
   reason: 'completed_overview' | 'last_active_step' | 'default_step_1';
 };
 
+export type CreativeIntentInputDto = {
+  intent_text: string;
+  platform_hints: string[];
+  duration_hint: string;
+  aspect_ratio_hint: string;
+};
+
+export type ProductInputImageDto = {
+  url: string;
+  image_order?: number | null;
+  is_main_image?: boolean;
+  image_caption_raw?: string;
+};
+
+export type ProductInputDto = {
+  product_images: ProductInputImageDto[];
+  product_note: string;
+  product_url: string;
+};
+
+export type CreativeBriefDto = {
+  user_goal?: string;
+  product_understanding?: Record<string, unknown>;
+  creative_intent?: Record<string, unknown>;
+  ai_interpretation?: Record<string, unknown>;
+  uncertainties?: unknown[];
+  source_inputs?: Record<string, unknown>;
+};
+
+export type SaveCreativeIntentResponseDto = {
+  project_id: number;
+  creative_intent_input: CreativeIntentInputDto;
+};
+
+export type SaveProductInputResponseDto = {
+  project_id: number;
+  product_input: ProductInputDto;
+};
+
+export type GenerateCreativeBriefResponseDto = {
+  project_id: number;
+  product_understanding: Record<string, unknown>;
+  creative_brief: CreativeBriefDto;
+};
+
 export type TouchProjectStepBody = {
-  step: 'step_1' | 'step_2' | 'step_3' | 'step_4' | 'overview';
+  step: 'step_0' | 'step_1' | 'step_2' | 'step_3' | 'step_4' | 'overview';
   save_intent?: 'save_draft' | 'before_exit';
 };
 
@@ -175,8 +224,23 @@ export type SegmentPlanItemDto = {
   transition_to_next?: string;
 };
 
+export type StoryBeatDto = {
+  title?: string;
+  purpose?: string;
+  content?: string;
+};
+
+export type StoryOutlineDto = {
+  title?: string;
+  summary?: string;
+  structure_type?: string;
+  structure_reasoning?: string;
+  story_beats?: StoryBeatDto[];
+};
+
 export type StoryBlueprintDto = {
   blueprint_schema_version?: string;
+  story_outline?: StoryOutlineDto;
   story_overview?: Record<string, unknown>;
   characters?: unknown[];
   scenes?: unknown[];
@@ -353,6 +417,10 @@ export type PipelineSummaryDto = {
   asset_counts?: { characters: number; scenes: number; products: number };
   segment_scripts_count?: number;
   product_context?: PipelineProductContextBlockDto | null;
+  creative_intent_input?: CreativeIntentInputDto | null;
+  product_input?: ProductInputDto | null;
+  product_understanding?: Record<string, unknown> | null;
+  creative_brief?: CreativeBriefDto | null;
   story_blueprint?: PipelineStoryBlueprintWrapper | null;
   assets?: PipelineAssetsBundleDto | null;
   segment_scripts?: SegmentScriptPipelineRowDto[];

@@ -23,6 +23,25 @@ const SHOW_CREATIVE_BLUEPRINT_DEBUG = false;
 
 const EMPTY_VM = storyBlueprintDtoToPageView(null);
 
+function hasDisplayValue(value: string | undefined | null): value is string {
+  const text = String(value || '').trim();
+  return Boolean(text && text !== '—');
+}
+
+function segmentDetailRows(seg: StoryBlueprintPageSegmentVm): Array<{ label: string; value: string; accent?: boolean; wide?: boolean }> {
+  return [
+    { label: '阶段名', value: seg.stageName },
+    { label: '目标', value: seg.goal },
+    { label: '产品露出', value: seg.productPlacement, accent: true },
+    { label: '关键信息', value: seg.keyMessage },
+    { label: '剧情概要', value: seg.synopsis },
+    { label: '段落职责', value: seg.segmentRole },
+    { label: '情绪状态', value: seg.emotionalState },
+    { label: '预期资产', value: seg.expectedAssets.join('、') },
+    { label: '转场到下一段', value: seg.transitionToNext, wide: true },
+  ].filter((item) => hasDisplayValue(item.value));
+}
+
 /**
  * Framer `step2/page.tsx` 映射（布局 / 三栏 / 字段卡片 / Segment 折叠 / 交互位置一致）。
  */
@@ -59,6 +78,8 @@ export function ShortDramaStoryBlueprintPage() {
 
   const hasBlueprint = Boolean(pipeline?.story_blueprint?.blueprint && Object.keys(pipeline.story_blueprint.blueprint).length);
   const step2Stale = pipeline?.project?.step_status?.step_2 === 'stale';
+  const creativeBrief = pipeline?.creative_brief ?? pipeline?.project?.creative_brief_structured ?? null;
+  const hasCreativeBrief = Boolean(creativeBrief && Object.keys(creativeBrief).length);
 
   const blueprintRaw = pipeline?.story_blueprint?.blueprint;
   const creativeBlueprintV2Debug = useMemo(() => {
@@ -79,9 +100,10 @@ export function ShortDramaStoryBlueprintPage() {
   }, [blueprintRaw, SHOW_CREATIVE_BLUEPRINT_DEBUG]);
 
   const storyRegenerateLocked = isStoryPipelineLockedForRegenerate(pipeline);
+  const generateDisabledReason = !hasCreativeBrief ? '请先完成商品理解并生成 AI 创作理解。' : storyRegenerateLocked ? STORY_REGENERATE_LOCKED_TITLE : undefined;
 
   const handleRegenerate = () => {
-    if (storyRegenerateLocked) return;
+    if (storyRegenerateLocked || !hasCreativeBrief) return;
     void generate();
   };
 
@@ -125,10 +147,15 @@ export function ShortDramaStoryBlueprintPage() {
     }
   };
 
-  const baseScriptFields: Array<{ key: 'title' | 'premise'; label: string; icon: string }> = [
+  const baseScriptFields: Array<{ key: 'title' | 'summary'; label: string; icon: string }> = [
     { key: 'title', label: '剧集标题', icon: 'ri-quill-pen-line' },
-    { key: 'premise', label: '故事前提 Premise', icon: 'ri-book-open-line' },
+    { key: 'summary', label: '创作摘要', icon: 'ri-book-open-line' },
   ];
+  const visibleBaseScriptFields = baseScriptFields.filter((field) => hasDisplayValue(script[field.key]));
+  const structureCards = [
+    { label: 'AI 选择的结构类型', value: script.scriptStructureType },
+    { label: '结构节奏', value: script.structureRhythm },
+  ].filter((item) => hasDisplayValue(item.value));
 
   return (
     <div className="min-h-screen bg-white" style={{ fontFamily: "'Inter', sans-serif" }}>
@@ -167,9 +194,9 @@ export function ShortDramaStoryBlueprintPage() {
             </div>
           ) : null}
 
-          {step2Stale ? (
+          {step2Stale && hasBlueprint ? (
             <div className="mb-4 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-[13px] text-amber-900">
-              你已修改项目基础设定，当前剧本基于旧设定生成，请重新生成或更新。
+              AI 创作理解已更新，当前剧本需要重新生成。
             </div>
           ) : null}
 
@@ -187,13 +214,18 @@ export function ShortDramaStoryBlueprintPage() {
 
           {!missingProject && !pipelineLoading && !hasBlueprint ? (
             <div className="mb-6 rounded-2xl border border-[#EAEAEA] bg-[#F7F8FA] px-5 py-4 text-[13px] text-[#444444]">
-              <p className="font-semibold text-[#1D1D1F]">{SHORT_DRAMA_UI.storyPage.noBlueprintTitle}</p>
+              <p className="font-semibold text-[#1D1D1F]">尚未生成剧本</p>
               <p className="mt-1 text-[#8E8E93]">当前还没有剧本大纲，请先生成。</p>
+              {!hasCreativeBrief ? (
+                <p className="mt-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-[12.5px] text-amber-900">
+                  请先完成商品理解并生成 AI 创作理解。
+                </p>
+              ) : null}
               <button
                 type="button"
                 onClick={() => void generate()}
-                disabled={generateLoading || storyRegenerateLocked}
-                title={storyRegenerateLocked ? STORY_REGENERATE_LOCKED_TITLE : undefined}
+                disabled={generateLoading || storyRegenerateLocked || !hasCreativeBrief}
+                title={generateDisabledReason}
                 className="mt-4 flex items-center gap-2 rounded-xl bg-[#1D1D1F] px-5 py-2.5 text-[13px] font-semibold text-white disabled:cursor-not-allowed disabled:opacity-60"
               >
                 {generateLoading ? (
@@ -217,11 +249,11 @@ export function ShortDramaStoryBlueprintPage() {
               <button
                 type="button"
                 onClick={handleRegenerate}
-                disabled={generateLoading || missingProject || !hasBlueprint || storyRegenerateLocked}
-                title={storyRegenerateLocked ? STORY_REGENERATE_LOCKED_TITLE : undefined}
+                disabled={generateLoading || missingProject || !hasBlueprint || storyRegenerateLocked || !hasCreativeBrief}
+                title={generateDisabledReason}
                 className="flex cursor-pointer items-center gap-2 whitespace-nowrap rounded-lg border border-[#EAEAEA] bg-[#F7F8FA] px-4 py-2 text-[12.5px] font-medium text-[#444444] transition-all duration-200 disabled:cursor-not-allowed disabled:opacity-60"
                 onMouseEnter={(e) => {
-                  if (!generateLoading && hasBlueprint && !storyRegenerateLocked)
+                  if (!generateLoading && hasBlueprint && !storyRegenerateLocked && hasCreativeBrief)
                     (e.currentTarget as HTMLButtonElement).style.background = '#EAEAEA';
                 }}
                 onMouseLeave={(e) => {
@@ -234,6 +266,7 @@ export function ShortDramaStoryBlueprintPage() {
                 />
                 重新生成
               </button>
+              {hasBlueprint ? (
               <button
                 type="button"
                 onClick={() => setIsEditing(isEditing ? null : 'all')}
@@ -252,6 +285,7 @@ export function ShortDramaStoryBlueprintPage() {
                 <i className="ri-edit-line text-[12px]" aria-hidden />
                 手动编辑
               </button>
+              ) : null}
             </div>
           </div>
 
@@ -289,22 +323,25 @@ export function ShortDramaStoryBlueprintPage() {
             </details>
           ) : null}
 
+          {hasBlueprint ? (
           <div className="mb-8 space-y-3">
+            {structureCards.length ? (
             <div className="grid gap-3 lg:grid-cols-2">
-              <div className="rounded-2xl border border-[#EAEAEA] bg-white p-5">
-                <p className="mb-1 text-[12px] font-bold uppercase tracking-wider text-[#8E8E93]">剧本类型</p>
-                <p className="text-[14px] font-semibold text-[#1D1D1F]">{script.scriptStructureType}</p>
-              </div>
-              <div className="rounded-2xl border border-[#EAEAEA] bg-white p-5">
-                <p className="mb-1 text-[12px] font-bold uppercase tracking-wider text-[#8E8E93]">结构节奏</p>
-                <p className="text-[14px] font-semibold text-[#1D1D1F]">{script.structureRhythm}</p>
-              </div>
+              {structureCards.map((item) => (
+                <div key={item.label} className="rounded-2xl border border-[#EAEAEA] bg-white p-5">
+                  <p className="mb-1 text-[12px] font-bold uppercase tracking-wider text-[#8E8E93]">{item.label}</p>
+                  <p className="text-[14px] font-semibold text-[#1D1D1F]">{item.value}</p>
+                </div>
+              ))}
             </div>
+            ) : null}
+            {hasDisplayValue(script.structureReason) ? (
             <div className="rounded-2xl border border-[#EAEAEA] bg-white p-5">
               <p className="mb-1 text-[12px] font-bold uppercase tracking-wider text-[#8E8E93]">设计原因</p>
               <p className="text-[13.5px] leading-relaxed text-[#444444]">{script.structureReason}</p>
             </div>
-            {baseScriptFields.map((field) => (
+            ) : null}
+            {visibleBaseScriptFields.map((field) => (
               <div
                 key={field.key}
                 className="rounded-2xl p-5 transition-all duration-200"
@@ -414,12 +451,14 @@ export function ShortDramaStoryBlueprintPage() {
                     style={{ background: '#F7F8FA', border: '1px solid #EAEAEA' }}
                   />
                 ) : (
-                  <p className="text-[13.5px] leading-relaxed text-[#444444]">{section.content}</p>
+                  <p className="whitespace-pre-line text-[13.5px] leading-relaxed text-[#444444]">{section.content}</p>
                 )}
               </div>
             ))}
           </div>
+          ) : null}
 
+          {hasBlueprint && segments.length ? (
           <div className="mb-8">
             <div className="mb-4 flex items-center gap-2">
               <div className="flex h-5 w-5 items-center justify-center rounded-md bg-[#F5F5F7]">
@@ -455,8 +494,12 @@ export function ShortDramaStoryBlueprintPage() {
                       </div>
                       <div>
                         <span className="text-[14px] font-bold text-[#1D1D1F]">{seg.name}</span>
-                        <span className="ml-2 rounded-full bg-[#F5F5F7] px-2 py-0.5 text-[10px] text-[#6E6E73]">{seg.stageName}</span>
-                        <span className="ml-2 text-[11px] text-[#8E8E93]">{seg.duration}</span>
+                        {hasDisplayValue(seg.stageName) ? (
+                          <span className="ml-2 rounded-full bg-[#F5F5F7] px-2 py-0.5 text-[10px] text-[#6E6E73]">{seg.stageName}</span>
+                        ) : null}
+                        {hasDisplayValue(seg.duration) ? (
+                          <span className="ml-2 text-[11px] text-[#8E8E93]">{seg.duration}</span>
+                        ) : null}
                       </div>
                     </div>
                     <i
@@ -467,51 +510,23 @@ export function ShortDramaStoryBlueprintPage() {
                   </div>
                   {editedSegment === seg.id ? (
                     <div className="mt-4 grid grid-cols-2 gap-3 text-[12px] lg:grid-cols-3">
-                      <div>
-                        <p className="mb-1 text-[#8E8E93]">阶段名</p>
-                        <p className="leading-snug text-[#444444]">{seg.stageName}</p>
-                      </div>
-                      <div>
-                        <p className="mb-1 text-[#8E8E93]">目标</p>
-                        <p className="leading-snug text-[#444444]">{seg.goal}</p>
-                      </div>
-                      <div>
-                        <p className="mb-1 text-[#8E8E93]">产品露出</p>
-                        <p className="font-semibold" style={{ color: seg.color }}>
-                          {seg.productPlacement}
-                        </p>
-                      </div>
-                      <div>
-                        <p className="mb-1 text-[#8E8E93]">关键信息</p>
-                        <p className="leading-snug text-[#444444]">{seg.keyMessage}</p>
-                      </div>
-                      <div>
-                        <p className="mb-1 text-[#8E8E93]">剧情概要</p>
-                        <p className="leading-snug text-[#444444]">{seg.synopsis}</p>
-                      </div>
-                      <div>
-                        <p className="mb-1 text-[#8E8E93]">段落职责</p>
-                        <p className="leading-snug text-[#444444]">{seg.segmentRole}</p>
-                      </div>
-                      <div>
-                        <p className="mb-1 text-[#8E8E93]">情绪状态</p>
-                        <p className="leading-snug text-[#444444]">{seg.emotionalState}</p>
-                      </div>
-                      <div>
-                        <p className="mb-1 text-[#8E8E93]">预期资产</p>
-                        <p className="leading-snug text-[#444444]">{seg.expectedAssets.length ? seg.expectedAssets.join('、') : '—'}</p>
-                      </div>
-                      <div className="lg:col-span-3">
-                        <p className="mb-1 text-[#8E8E93]">转场到下一段</p>
-                        <p className="leading-snug text-[#444444]">{seg.transitionToNext}</p>
-                      </div>
+                      {segmentDetailRows(seg).map((item) => (
+                        <div key={`${seg.id}-${item.label}`} className={item.wide ? 'lg:col-span-3' : undefined}>
+                          <p className="mb-1 text-[#8E8E93]">{item.label}</p>
+                          <p className={item.accent ? 'font-semibold' : 'leading-snug text-[#444444]'} style={item.accent ? { color: seg.color } : undefined}>
+                            {item.value}
+                          </p>
+                        </div>
+                      ))}
                     </div>
                   ) : null}
                 </div>
               ))}
             </div>
           </div>
+          ) : null}
 
+          {hasBlueprint ? (
           <div className="flex items-center justify-between pt-6" style={{ borderTop: '1px solid #EAEAEA' }}>
             <button
               type="button"
@@ -542,6 +557,7 @@ export function ShortDramaStoryBlueprintPage() {
               <i className="ri-arrow-right-line text-[13px]" aria-hidden />
             </button>
           </div>
+          ) : null}
         </main>
 
         <StoryBlueprintRightRail

@@ -22,6 +22,17 @@ from ..utils.prompts import STORY_PLANNER_SYSTEM_PROMPT
 logger = logging.getLogger(__name__)
 
 CREATIVE_BLUEPRINT_V2_SCHEMA = "creative_blueprint_v2"
+_S2_PAYLOAD_MAX_CHARS = 200_000
+_S2_STRING_MAX_CHARS = 5_000
+_S2_IMAGE_DATA_KEY_MARKERS = (
+    "image_url",
+    "image_urls",
+    "url",
+    "data_url",
+    "base64",
+    "file_data",
+    "raw_image",
+)
 
 
 def _trace(tag: str, payload: dict[str, Any]) -> None:
@@ -69,10 +80,21 @@ def _compact_creative_context_for_story(project_config: Dict[str, Any]) -> Dict[
     cbd = project_config.get("creative_brief_data")
     if not isinstance(cbd, dict):
         return {}
+    if "ai_interpretation" in cbd or "source_inputs" in cbd:
+        return {
+            "creative_brief": cbd,
+            "source_inputs": project_config.get("source_inputs") or cbd.get("source_inputs") or {},
+        }
     keep: Dict[str, Any] = {}
-    for k in ("market_context", "visual_constraints", "creative_strategy", "project_constraints"):
-        if k in cbd:
-            keep[k] = cbd[k]
+    pc = cbd.get("project_constraints")
+    if isinstance(pc, dict):
+        slim_pc = dict(pc)
+        raw_language_policy = project_config.get("language_policy")
+        language_policy = raw_language_policy if isinstance(raw_language_policy, dict) else {}
+        target_market = language_policy.get("target_market") or project_config.get("target_market")
+        if target_market:
+            slim_pc["target_market"] = target_market
+        keep["project_constraints"] = slim_pc
     pf = cbd.get("product_facts")
     if isinstance(pf, dict):
         slim = {kk: pf[kk] for kk in ("name", "product_visual_features", "category", "brand") if kk in pf}
@@ -89,20 +111,375 @@ _PRODUCT_STORY_FIELDS = (
     "target_users",
     "usage_scenarios",
     "visual_features",
-    "emotional_value",
-    "suitable_story_angles",
     "user_pain_points",
-    "visual_risk_notes",
     "immutable_structure_constraints",
     "product_form",
     "key_functions",
-    "consistency_notes",
 )
 
 
 def _compact_product_for_story(product: ProductContextSchema) -> Dict[str, Any]:
     d = product.model_dump()
     return {k: d[k] for k in _PRODUCT_STORY_FIELDS if k in d}
+
+
+def _as_dict(value: Any) -> dict[str, Any]:
+    return value if isinstance(value, dict) else {}
+
+
+def _as_list(value: Any) -> list[Any]:
+    return value if isinstance(value, list) else []
+
+
+def _clip_s2_text(value: Any, max_chars: int = _S2_STRING_MAX_CHARS) -> str:
+    text = str(value or "").strip()
+    if len(text) <= max_chars:
+        return text
+    return text[: max_chars - 15] + "...[truncated]"
+
+
+def _s2_string_has_image_data(value: str) -> bool:
+    low = value.lower()
+    return "data:image" in low or "base64," in low
+
+
+def _s2_key_is_image_data(key: str) -> bool:
+    low = str(key or "").lower()
+    return any(marker in low for marker in _S2_IMAGE_DATA_KEY_MARKERS)
+
+
+def _sanitize_s2_payload(value: Any, *, key: str = "") -> Any:
+    if isinstance(value, dict):
+        return {str(k): _sanitize_s2_payload(v, key=str(k)) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_sanitize_s2_payload(item, key=key) for item in value]
+    if isinstance(value, str):
+        if _s2_string_has_image_data(value):
+            return "[omitted_base64_image_data]"
+        if _s2_key_is_image_data(key) and len(value) > 512:
+            return "[omitted_image_data]"
+        if len(value) > _S2_STRING_MAX_CHARS:
+            return _clip_s2_text(value)
+        return value
+    return value
+
+
+def _compact_creative_brief_for_s2(creative_brief: Any) -> dict[str, Any]:
+    brief = dict(creative_brief) if isinstance(creative_brief, dict) else {}
+    brief.pop("source_inputs", None)
+    return _sanitize_s2_payload(brief)
+
+
+def _compact_product_understanding_for_s2(product_understanding: Any, creative_brief: dict[str, Any]) -> dict[str, Any]:
+    src = product_understanding if isinstance(product_understanding, dict) else {}
+    if not src:
+        src = _as_dict(creative_brief.get("product_understanding"))
+    out: dict[str, Any] = {}
+    for key in (
+        "product_summary",
+        "visual_identity",
+        "use_contexts",
+        "likely_selling_angles",
+        "avoid_notes",
+        "uncertainties",
+        "what_it_is",
+        "key_visual_features",
+        "likely_use_situations",
+    ):
+        if key in src:
+            out[key] = src[key]
+    return _sanitize_s2_payload(out)
+
+
+def _build_source_summary_for_s2(source_inputs: Any) -> dict[str, Any]:
+    source = _as_dict(source_inputs)
+    product_input = _as_dict(source.get("product_input"))
+    images = _as_list(product_input.get("product_images"))
+    return {
+        "has_product_images": bool(images),
+        "product_image_count": len(images),
+        "product_note": _clip_s2_text(product_input.get("product_note")),
+        "product_url_present": bool(str(product_input.get("product_url") or "").strip()),
+    }
+
+
+def build_s2_compact_context(
+    *,
+    project_id: int,
+    project_config: Dict[str, Any],
+) -> dict[str, Any]:
+    source_inputs = _as_dict(project_config.get("source_inputs"))
+    creative_intent_input = _as_dict(source_inputs.get("creative_intent_input"))
+    creative_brief = _compact_creative_brief_for_s2(project_config.get("creative_brief_data") or {})
+    product_understanding = _compact_product_understanding_for_s2(
+        source_inputs.get("product_understanding"),
+        creative_brief,
+    )
+    payload = {
+        "project_id": project_id,
+        "language_policy": project_config.get("language_policy") or {},
+        "creative_brief": creative_brief,
+        "creative_intent_input_summary": {
+            "intent_text": _clip_s2_text(creative_intent_input.get("intent_text")),
+            "platform_hints": [str(x).strip() for x in _as_list(creative_intent_input.get("platform_hints")) if str(x).strip()],
+            "duration_hint": str(creative_intent_input.get("duration_hint") or "").strip(),
+            "aspect_ratio_hint": str(creative_intent_input.get("aspect_ratio_hint") or "").strip(),
+        },
+        "product_understanding": product_understanding,
+        "source_summary": _build_source_summary_for_s2(source_inputs),
+    }
+    return _sanitize_s2_payload(payload)
+
+
+def _inspect_s2_payload(payload: dict[str, Any]) -> tuple[str, bool, bool]:
+    payload_json = json.dumps(payload, ensure_ascii=False, default=str)
+    low = payload_json.lower()
+    return payload_json, "data:image" in low, "base64," in low
+
+
+def _validate_s2_payload_for_provider(project_id: int, payload: dict[str, Any]) -> int:
+    payload_json, has_data_url, has_base64_marker = _inspect_s2_payload(payload)
+    source_summary_chars = len(json.dumps(payload.get("source_summary") or {}, ensure_ascii=False, default=str))
+    creative_brief_chars = len(json.dumps(payload.get("creative_brief") or {}, ensure_ascii=False, default=str))
+    logger.info(
+        "[S2_INPUT_CONTEXT_SANITIZED] project_id=%s user_payload_chars=%s has_data_url=%s has_base64_marker=%s payload_keys=%s creative_brief_chars=%s source_summary_chars=%s",
+        project_id,
+        len(payload_json),
+        has_data_url,
+        has_base64_marker,
+        list(payload.keys()),
+        creative_brief_chars,
+        source_summary_chars,
+    )
+    logger.info(
+        "[S2_USE_CREATIVE_BRIEF] project_id=%s has_creative_brief=%s creative_brief_keys=%s creative_brief_chars=%s final_payload_chars=%s has_data_url=%s has_base64_marker=%s",
+        project_id,
+        bool(payload.get("creative_brief")),
+        list(_as_dict(payload.get("creative_brief")).keys()),
+        creative_brief_chars,
+        len(payload_json),
+        has_data_url,
+        has_base64_marker,
+    )
+    if has_data_url or has_base64_marker:
+        raise ShortDramaInvalidModelOutputError(
+            "S2 payload still contains image data after sanitization",
+            code="s2_payload_contains_image_data",
+        )
+    if len(payload_json) > _S2_PAYLOAD_MAX_CHARS:
+        raise ShortDramaInvalidModelOutputError(
+            "S2 payload too large after sanitization",
+            code="s2_payload_too_large",
+        )
+    return len(payload_json)
+
+
+_S2_SUSPICIOUS_IMAGE_KEY_MARKERS = (
+    "image_analysis",
+    "raw_image_analysis",
+    "vision_analysis",
+    "ocr",
+    "image_understanding",
+    "image_caption",
+    "visual_description",
+    "image_parse_result",
+    "per_image_notes",
+    "extracted_from_images",
+    "raw_inputs",
+    "image_understanding_json",
+    "normalized_context",
+    "debug",
+    "trace",
+    "field_meta",
+    "source_trace",
+)
+
+
+def _s2_value_char_len(value: Any) -> int:
+    if value is None:
+        return 0
+    if isinstance(value, str):
+        return len(value)
+    if isinstance(value, (list, dict)):
+        return len(json.dumps(value, ensure_ascii=False))
+    return len(str(value))
+
+
+def _s2_collect_suspicious_image_fields(obj: Any, prefix: str = "") -> list[tuple[str, int]]:
+    hits: list[tuple[str, int]] = []
+    if isinstance(obj, dict):
+        for key, value in obj.items():
+            path = f"{prefix}.{key}" if prefix else str(key)
+            key_low = str(key).lower()
+            if any(marker in key_low for marker in _S2_SUSPICIOUS_IMAGE_KEY_MARKERS):
+                hits.append((path, _s2_value_char_len(value)))
+            hits.extend(_s2_collect_suspicious_image_fields(value, path))
+    elif isinstance(obj, list):
+        for idx, item in enumerate(obj):
+            hits.extend(_s2_collect_suspicious_image_fields(item, f"{prefix}[{idx}]"))
+    return hits
+
+
+def _s2_count_image_urls(obj: Any) -> int:
+    count = 0
+    if isinstance(obj, str):
+        text = obj.strip().lower()
+        if text.startswith(("http://", "https://", "data:image")):
+            return 1
+        return 0
+    if isinstance(obj, dict):
+        return sum(_s2_count_image_urls(v) for v in obj.values())
+    if isinstance(obj, list):
+        return sum(_s2_count_image_urls(v) for v in obj)
+    return 0
+
+
+def _s2_has_key_named(obj: Any, key_name: str) -> bool:
+    if isinstance(obj, dict):
+        if key_name in obj:
+            return True
+        return any(_s2_has_key_named(v, key_name) for v in obj.values())
+    if isinstance(obj, list):
+        return any(_s2_has_key_named(v, key_name) for v in obj)
+    return False
+
+
+def _log_s2_payload_audit(project_id: int, user_payload: Dict[str, Any]) -> None:
+    payload_json = json.dumps(user_payload, ensure_ascii=False)
+    product = user_payload.get("product") if isinstance(user_payload.get("product"), dict) else {}
+    creative_context = (
+        user_payload.get("creative_context") if isinstance(user_payload.get("creative_context"), dict) else {}
+    )
+    suspicious = _s2_collect_suspicious_image_fields(user_payload)
+    suspicious_paths = [path for path, _ in suspicious]
+    suspicious_chars = {path: chars for path, chars in suspicious}
+    logger.info(
+        "[S2_PAYLOAD_AUDIT] %s",
+        json.dumps(
+            {
+                "project_id": project_id,
+                "top_keys": list(user_payload.keys()),
+                "user_payload_chars": len(payload_json),
+                "product_keys": list(product.keys()),
+                "creative_context_keys": list(creative_context.keys()),
+                "suspicious_image_text_fields": suspicious_paths,
+                "suspicious_image_text_chars": suspicious_chars,
+                "image_url_count": _s2_count_image_urls(user_payload),
+                "has_raw_image_analysis": _s2_has_key_named(user_payload, "raw_image_analysis"),
+            },
+            ensure_ascii=False,
+        ),
+    )
+
+
+_S2_FIELD_AUDIT_PRODUCT_FIELDS = (
+    "product_name",
+    "product_category",
+    "product_summary",
+    "visual_features",
+    "core_selling_points",
+    "key_functions",
+    "usage_scenarios",
+    "target_users",
+    "user_pain_points",
+    "immutable_structure_constraints",
+    "product_form",
+)
+
+_S2_FIELD_AUDIT_CREATIVE_CONTEXT_FIELDS = (
+    "product_facts",
+    "project_constraints",
+)
+
+_S2_SUSPICIOUS_CREATIVE_KEYWORDS = (
+    "剧情",
+    "故事",
+    "剧本",
+    "镜头",
+    "转化",
+    "钩子",
+    "冲突",
+    "情绪弧",
+    "cta",
+    "场景",
+    "角色",
+)
+
+
+def _s2_audit_clip_value(value: Any, max_chars: int = 800, max_items: int = 10) -> Any:
+    if isinstance(value, str):
+        return value if len(value) <= max_chars else value[: max_chars - 3] + "..."
+    if isinstance(value, list):
+        clipped = [_s2_audit_clip_value(item, max_chars=max_chars, max_items=max_items) for item in value[:max_items]]
+        text = json.dumps(clipped, ensure_ascii=False, default=str)
+        if len(text) <= max_chars:
+            return clipped
+        return text[: max_chars - 3] + "..."
+    if isinstance(value, dict):
+        clipped_dict = {
+            str(k): _s2_audit_clip_value(v, max_chars=max_chars, max_items=max_items)
+            for k, v in value.items()
+        }
+        text = json.dumps(clipped_dict, ensure_ascii=False, default=str)
+        if len(text) <= max_chars:
+            return clipped_dict
+        return text[: max_chars - 3] + "..."
+    return value
+
+
+def _s2_field_char_count(value: Any) -> int:
+    if value is None:
+        return 0
+    if isinstance(value, str):
+        return len(value)
+    return len(json.dumps(value, ensure_ascii=False, default=str))
+
+
+def _s2_collect_suspicious_creative_fields(fields: dict[str, Any]) -> list[str]:
+    hits: list[str] = []
+    for path, value in fields.items():
+        text = json.dumps(value, ensure_ascii=False, default=str) if not isinstance(value, str) else value
+        low = text.lower()
+        if any(keyword.lower() in low for keyword in _S2_SUSPICIOUS_CREATIVE_KEYWORDS):
+            hits.append(path)
+    return hits
+
+
+def _log_s2_payload_field_audit(project_id: int, user_payload: Dict[str, Any]) -> None:
+    product = user_payload.get("product") if isinstance(user_payload.get("product"), dict) else {}
+    creative_context = (
+        user_payload.get("creative_context") if isinstance(user_payload.get("creative_context"), dict) else {}
+    )
+    watched_fields: dict[str, Any] = {
+        **{f"product.{field}": product.get(field) for field in _S2_FIELD_AUDIT_PRODUCT_FIELDS},
+        **{
+            f"creative_context.{field}": creative_context.get(field)
+            for field in _S2_FIELD_AUDIT_CREATIVE_CONTEXT_FIELDS
+        },
+    }
+    logger.info(
+        "[S2_PAYLOAD_FIELD_AUDIT] %s",
+        json.dumps(
+            {
+                "project_id": project_id,
+                "user_payload_chars": len(json.dumps(user_payload, ensure_ascii=False, default=str)),
+                "product": {
+                    field: _s2_audit_clip_value(product.get(field))
+                    for field in _S2_FIELD_AUDIT_PRODUCT_FIELDS
+                },
+                "creative_context": {
+                    field: _s2_audit_clip_value(creative_context.get(field))
+                    for field in _S2_FIELD_AUDIT_CREATIVE_CONTEXT_FIELDS
+                },
+                "field_char_counts": {
+                    path: _s2_field_char_count(value)
+                    for path, value in watched_fields.items()
+                },
+                "suspicious_creative_fields": _s2_collect_suspicious_creative_fields(watched_fields),
+            },
+            ensure_ascii=False,
+        ),
+    )
 
 
 def _collect_non_empty_overwrites(before: dict[str, Any], after: dict[str, Any]) -> list[dict[str, Any]]:
@@ -390,15 +767,9 @@ class XAIStoryPlannerProvider:
             {"project_id": project_id, "stage": "STORY_GENERATION", "provider": "xai"},
         )
         try:
-            s2_payload = {
-                "project_id": project_id,
-                "project_config": _compact_project_config_for_story(project_config),
-                "language_policy": project_config.get("language_policy") or {},
-                "language_prompt_rules": str(project_config.get("language_prompt_rules") or ""),
-                "creative_context": _compact_creative_context_for_story(project_config),
-                "creative_intent": str(project_config.get("effective_creative_intent", "") or ""),
-                "product": _compact_product_for_story(product),
-            }
+            s2_payload = build_s2_compact_context(project_id=project_id, project_config=project_config)
+            _log_s2_payload_audit(project_id, s2_payload)
+            _log_s2_payload_field_audit(project_id, s2_payload)
             _trace(
                 "S2_INPUT_CONTEXT",
                 {
@@ -409,7 +780,7 @@ class XAIStoryPlannerProvider:
                 },
             )
             sp_len = len(STORY_PLANNER_SYSTEM_PROMPT)
-            up_chars = len(json.dumps(s2_payload, ensure_ascii=False))
+            up_chars = _validate_s2_payload_for_provider(project_id, s2_payload)
             logger.info(
                 "[S2_PROMPT] %s",
                 json.dumps(
@@ -512,24 +883,8 @@ def _duration_budget_seconds(raw: Any) -> float:
 
 
 def _segment_count_for_project(total: float, project_config: Dict[str, Any], product: ProductContextSchema) -> int:
-    """S2 segments are story paragraphs, not shots; count follows duration and ad form."""
-    form = str(project_config.get("content_form") or project_config.get("format") or "").strip().lower()
-    style = str(project_config.get("narrative_style") or project_config.get("style") or "").strip().lower()
-    product_type = " ".join([product.product_category, product.product_form]).lower()
-    if total <= 35:
-        low, high = 3, 5
-    elif total <= 50:
-        low, high = 5, 7
-    else:
-        low, high = 6, 8
-    count = low
-    if form in {"series", "story", "story_drama"} or style in {"suspense", "emotional", "comedy"}:
-        count += 1
-    if any(token in product_type for token in ("software", "saas", "app", "课程", "服务")):
-        count += 1
-    if str(project_config.get("marketing_goal") or "") in {"product_demo", "comparison", "corporate_promo"}:
-        count += 1
-    return max(low, min(high, count))
+    """Deprecated: S2 decides story paragraph count from the creative brief."""
+    return 0
 
 
 def _segment_durations(total: float, count: int) -> list[float]:
@@ -1630,7 +1985,7 @@ def _normalize_blueprint_legacy_for_execution(
         dict(blueprint.scene_goals) if isinstance(blueprint.scene_goals, dict) else blueprint.scene_goals
     )
     visual_lines = _visual_requirements_as_str_list(blueprint.visual_requirements)
-    if aspect_ratio:
+    if aspect_ratio and not explicit_creative_context:
         visual_lines = [*visual_lines, f"composition aspect ratio {aspect_ratio}"]
     visual_requirements_out: Any = [x for x in visual_lines if x]
     video_language = str((project_config.get("video_language") or workflow_language)).strip() or workflow_language

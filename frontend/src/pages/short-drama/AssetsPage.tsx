@@ -5,7 +5,7 @@ import { AssetLightbox, type LightboxItem } from './components/AssetLightbox';
 import { AssetInteractionModal, type AssetEditorPayload, type AssetInteractionEntity, type AssetKind } from './components/AssetInteractionModal';
 import { useEffectiveShortDramaProjectId } from './hooks/useEffectiveShortDramaProjectId';
 import { ShortDramaApiError, analyzeShortDramaAssetReferenceImage, createShortDramaAssetFromImage, createShortDramaAssetLibrary, generateShortDramaAssetImages, generateShortDramaAssetSpecs, getShortDramaAssetLibraryDetail, getShortDramaPipeline, listShortDramaAssetLibrary, regenerateShortDramaAssetLibrary, touchShortDramaProjectStep, updateShortDramaAssetLibrary } from '@/services/shortDramaApi';
-import type { AssetImageDto, AssetLibraryItemDto, PipelineSummaryDto, ShortDramaProjectDto } from '@/types/shortDramaApi';
+import type { AssetLibraryItemDto, PipelineSummaryDto, ShortDramaProjectDto } from '@/types/shortDramaApi';
 import { getAssetThumbnailUrl, normalizeAssetDisplayName, resolveAssetImageUrl } from './utils/assetsPageAdapters';
 import { withProjectQuery } from './utils/shortDramaRoutes';
 import { buildRawStructureSnapshot, buildStructureSummary, resolveAssetRoleLabel, resolveAssetSourceLabel, resolveNarrativeFunctionLabel, resolveTypeFields, resolveVisualAnchorImageId } from './utils/assetSpecDisplay';
@@ -57,52 +57,23 @@ function failedStageLooksLikeS3Assets(failedStage: string): boolean {
   return isS3AssetPipelineStage(s) || s.includes('s3_assets') || s.includes('s3_images') || (s.includes('s3') && s.includes('asset'));
 }
 
-/** 项目已进入/超过 S3 相关路径：有剧本蓝图、已到 step_3+、或 effective 已过 story 等 */
-function pipelineProjectAtOrPastS3Entry(params: {
-  lastActiveStep: string;
-  hasStoryBlueprint: boolean;
-  effectiveStatus: string;
-  stepStatus: Record<string, string>;
-  currentStage: string;
-}): boolean {
-  const las = (params.lastActiveStep || '').trim().toLowerCase();
-  if (las === 'step_3' || las === 'step_4' || las === 'overview') return true;
-  if (params.hasStoryBlueprint) return true;
-  const eff = (params.effectiveStatus || '').trim().toLowerCase();
-  const postStory = new Set([
-    'story_generated',
-    'asset_specs_generated',
-    'assets_rendering',
-    'assets_ready',
-    'segments_generated',
-    'segment_scripts_generated',
-    'video_rendering',
-    'completed',
-  ]);
-  if (postStory.has(eff)) return true;
-  if (isS3AssetPipelineStage(String(params.currentStage || '').trim().toLowerCase())) return true;
-  const s3 = String(params.stepStatus.step_3 || '').trim().toLowerCase();
-  if (s3 === 'generating' || s3 === 'completed' || s3 === 'stale' || s3 === 'failed') return true;
-  return false;
-}
-
 /**
  * S3 资产网格区 UI：仅此函数决策 waiting / ready / empty / failed，优先级固定。
  * 1) 当前 tab 有行 → ready
  * 2) 已确认 pipeline 失败 → failed
- * 3) 项目已进入/超过 S3 且当前 tab 无行 → waiting（含生成中、同步延迟；不含已确认失败）
- * 4) 其余 → empty（未进入 S3 或尚无剧本进度等）
+ * 3) 后端真实 S3 任务或用户触发生成后 → waiting
+ * 4) 其余 → empty（可手动触发生成，不用本地推断伪装成生成中）
  */
 export type S3AssetGridUiState = 'waiting' | 'ready' | 'empty' | 'failed';
 
 export function getS3AssetUiState(input: {
   currentTabRowCount: number;
   confirmedS3PipelineFailure: boolean;
-  atOrPastS3: boolean;
+  workInProgress: boolean;
 }): S3AssetGridUiState {
   if (input.currentTabRowCount > 0) return 'ready';
   if (input.confirmedS3PipelineFailure) return 'failed';
-  if (input.atOrPastS3) return 'waiting';
+  if (input.workInProgress) return 'waiting';
   return 'empty';
 }
 
@@ -246,18 +217,6 @@ function shouldContinuePipelinePolling(
   if (listed === 0 && (ap === 'checking' || ap === 'generating_specs' || ap === 'generating_images')) return true;
   if (opts.confirmedFailureRef.current) return false;
   if (listed > 0 || rows > 0) return false;
-  const effTerminal = String(p.project?.effective_status || p.project?.suggested_status || p.project?.status || '').trim().toLowerCase();
-  const pipelineTerminalS3 = ['assets_ready', 'segments_generated', 'completed'].includes(effTerminal);
-  const atPastSnapshot = pipelineProjectAtOrPastS3Entry({
-    lastActiveStep: String(p.project?.last_active_step || ''),
-    hasStoryBlueprint: Boolean(p.has_story_blueprint),
-    effectiveStatus: String(p.project?.effective_status || p.project?.suggested_status || p.project?.status || ''),
-    stepStatus: (p.project?.step_status || {}) as Record<string, string>,
-    currentStage: String(p.project?.current_stage || ''),
-  });
-  if (!opts.confirmedFailureRef.current && listed === 0 && rows === 0 && atPastSnapshot && !pipelineTerminalS3) {
-    return true;
-  }
   if (readProjectTaskRunning(p.project)) return false;
   const failedStage = String(p.project?.failed_stage || '');
   if (!failedStageLooksLikeS3Assets(failedStage)) return false;
@@ -434,6 +393,29 @@ function toPositiveInt(value: unknown): number | null {
   return null;
 }
 
+function assetLibraryTypeForTab(tab: TabType): AssetKind {
+  return tab === 'characters' ? 'character' : tab === 'scenes' ? 'scene' : 'product';
+}
+
+function promptForImageGeneration(row: AssetLibraryItemDto): string {
+  const tf = resolveTypeFields(row);
+  return String(
+    row.base_prompt ||
+    tf.image_prompt ||
+    tf.prompt ||
+    tf.generation_prompt ||
+    tf.visual_prompt ||
+    row.description ||
+    '',
+  ).trim();
+}
+
+function legacySourceAssetId(row: AssetLibraryItemDto): number | null {
+  const legacy = row.extra?.legacy_source;
+  if (!legacy || typeof legacy !== 'object') return null;
+  return toPositiveInt((legacy as Record<string, unknown>).table_asset_id);
+}
+
 function extractFailedAssetIds(errors: Record<string, unknown>[] | undefined): Set<number> {
   const ids = new Set<number>();
   for (const err of errors ?? []) {
@@ -539,72 +521,6 @@ function warnAssetDetailMismatch(row: AssetLibraryItemDto): void {
   }
 }
 
-function pipelineAssetsToCachedCards(pipeline: PipelineSummaryDto): Record<TabType, AssetLibraryItemDto[]> {
-  const assets = pipeline.assets;
-  if (!assets) return { characters: [], scenes: [], assets: [] };
-  const makeImage = (id: number, imageUrl: string): AssetImageDto => ({
-    id,
-    image_url: imageUrl,
-    image_type: 'generated',
-    variant_meta: {},
-    provider_params: {},
-    is_cover: true,
-    status: 'active',
-    created_at: null,
-  });
-  const base: Omit<AssetLibraryItemDto, 'id' | 'asset_type' | 'name' | 'description' | 'base_prompt'> = {
-    project_id: pipeline.project.id,
-    source: 'system_generated',
-    cover_image_id: null,
-    cover_image: null,
-    image_count: 0,
-    has_reference_images: false,
-    sort_order: 0,
-    status: 'active',
-    extra: {},
-    images: [],
-    reference_images: [],
-    created_at: null,
-    updated_at: null,
-    tags: [],
-  };
-  return {
-    characters: assets.characters.map((c, idx) => ({
-      id: c.id,
-      asset_type: 'character',
-      name: normalizeAssetDisplayName(String(c.name || '').trim()) || c.name,
-      description: c.description,
-      base_prompt: c.visual_prompt,
-      ...base,
-      sort_order: idx,
-      image_count: c.image_url ? 1 : 0,
-      images: c.image_url ? [makeImage(c.id * 1000 + 1, c.image_url)] : [],
-    })),
-    scenes: assets.scenes.map((s, idx) => ({
-      id: s.id,
-      asset_type: 'scene',
-      name: normalizeAssetDisplayName(String(s.name || '').trim()) || s.name,
-      description: s.description,
-      base_prompt: s.visual_prompt,
-      ...base,
-      sort_order: idx,
-      image_count: s.image_url ? 1 : 0,
-      images: s.image_url ? [makeImage(s.id * 1000 + 1, s.image_url)] : [],
-    })),
-    assets: assets.products.map((p, idx) => ({
-      id: p.id,
-      asset_type: 'product',
-      name: normalizeAssetDisplayName(String(p.name || '').trim()) || p.name,
-      description: p.description,
-      base_prompt: p.visual_prompt,
-      ...base,
-      sort_order: idx,
-      image_count: p.image_url ? 1 : 0,
-      images: p.image_url ? [makeImage(p.id * 1000 + 1, p.image_url)] : [],
-    })),
-  };
-}
-
 export function ShortDramaAssetsPage() {
   const navigate = useNavigate();
   const { effectiveProjectId, projectName } = useEffectiveShortDramaProjectId();
@@ -632,10 +548,10 @@ export function ShortDramaAssetsPage() {
   const [pipelineAssetRowsTotal, setPipelineAssetRowsTotal] = useState(0);
   const [pipelineImageUrlFilled, setPipelineImageUrlFilled] = useState(0);
   const [pipelineStepStatus, setPipelineStepStatus] = useState<Record<string, string>>({});
-  const [pipelineLastActiveStep, setPipelineLastActiveStep] = useState<string>('');
   const [pipelineHasStoryBlueprint, setPipelineHasStoryBlueprint] = useState(false);
   const [imageLoadFailedIds, setImageLoadFailedIds] = useState<Set<number>>(() => new Set());
   const [imageGenerationFailedIds, setImageGenerationFailedIds] = useState<Set<number>>(() => new Set());
+  const [generatingImageAssetIds, setGeneratingImageAssetIds] = useState<Set<number>>(() => new Set());
   const [analyzingAssetIds, setAnalyzingAssetIds] = useState<Set<number>>(() => new Set());
   const [isDirty, setIsDirty] = useState(false);
   const refUploadInput = useRef<HTMLInputElement>(null);
@@ -718,7 +634,6 @@ export function ShortDramaAssetsPage() {
     setPipelineFailedStage(String(pr?.failed_stage || ''));
     setPipelineAssetRowsTotal(Number(p.asset_rows_total || 0));
     setPipelineImageUrlFilled(Number(p.image_url_filled || 0));
-    setPipelineLastActiveStep(String(pr?.last_active_step || ''));
     setPipelineHasStoryBlueprint(Boolean(p.has_story_blueprint));
   }, []);
 
@@ -733,11 +648,6 @@ export function ShortDramaAssetsPage() {
     }
     console.info('[CACHE_PIPELINE_HIT]', { projectId, sourcePage: 'step3' });
     setInitialLoading(false);
-    setData((prev) => {
-      const hasExisting = prev.characters.length || prev.scenes.length || prev.assets.length;
-      if (hasExisting) return prev;
-      return pipelineAssetsToCachedCards(cached);
-    });
     applyPipelineSnapshot(cached);
   }, [effectiveProjectId, applyPipelineSnapshot, hasVisibleAssets]);
 
@@ -780,11 +690,12 @@ export function ShortDramaAssetsPage() {
           effective_status: effectiveStatus,
           assets_rows_total: pipeline.asset_rows_total ?? null,
         }));
-        if (effectiveStatus === 'story_generated') {
-          setAutoPhase('generating_specs');
-          setAutoHint('正在自动生成角色/场景/产品资产规范…');
-          console.info('[S3_AUTO_TRIGGER_SPECS]', JSON.stringify({ project_id: projectId, trigger: 'assets_page_auto' }));
-          await generateShortDramaAssetSpecs(projectId, { trigger: 'auto' });
+        if (effectiveStatus === 'story_generated' && Number(pipeline.asset_rows_total || 0) === 0) {
+          setAutoPhase('ready');
+          setAutoHint(null);
+          console.info('[S3_ASSET_GENERATION_IDLE]', JSON.stringify({ project_id: projectId, reason: 'story_generated_without_assets_waiting_for_user_trigger' }));
+          await reload({ background: true, reason: 'story_generated_idle' });
+          return;
         }
 
         let pipelineAfterSpecs = await getShortDramaPipeline(projectId);
@@ -863,7 +774,21 @@ export function ShortDramaAssetsPage() {
     console.info('[S3_DETAIL_REQUEST]', JSON.stringify({ url: requestUrl, asset_id: assetId, project_id: projectId }));
     appendS3Debug('S3_DETAIL_REQUEST', { url: requestUrl, asset_id: assetId, project_id: projectId });
     try {
-      const d = normalizeLibraryItem(await getShortDramaAssetLibraryDetail(projectId, assetId));
+      let rawDetail: AssetLibraryItemDto;
+      try {
+        rawDetail = await getShortDramaAssetLibraryDetail(projectId, assetId);
+      } catch (detailError) {
+        const type = cardRow ? toKind(cardRow.asset_type) : assetLibraryTypeForTab(activeTab);
+        const list = await listShortDramaAssetLibrary(projectId, type);
+        const fallback = list.assets.find((item) => {
+          const normalized = normalizeLibraryItem(item);
+          if (!normalized) return false;
+          return normalized.id === assetId || legacySourceAssetId(normalized) === assetId;
+        });
+        if (!fallback) throw detailError;
+        rawDetail = fallback;
+      }
+      const d = normalizeLibraryItem(rawDetail);
       if (!d) {
         console.error('[S3_DETAIL_INVALID_RESPONSE]', { projectId, assetId });
         window.alert('资产详情加载失败，请重试');
@@ -937,7 +862,7 @@ export function ShortDramaAssetsPage() {
       });
       window.alert('资产详情加载失败，请重试');
     }
-  }, [effectiveProjectId]);
+  }, [activeTab, effectiveProjectId]);
 
   const analyzeReferenceImage = useCallback(async (assetId: number, file: File) => {
     if (!effectiveProjectId) return;
@@ -999,36 +924,25 @@ export function ShortDramaAssetsPage() {
     && failedStageLooksLikeS3Assets(pipelineFailedStage)
     && (rawFailedHint || effFailedHint || step3Failed);
 
-  const effLower = pipelineEffectiveStatus.trim().toLowerCase();
-  const atOrPastS3Story = pipelineProjectAtOrPastS3Entry({
-    lastActiveStep: pipelineLastActiveStep,
-    hasStoryBlueprint: pipelineHasStoryBlueprint,
-    effectiveStatus: pipelineEffectiveStatus,
-    stepStatus: pipelineStepStatus,
-    currentStage: pipelineCurrentStage,
-  });
-
-  const pipelineS3AssetsTerminal = ['assets_ready', 'segments_generated', 'completed'].includes(effLower);
-
   const shouldPollPipeline =
     Boolean(toPositiveInt(effectiveProjectId))
     && (
       workInProgress
       || pipelineFailureWatchActive
       || (listedAssetTotal === 0 && pipelineAssetRowsTotal > 0 && !confirmedS3PipelineFailure)
-      || (
-        listedAssetTotal === 0
-        && !confirmedS3PipelineFailure
-        && atOrPastS3Story
-        && !pipelineS3AssetsTerminal
-      )
     );
 
   const s3AssetGridUi = getS3AssetUiState({
     currentTabRowCount: currentRows.length,
     confirmedS3PipelineFailure,
-    atOrPastS3: atOrPastS3Story,
+    workInProgress,
   });
+  const canGenerateS3Assets =
+    Boolean(toPositiveInt(effectiveProjectId))
+    && pipelineHasStoryBlueprint
+    && listedAssetTotal === 0
+    && pipelineAssetRowsTotal === 0
+    && !workInProgress;
 
   const hasVisibleAssetImages = useMemo(() => {
     const tabsRows = [...data.characters, ...data.scenes, ...data.assets];
@@ -1174,6 +1088,97 @@ export function ShortDramaAssetsPage() {
     shouldPollPipeline,
   ]);
 
+  const handleGenerateS3Assets = useCallback(async () => {
+    const projectId = toPositiveInt(effectiveProjectId);
+    if (!projectId || workInProgress) return;
+    setError(null);
+    setAutoPhase('generating_specs');
+    setAutoHint('正在生成角色/场景/产品资产规范…');
+    console.info('[S3_MANUAL_TRIGGER_SPECS]', JSON.stringify({ project_id: projectId }));
+    try {
+      await generateShortDramaAssetSpecs(projectId, { trigger: 'retry_button' });
+      let nextPipeline = await getShortDramaPipeline(projectId);
+      setCachedShortDramaPipeline(projectId, nextPipeline);
+      applyPipelineSnapshot(nextPipeline);
+      await reload({ background: true, reason: 'manual_specs_generated' });
+
+      const effectiveAfterSpecs = String(
+        nextPipeline.project?.effective_status || nextPipeline.project?.suggested_status || nextPipeline.project?.status || '',
+      );
+      if (effectiveAfterSpecs === 'asset_specs_generated') {
+        setAutoPhase('generating_images');
+        setAutoHint('正在生成资产图片，请稍候…');
+        console.info('[S3_MANUAL_TRIGGER_IMAGES]', JSON.stringify({ project_id: projectId }));
+        const imageResult = await generateShortDramaAssetImages(projectId);
+        setImageGenerationFailedIds(extractFailedAssetIds(imageResult.errors));
+        nextPipeline = await getShortDramaPipeline(projectId);
+        setCachedShortDramaPipeline(projectId, nextPipeline);
+        applyPipelineSnapshot(nextPipeline);
+        await reload({ background: true, reason: 'manual_images_generated' });
+      }
+
+      const finalStatus = String(
+        nextPipeline.project?.effective_status || nextPipeline.project?.suggested_status || nextPipeline.project?.status || '',
+      );
+      const finalStage = String(nextPipeline.project?.current_stage || '');
+      if (finalStatus === 'assets_rendering' || (finalStatus === 'processing' && isS3AssetPipelineStage(finalStage))) {
+        setAutoPhase('generating_images');
+        setAutoHint('资产图片生成中，正在同步进度…');
+      } else if (Number(nextPipeline.asset_rows_total || 0) === 0) {
+        setAutoPhase('error');
+        setAutoHint('未检测到资产生成任务，请重试。');
+        setError('未检测到资产生成任务，请重试。');
+      } else {
+        setAutoPhase('ready');
+        setAutoHint(null);
+      }
+    } catch (e) {
+      const msg = toReadableErrorMessage(e, '资产生成失败，请重试。');
+      setAutoPhase('error');
+      setAutoHint(msg);
+      setError(msg);
+      await reload({ background: true, reason: 'manual_generate_error' });
+    }
+  }, [effectiveProjectId, workInProgress, applyPipelineSnapshot, reload]);
+
+  const handleGenerateAssetImage = useCallback(async (row: AssetLibraryItemDto) => {
+    const projectId = toPositiveInt(effectiveProjectId);
+    if (!projectId || generatingImageAssetIds.has(row.id)) return;
+    const prompt = promptForImageGeneration(row);
+    setGeneratingImageAssetIds((prev) => new Set(prev).add(row.id));
+    setImageGenerationFailedIds((prev) => {
+      const next = new Set(prev);
+      next.delete(row.id);
+      return next;
+    });
+    setImageLoadFailedIds((prev) => {
+      const next = new Set(prev);
+      next.delete(row.id);
+      return next;
+    });
+    try {
+      await regenerateShortDramaAssetLibrary({
+        project_id: projectId,
+        asset_id: row.id,
+        generate_count: 1,
+        reuse_reference_images: true,
+        current_image_prompt: prompt,
+      });
+      setIsDirty(true);
+      await reload({ background: true, reason: 'single_asset_image_generated' });
+      if (detail?.id === row.id) await openDetail(row.id);
+    } catch (e) {
+      setImageGenerationFailedIds((prev) => new Set(prev).add(row.id));
+      window.alert(toReadableErrorMessage(e, '图片生成失败，请重试。'));
+    } finally {
+      setGeneratingImageAssetIds((prev) => {
+        const next = new Set(prev);
+        next.delete(row.id);
+        return next;
+      });
+    }
+  }, [detail?.id, effectiveProjectId, generatingImageAssetIds, openDetail, reload]);
+
   const submitAdd = useCallback(async () => {
     if (!effectiveProjectId) return;
     try {
@@ -1276,7 +1281,8 @@ export function ShortDramaAssetsPage() {
               const visualAnchor = getAssetThumbnailUrl(row);
               const roleLabel = resolveAssetRoleLabel(row);
               const imageLoadFailed = imageLoadFailedIds.has(row.id);
-              const isImageGenerating = workInProgress && !visualAnchor && !imageLoadFailed;
+              const cardImageGenerating = generatingImageAssetIds.has(row.id);
+              const isImageGenerating = cardImageGenerating || (workInProgress && !visualAnchor && !imageLoadFailed);
               const hasFailedImage =
                 !visualAnchor &&
                 (imageGenerationFailedIds.has(row.id) || (row.images ?? []).some((img) => String(img.status || '').toLowerCase() === 'failed'));
@@ -1313,9 +1319,22 @@ export function ShortDramaAssetsPage() {
                       </div>
                     ) : (
                       <div className="flex h-full w-full items-center justify-center bg-[#F7F8FA] px-3 text-center text-[12px] text-[#8E8E93]">
-                        暂无图片
+                        待生成图片
                       </div>
                     )}
+                    {!visualAnchor || imageLoadFailed ? (
+                      <button
+                        type="button"
+                        disabled={cardImageGenerating}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          void handleGenerateAssetImage(row);
+                        }}
+                        className="absolute bottom-3 left-1/2 -translate-x-1/2 rounded-lg bg-[#1D1D1F] px-3 py-1.5 text-[11px] font-semibold text-white shadow-sm disabled:opacity-60"
+                      >
+                        {cardImageGenerating ? '生成中…' : '生成图片'}
+                      </button>
+                    ) : null}
                   </div>
                   <div className="flex flex-1 flex-col p-4">
                     <div className="flex-1">
@@ -1416,7 +1435,15 @@ export function ShortDramaAssetsPage() {
                   </div>
                 </div>
                 <div className="flex flex-1 flex-col p-4">
-                  <p className="text-[12px] text-[#B91C1C]">请点击刷新或返回上一步重新生成。</p>
+                  <p className="text-[12px] text-[#B91C1C]">请点击重试重新生成资产。</p>
+                  <button
+                    type="button"
+                    disabled={!canGenerateS3Assets}
+                    onClick={() => void handleGenerateS3Assets()}
+                    className="mt-4 rounded-xl bg-[#1D1D1F] px-4 py-2 text-[12px] font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    重新生成角色与场景资产
+                  </button>
                 </div>
               </div>
             ) : null}
@@ -1426,8 +1453,23 @@ export function ShortDramaAssetsPage() {
                   <i className="ri-inbox-archive-line text-[22px] text-[#8E8E93]" />
                 </div>
                 <div className="flex flex-1 flex-col">
-                  <div className="text-[14px] font-semibold text-[#1D1D1F]">暂无资产</div>
-                  <div className="mt-2 text-[12px] leading-relaxed text-[#8E8E93]">当前没有可展示资产。若系统正在生成请稍候；若无任务请点击「添加」创建资产。</div>
+                  <div className="text-[14px] font-semibold text-[#1D1D1F]">尚未生成资产</div>
+                  <div className="mt-2 text-[12px] leading-relaxed text-[#8E8E93]">
+                    当前还没有角色、场景或产品资产。请点击按钮开始生成。
+                  </div>
+                  {error ? (
+                    <div className="mt-3 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-[12px] text-red-700">
+                      {error}
+                    </div>
+                  ) : null}
+                  <button
+                    type="button"
+                    disabled={!canGenerateS3Assets}
+                    onClick={() => void handleGenerateS3Assets()}
+                    className="mt-4 rounded-xl bg-[#1D1D1F] px-4 py-2 text-[12px] font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    生成角色与场景资产
+                  </button>
                 </div>
               </div>
             ) : null}

@@ -1,3 +1,4 @@
+import json
 import logging
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -23,6 +24,7 @@ from ..services.project_state_service import (
     update_last_active_step,
 )
 from ..services.story_planner_service import story_planner_service
+from ..services.creative_brief_service import get_s0_s1_state, product_context_from_creative_brief
 from ..services.workflow_orchestrator import orchestrator
 from ..services.project_task_guard import (
     acquire_project_task_lock,
@@ -31,10 +33,9 @@ from ..services.project_task_guard import (
     mark_project_stage_succeeded,
     recover_stale_processing_status_if_possible,
 )
-from ..utils.creative_brief import build_creative_brief
 from ..utils.enums import WorkflowStep
 from ..utils.flow_logging import log_api_error, log_api_request, log_api_success
-from ..utils.language import build_language_policy, language_prompt_rules
+from ..utils.language import build_language_policy, language_prompt_rules, resolve_project_language_policy
 
 logger = logging.getLogger(__name__)
 
@@ -67,20 +68,6 @@ async def generate_story(body: GenerateStoryRequest, db: Session = Depends(get_d
         stage_now = current_stage(project)
         runtime_now = dict((project.step_status or {}).get("_runtime") or {})
         task_running_now = bool(runtime_now.get("task_running", False))
-        logger.info(
-            "[STEP_ALLOWED_CHECK] project_id=%s step=%s current_status=%s required_status=%s current_stage=%s task_running=%s has_product_context=%s has_story_blueprint=%s asset_counts=%s segment_scripts_count=%s",
-            body.project_id,
-            WorkflowStep.GENERATE_STORY.value,
-            project.status,
-            "product_parsed",
-            stage_now,
-            task_running_now,
-            bool(pc_for_check),
-            bool(sb_for_check),
-            {"characters": len(chars), "scenes": len(scenes), "products": len(products)},
-            len(segs),
-        )
-
         if str(project.status or "").strip() == "processing" and task_running_now and stage_now:
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
@@ -91,45 +78,115 @@ async def generate_story(body: GenerateStoryRequest, db: Session = Depends(get_d
                 },
             )
 
-        orchestrator.assert_step_allowed(db, project, WorkflowStep.GENERATE_STORY)
+        s0_s1_state = get_s0_s1_state(project)
+        creative_brief = s0_s1_state.get("creative_brief") if isinstance(s0_s1_state.get("creative_brief"), dict) else None
+        creative_brief_status = str(s0_s1_state.get("creative_brief_status") or "").strip()
+        product_understanding = (
+            s0_s1_state.get("product_understanding")
+            if isinstance(s0_s1_state.get("product_understanding"), dict)
+            else {}
+        )
+        creative_intent_input = (
+            s0_s1_state.get("creative_intent_input")
+            if isinstance(s0_s1_state.get("creative_intent_input"), dict)
+            else {}
+        )
+        product_input = (
+            s0_s1_state.get("product_input")
+            if isinstance(s0_s1_state.get("product_input"), dict)
+            else {}
+        )
+        source_inputs_for_log = {
+            "creative_intent_input": creative_intent_input,
+            "product_input": product_input,
+            "product_understanding": product_understanding,
+        }
+        creative_brief_keys = list(creative_brief.keys()) if isinstance(creative_brief, dict) else []
+        has_creative_brief = bool(creative_brief_keys)
+        logger.info(
+            "[STEP_ALLOWED_CHECK] project_id=%s step=%s current_status=%s required_gate=%s current_stage=%s task_running=%s has_creative_brief=%s creative_brief_status=%s has_product_context=%s has_story_blueprint=%s asset_counts=%s segment_scripts_count=%s",
+            body.project_id,
+            WorkflowStep.GENERATE_STORY.value,
+            project.status,
+            "creative_brief",
+            stage_now,
+            task_running_now,
+            has_creative_brief,
+            creative_brief_status,
+            bool(pc_for_check),
+            bool(sb_for_check),
+            {"characters": len(chars), "scenes": len(scenes), "products": len(products)},
+            len(segs),
+        )
+        if not has_creative_brief:
+            logger.info(
+                "[S2_CREATIVE_BRIEF_MISSING] project_id=%s project_status=%s creative_brief_status=%s",
+                body.project_id,
+                project.status,
+                creative_brief_status,
+            )
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="请先完成商品理解并生成 AI 创作理解。",
+            )
+        logger.info(
+            "[S2_USE_CREATIVE_BRIEF] project_id=%s project_status=%s has_creative_brief=%s creative_brief_status=%s creative_brief_keys=%s source_inputs_keys=%s",
+            body.project_id,
+            project.status,
+            True,
+            creative_brief_status,
+            creative_brief_keys,
+            list(source_inputs_for_log.keys()),
+        )
+
         acquire_project_task_lock(db, project, stage="s2_story")
         lock_acquired = True
         had_existing_story = latest_story_blueprint(db, body.project_id) is not None
 
-        pc_row = latest_product_context(db, body.project_id)
-        if not pc_row:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Product context missing; run /product/parse first",
-            )
-
-        product = ProductContextSchema.model_validate(pc_row.normalized_context_json)
-        language_policy = build_language_policy(
-            workflow_source={"product": product.model_dump(), "raw_inputs": pc_row.raw_inputs_json},
+        product = ProductContextSchema.model_validate(product_context_from_creative_brief(creative_brief))
+        inferred_language_policy = build_language_policy(
+            workflow_source={
+                "creative_brief": creative_brief,
+                "source_inputs": {
+                    "creative_intent_input": creative_intent_input,
+                    "product_input": product_input,
+                    "product_understanding": product_understanding,
+                },
+            },
             market_source={
-                "raw_inputs": pc_row.raw_inputs_json,
+                "creative_intent_input": creative_intent_input,
                 "target_users": product.target_users,
                 "usage_scenarios": product.usage_scenarios,
             },
-            explicit_target_market=(project.target_market or "North America"),
+            explicit_target_market=project.target_market,
+        )
+        language_policy = resolve_project_language_policy(
+            project,
+            inferred_language_policy,
+            stage="S2_generate_story",
         )
         project_config = {
             "project_id": body.project_id,
-            "duration": project.duration,
+            "duration": None,
             "format": project.format,
             "style": project.style,
             "visual_style": project.visual_style,
-            "aspect_ratio": project.aspect_ratio,
+            "aspect_ratio": None,
             "target_market": language_policy["target_market"],
             "marketing_goal": project.marketing_goal or "brand_seeding",
             "target_audience": project.target_audience or "",
             "brand_tone": project.brand_tone or "natural",
-            "creative_intent": project.creative_intent or "",
-            "creative_brief": project.creative_brief or "",
+            "creative_intent": str(creative_brief.get("user_goal") or project.creative_intent or ""),
+            "creative_brief": str(creative_brief.get("user_goal") or project.creative_intent or ""),
             "workflow_language": language_policy["workflow_language"],
             "video_language": language_policy["video_language"],
             "language_policy": language_policy,
             "language_prompt_rules": language_prompt_rules(language_policy),
+            "source_inputs": {
+                "creative_intent_input": creative_intent_input,
+                "product_input": product_input,
+                "product_understanding": product_understanding,
+            },
         }
         project_config["legacy_creative_intent_summary"] = "；".join(
             [
@@ -146,7 +203,7 @@ async def generate_story(body: GenerateStoryRequest, db: Session = Depends(get_d
         project_config["effective_creative_intent"] = (
             project_config["creative_intent"] or project_config["legacy_creative_intent_summary"]
         )
-        project_config["creative_brief_data"] = build_creative_brief(project_config, product)
+        project_config["creative_brief_data"] = creative_brief
 
         status_before = project.status
         story_input_product = product

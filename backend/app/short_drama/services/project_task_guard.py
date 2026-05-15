@@ -504,7 +504,10 @@ def mark_project_stage_failed(
     project = db.query(ShortDramaProject).filter(ShortDramaProject.id == project_id).first()
     if project is None:
         return
+    previous_status = project.status
     rt = _runtime(project)
+    recoverable_status = str(rt.get("previous_status") or "").strip()
+    next_status = recoverable_status if stage == "s2_story" and recoverable_status else "failed"
     rt.update(
         {
             "task_running": False,
@@ -516,15 +519,17 @@ def mark_project_stage_failed(
             "can_retry": True,
         }
     )
-    project.status = "failed"
+    project.status = next_status
     _save_runtime(project, rt)
     db.add(project)
     db.commit()
     logger.error(
-        "[PROJECT_STAGE_FAILED] project_id=%s stage=%s error_type=%s failed_status=%s error_message=%s",
+        "[PROJECT_STAGE_FAILED] project_id=%s stage=%s error_type=%s previous_status=%s failed_status=%s can_retry=%s error_message=%s",
         project_id,
         stage,
         error_type_value,
+        previous_status,
         project.status,
+        True,
         (message or "")[:240],
     )

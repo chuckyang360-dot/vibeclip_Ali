@@ -14,12 +14,24 @@ from ..models import (
 from ..schemas.project import (
     CreateShortDramaProjectRequest,
     CreateShortDramaProjectResponse,
+    CreativeBriefGenerateResponse,
+    CreativeIntentInput,
+    CreativeIntentInputResponse,
     ProjectCoverAsset,
     ProjectEntryRedirectResponse,
     PipelineSummaryResponse,
+    ProductInput,
+    ProductInputResponse,
     ShortDramaProjectListResponse,
     ShortDramaProjectResponse,
     TouchProjectStepRequest,
+)
+from ..services.creative_brief_service import (
+    creative_brief_service,
+    get_s0_s1_state,
+    normalize_creative_intent_input,
+    normalize_product_input,
+    update_s0_s1_state,
 )
 from ..services.project_state_service import (
     STEP_1,
@@ -164,10 +176,15 @@ def _project_to_response(
     segment_video_total: int | None = None,
 ) -> ShortDramaProjectResponse:
     final_video = latest_final_video_url(db, p.id)
-    step_status = normalize_step_status(p.step_status)
+    step_status = {k: v for k, v in normalize_step_status(p.step_status).items() if isinstance(v, str)}
+    s0_s1_state = get_s0_s1_state(p)
     inferred_policy = build_language_policy(
-        workflow_source=p.project_name,
-        explicit_target_market=(p.target_market or "North America"),
+        workflow_source={
+            "project_name": p.project_name,
+            "creative_intent_input": s0_s1_state.get("creative_intent_input"),
+            "creative_brief": s0_s1_state.get("creative_brief"),
+        },
+        explicit_target_market=p.target_market,
     )
     return ShortDramaProjectResponse(
         id=p.id,
@@ -204,6 +221,10 @@ def _project_to_response(
         segment_video_count=segment_video_count,
         segment_video_total=segment_video_total,
         cover_asset=_project_cover_asset(db, p.id),
+        creative_intent_input=s0_s1_state.get("creative_intent_input"),
+        product_input=s0_s1_state.get("product_input"),
+        product_understanding=s0_s1_state.get("product_understanding"),
+        creative_brief_structured=s0_s1_state.get("creative_brief"),
         created_at=p.created_at,
         updated_at=p.updated_at,
     )
@@ -245,7 +266,7 @@ async def create_project(body: CreateShortDramaProjectRequest, db: Session = Dep
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
         language_policy = build_language_policy(
             workflow_source=body.project_name,
-            explicit_target_market=(body.target_market or "North America"),
+            explicit_target_market=body.target_market,
         )
         project = ShortDramaProject(
             user_id=body.user_id,
@@ -255,7 +276,7 @@ async def create_project(body: CreateShortDramaProjectRequest, db: Session = Dep
             style=_normalize_story_style(body.style),
             visual_style=body.visual_style,
             aspect_ratio=body.aspect_ratio,
-            target_market=normalize_target_market(body.target_market or "North America"),
+            target_market=normalize_target_market(body.target_market),
             marketing_goal=(body.marketing_goal or "brand_seeding"),
             target_audience=(body.target_audience or ""),
             brand_tone=(body.brand_tone or "natural"),
@@ -274,7 +295,7 @@ async def create_project(body: CreateShortDramaProjectRequest, db: Session = Dep
             {
                 "project_id": project.id,
                 "story_style_normalized": _normalize_story_style(body.style),
-                "target_market_normalized": normalize_target_market(body.target_market or "North America"),
+                "target_market_normalized": normalize_target_market(body.target_market),
                 "language_policy": language_policy,
                 "persisted_fields": {
                     "project_name": project.project_name,
@@ -363,6 +384,70 @@ async def get_project(project_id: int, db: Session = Depends(get_db)):
     return _project_to_response(db, project)
 
 
+@router.patch("/{project_id}/creative-intent", response_model=CreativeIntentInputResponse)
+async def save_creative_intent(project_id: int, body: CreativeIntentInput, db: Session = Depends(get_db)):
+    project = db.query(ShortDramaProject).filter(ShortDramaProject.id == project_id).first()
+    if not project:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Project not found")
+    data = normalize_creative_intent_input(body.model_dump())
+    update_s0_s1_state(project, {"creative_intent_input": data})
+    project.creative_intent = data["intent_text"]
+    update_last_active_step(project, STEP_1)
+    db.add(project)
+    db.commit()
+    return CreativeIntentInputResponse(project_id=project_id, creative_intent_input=data)
+
+
+@router.patch("/{project_id}/product-input", response_model=ProductInputResponse)
+async def save_product_input(project_id: int, body: ProductInput, db: Session = Depends(get_db)):
+    project = db.query(ShortDramaProject).filter(ShortDramaProject.id == project_id).first()
+    if not project:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Project not found")
+    data = normalize_product_input(body.model_dump())
+    current = normalize_product_input(get_s0_s1_state(project).get("product_input"))
+    if data == current:
+        logger.info("[S1_PRODUCT_INPUT_IDEMPOTENT] project_id=%s unchanged=true", project_id)
+        return ProductInputResponse(project_id=project_id, product_input=data)
+    update_s0_s1_state(project, {"product_input": data})
+    update_last_active_step(project, STEP_1)
+    db.add(project)
+    db.commit()
+    return ProductInputResponse(project_id=project_id, product_input=data)
+
+
+@router.post("/{project_id}/creative-brief/generate", response_model=CreativeBriefGenerateResponse)
+async def generate_creative_brief(project_id: int, db: Session = Depends(get_db)):
+    try:
+        return creative_brief_service.generate_for_project(db, project_id)
+    except HTTPException as e:
+        project = db.query(ShortDramaProject).filter(ShortDramaProject.id == project_id).first()
+        if project:
+            update_s0_s1_state(
+                project,
+                {
+                    "creative_brief_status": "failed",
+                    "creative_brief_error": str(e.detail),
+                },
+            )
+            db.add(project)
+            db.commit()
+        raise
+    except Exception as e:
+        logger.exception("[CREATIVE_BRIEF_GENERATE_ERROR] project_id=%s error=%s", project_id, str(e))
+        project = db.query(ShortDramaProject).filter(ShortDramaProject.id == project_id).first()
+        if project:
+            update_s0_s1_state(
+                project,
+                {
+                    "creative_brief_status": "failed",
+                    "creative_brief_error": "AI 创作理解生成失败，请稍后重试。",
+                },
+            )
+            db.add(project)
+            db.commit()
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="AI 创作理解生成失败，请稍后重试。")
+
+
 @router.get("/{project_id}/entry", response_model=ProjectEntryRedirectResponse)
 async def get_project_entry(project_id: int, db: Session = Depends(get_db)):
     project = db.query(ShortDramaProject).filter(ShortDramaProject.id == project_id).first()
@@ -433,6 +518,7 @@ async def get_pipeline(project_id: int, lightweight: bool = Query(default=False)
 
         pc = latest_product_context(db, project_id)
         sb = latest_story_blueprint(db, project_id)
+        s0_s1_state = get_s0_s1_state(project)
         chars, scenes, products = list_pipeline_asset_rows(db, project_id)
         segs = list_segment_scripts(db, project_id)
         asset_counts = {
@@ -678,6 +764,10 @@ async def get_pipeline(project_id: int, lightweight: bool = Query(default=False)
                 if pc
                 else None
             ),
+            creative_intent_input=s0_s1_state.get("creative_intent_input"),
+            product_input=s0_s1_state.get("product_input"),
+            product_understanding=s0_s1_state.get("product_understanding"),
+            creative_brief=s0_s1_state.get("creative_brief"),
             story_blueprint=(
                 {
                     "id": sb.id,

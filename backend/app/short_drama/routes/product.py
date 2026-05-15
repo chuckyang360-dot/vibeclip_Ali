@@ -35,7 +35,7 @@ from ..services.project_task_guard import (
 )
 from ..utils.enums import WorkflowStep
 from ..utils.flow_logging import log_api_error, log_api_request, log_api_success
-from ..utils.language import build_language_policy, language_prompt_rules
+from ..utils.language import build_language_policy, language_prompt_rules, resolve_project_language_policy
 
 logger = logging.getLogger(__name__)
 
@@ -160,7 +160,7 @@ async def parse_product(body: ParseProductRequest, db: Session = Depends(get_db)
         had_existing_context = existing_context is not None
 
         status_before = project.status
-        language_policy = build_language_policy(
+        inferred_language_policy = build_language_policy(
             workflow_source=body.input.model_dump(),
             market_source={
                 "target_users_raw": body.input.target_users_raw,
@@ -168,6 +168,11 @@ async def parse_product(body: ParseProductRequest, db: Session = Depends(get_db)
                 "extra_notes_raw": body.input.extra_notes_raw,
             },
             explicit_target_market=(project.target_market or "North America"),
+        )
+        language_policy = resolve_project_language_policy(
+            project,
+            inferred_language_policy,
+            stage="S1_parse_product",
         )
         project_constraints = {
             "duration": project.duration or "",

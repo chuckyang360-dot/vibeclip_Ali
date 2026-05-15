@@ -48,6 +48,15 @@ export function useStoryBlueprint(projectId: number | null) {
 
   const generate = useCallback(async () => {
     if (projectId == null) return;
+    const hasCreativeBrief = Boolean(
+      pipeline?.creative_brief && Object.keys(pipeline.creative_brief).length,
+    ) || Boolean(
+      pipeline?.project?.creative_brief_structured && Object.keys(pipeline.project.creative_brief_structured).length,
+    );
+    if (!hasCreativeBrief) {
+      setGenerateError('请先完成商品理解并生成 AI 创作理解。');
+      return;
+    }
     const st = pipeline?.project?.status;
     if (st && STORY_PIPELINE_LOCKED_STATUSES.has(st)) return;
     setGenerateLoading(true);

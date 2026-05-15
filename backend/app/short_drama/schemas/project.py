@@ -11,7 +11,7 @@ class CreateShortDramaProjectRequest(BaseModel):
     style: Optional[str | List[str]] = Field(None, description="Narrative style (single-select; legacy list accepted)")
     visual_style: Optional[str] = Field(None, description="Cinematography / look")
     aspect_ratio: Optional[str] = Field(None, description="e.g. 9:16")
-    target_market: Optional[str] = Field("North America", description="Target market, defaults to North America")
+    target_market: Optional[str] = Field(None, description="Optional target market hint")
     marketing_goal: Optional[str] = Field("brand_seeding", description="Marketing goal for story strategy")
     target_audience: Optional[str] = Field("", description="Target audience free text")
     brand_tone: Optional[str] = Field("natural", description="Brand tone")
@@ -19,6 +19,43 @@ class CreateShortDramaProjectRequest(BaseModel):
     creative_brief: Optional[str] = Field("", description="Additional creative brief")
     workflow_language: Optional[str] = Field(None, description="Workflow language like zh-CN/en-US")
     video_language: Optional[str] = Field(None, description="Dialogue/subtitle language like en-US")
+
+
+class CreativeIntentInput(BaseModel):
+    intent_text: str = ""
+    platform_hints: List[str] = Field(default_factory=list)
+    duration_hint: str = ""
+    aspect_ratio_hint: str = ""
+
+
+class ProductImageInput(BaseModel):
+    url: str = ""
+    image_url: str = ""
+    image_order: Optional[int] = None
+    is_main_image: bool = False
+    image_caption_raw: str = ""
+
+
+class ProductInput(BaseModel):
+    product_images: List[ProductImageInput] = Field(default_factory=list)
+    product_note: str = ""
+    product_url: str = ""
+
+
+class CreativeIntentInputResponse(BaseModel):
+    project_id: int
+    creative_intent_input: CreativeIntentInput
+
+
+class ProductInputResponse(BaseModel):
+    project_id: int
+    product_input: ProductInput
+
+
+class CreativeBriefGenerateResponse(BaseModel):
+    project_id: int
+    product_understanding: Dict[str, Any] = Field(default_factory=dict)
+    creative_brief: Dict[str, Any] = Field(default_factory=dict)
 
 
 class ProjectCoverAsset(BaseModel):
@@ -63,6 +100,10 @@ class ShortDramaProjectResponse(BaseModel):
     segment_video_count: Optional[int] = None
     segment_video_total: Optional[int] = None
     cover_asset: ProjectCoverAsset = Field(default_factory=ProjectCoverAsset)
+    creative_intent_input: Optional[Dict[str, Any]] = None
+    product_input: Optional[Dict[str, Any]] = None
+    product_understanding: Optional[Dict[str, Any]] = None
+    creative_brief_structured: Optional[Dict[str, Any]] = None
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
 
@@ -91,6 +132,10 @@ class TouchProjectStepRequest(BaseModel):
 class PipelineSummaryResponse(BaseModel):
     project: ShortDramaProjectResponse
     product_context: Optional[Dict[str, Any]] = None
+    creative_intent_input: Optional[Dict[str, Any]] = None
+    product_input: Optional[Dict[str, Any]] = None
+    product_understanding: Optional[Dict[str, Any]] = None
+    creative_brief: Optional[Dict[str, Any]] = None
     story_blueprint: Optional[Dict[str, Any]] = None
     assets: Dict[str, List[Dict[str, Any]]] = Field(
         default_factory=lambda: {"characters": [], "scenes": [], "products": []}

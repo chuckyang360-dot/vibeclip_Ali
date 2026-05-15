@@ -5,10 +5,11 @@ import { withProjectQuery } from '../utils/shortDramaRoutes';
 import { VibeClipLogo } from './VibeClipLogo';
 
 const STEPS = [
-  { label: '产品输入', path: '/short-drama/product-input', step: 1 },
-  { label: '剧本大纲', path: '/short-drama/story-blueprint', step: 2 },
-  { label: '角色场景', path: '/short-drama/assets', step: 3 },
-  { label: '片段视频', path: '/short-drama/step4', step: 4 },
+  { label: '创作意图', path: '/short-drama/create', step: 0 },
+  { label: '商品理解', path: '/short-drama/product-input', step: 1 },
+  { label: '剧本生成', path: '/short-drama/story-blueprint', step: 2 },
+  { label: '资产管理', path: '/short-drama/assets', step: 3 },
+  { label: '视频生成', path: '/short-drama/step4', step: 4 },
 ] as const;
 
 export type SDWorkflowNavProps = {

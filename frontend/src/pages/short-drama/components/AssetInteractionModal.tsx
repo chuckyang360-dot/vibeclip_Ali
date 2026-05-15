@@ -234,6 +234,9 @@ export function AssetInteractionModal({
           : '定位';
 
   const descriptionLabel = '画面说明';
+  const imageStatusLabel = previewSrc
+    ? `已有图片（${asset.imageCount ?? images.length} 张）`
+    : '待生成图片';
   const providerPromptSnapshot = formatDisplayValue(
     asset.rawSnapshot?.prompt_snapshot ?? asset.rawSnapshot?.provider_prompt ?? asset.rawSnapshot?.base_prompt,
     '',
@@ -317,7 +320,11 @@ export function AssetInteractionModal({
                 <div className={valueTextClass}>{formatDisplayValue(displayDescription || '', '—')}</div>
               </div>
               <div className={rowClass}>
-                <div className="text-[11px] font-medium text-[#8E8E93]">重新生成描述</div>
+                <div className="text-[11px] font-medium text-[#8E8E93]">当前图片状态</div>
+                <div className={valueTextClass}>{imageStatusLabel}</div>
+              </div>
+              <div className={rowClass}>
+                <div className="text-[11px] font-medium text-[#8E8E93]">图片生成提示词</div>
                 <p className="mt-1 text-[11px] leading-relaxed text-[#AEAEB2]">
                   修改这里后，点击“重新生成图片”，系统会按这段描述生成新的资产图。
                 </p>
@@ -423,7 +430,7 @@ export function AssetInteractionModal({
                   setInitialPromptDraft(cleanEditableAssetPrompt(promptDraft));
                 }}
               >
-                {saving ? '保存中…' : '保存描述'}
+                {saving ? '保存中…' : '保存提示词'}
               </button>
             </div>
           </div>

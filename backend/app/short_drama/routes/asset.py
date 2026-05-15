@@ -46,7 +46,7 @@ from ..services.asset_v2_materialize_service import (
     is_creative_blueprint_v2_project,
     persist_v2_asset_specs_bundle_to_legacy_tables,
 )
-from ..services.read_models import latest_product_context, latest_story_blueprint
+from ..services.read_models import latest_product_context, latest_story_blueprint, list_segment_scripts
 from ..services.workflow_orchestrator import orchestrator
 from ..services.image_understanding_service import validate_supported_image_data_url
 from ..services.project_task_guard import (
@@ -57,7 +57,7 @@ from ..services.project_task_guard import (
 )
 from ..utils.enums import WorkflowStep
 from ..utils.flow_logging import log_api_error, log_api_request, log_api_success
-from ..utils.language import build_language_policy, language_prompt_rules
+from ..utils.language import build_language_policy, language_prompt_rules, resolve_project_language_policy
 
 logger = logging.getLogger(__name__)
 
@@ -357,24 +357,44 @@ async def generate_asset_specs(body: GenerateAssetSpecsRequest, db: Session = De
             or db.query(ProductAsset.id).filter(ProductAsset.project_id == body.project_id).first() is not None
         )
 
-        pc_row = latest_product_context(db, body.project_id)
         sb_row = latest_story_blueprint(db, body.project_id)
-        if not pc_row or not sb_row:
+        if not sb_row:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Requires story blueprint",
+            )
+
+        blueprint = parse_story_blueprint_json(sb_row.blueprint_json)
+        is_v2_blueprint = is_creative_blueprint_v2_project(blueprint)
+        pc_row = latest_product_context(db, body.project_id)
+        if pc_row:
+            product = ProductContextSchema.model_validate(pc_row.normalized_context_json)
+            raw_inputs = pc_row.raw_inputs_json
+        elif is_v2_blueprint:
+            first_product = blueprint.product_assets[0] if blueprint.product_assets else None
+            product = ProductContextSchema(
+                product_name=str(getattr(first_product, "display_name", "") or blueprint.title or "").strip(),
+                product_summary=str(getattr(first_product, "description", "") or blueprint.premise or "").strip(),
+            )
+            raw_inputs = {}
+        else:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Requires product context and story blueprint",
             )
-
-        product = ProductContextSchema.model_validate(pc_row.normalized_context_json)
-        blueprint = parse_story_blueprint_json(sb_row.blueprint_json)
-        language_policy = build_language_policy(
-            workflow_source={"product": product.model_dump(), "raw_inputs": pc_row.raw_inputs_json, "blueprint": blueprint.model_dump()},
+        inferred_language_policy = build_language_policy(
+            workflow_source={"product": product.model_dump(), "raw_inputs": raw_inputs, "blueprint": blueprint.model_dump()},
             market_source={
-                "raw_inputs": pc_row.raw_inputs_json,
+                "raw_inputs": raw_inputs,
                 "target_users": product.target_users,
                 "usage_scenarios": product.usage_scenarios,
             },
             explicit_target_market=(project.target_market or "North America"),
+        )
+        language_policy = resolve_project_language_policy(
+            project,
+            inferred_language_policy,
+            stage="S3_asset_specs",
         )
         project_config = {
             "duration": project.duration,
@@ -410,14 +430,31 @@ async def generate_asset_specs(body: GenerateAssetSpecsRequest, db: Session = De
             project_config["creative_intent"] or project_config["legacy_creative_intent_summary"]
         )
 
-        is_v2_blueprint = is_creative_blueprint_v2_project(blueprint)
         status_before = project.status
         try:
+            specs = list(blueprint.asset_generation_specs or [])
+            n_char = sum(1 for s in specs if str(s.asset_kind or "").strip().lower() == "character")
+            n_scene = sum(1 for s in specs if str(s.asset_kind or "").strip().lower() == "scene")
+            n_prod = sum(1 for s in specs if str(s.asset_kind or "").strip().lower() == "product")
+            logger.info(
+                "[S3_ASSET_GENERATION_START] project_id=%s has_story_blueprint=%s has_creative_blueprint_v2=%s video_generation_specs_count=%s segment_scripts_count=%s extracted_character_specs_count=%s extracted_scene_specs_count=%s extracted_product_specs_count=%s",
+                body.project_id,
+                True,
+                is_v2_blueprint,
+                len(blueprint.video_generation_specs or []),
+                len(list_segment_scripts(db, body.project_id)),
+                n_char,
+                n_scene,
+                n_prod,
+            )
             if is_v2_blueprint:
-                specs = list(blueprint.asset_generation_specs or [])
-                n_char = sum(1 for s in specs if str(s.asset_kind or "").strip().lower() == "character")
-                n_scene = sum(1 for s in specs if str(s.asset_kind or "").strip().lower() == "scene")
-                n_prod = sum(1 for s in specs if str(s.asset_kind or "").strip().lower() == "product")
+                if not specs:
+                    logger.warning(
+                        "[S3_ASSET_SPECS_MISSING] project_id=%s available_s2_keys=%s reason=%s",
+                        body.project_id,
+                        list(sb_row.blueprint_json.keys()) if isinstance(sb_row.blueprint_json, dict) else [],
+                        "creative_blueprint_v2.asset_generation_specs is empty",
+                    )
                 logger.info(
                     "[S3_V2_ASSET_SPECS_USE_BLUEPRINT] %s",
                     json.dumps(
@@ -462,8 +499,9 @@ async def generate_asset_specs(body: GenerateAssetSpecsRequest, db: Session = De
                 else:
                     if not req_state.get("usable"):
                         logger.warning(
-                            "[S3_ASSET_SPEC_MISSING] project_id=%s missing_field=%s",
+                            "[S3_ASSET_SPECS_MISSING] project_id=%s available_s2_keys=%s reason=%s",
                             body.project_id,
+                            list(sb_row.blueprint_json.keys()) if isinstance(sb_row.blueprint_json, dict) else [],
                             str(req_state.get("reason") or "asset_requirements"),
                         )
                         raise_short_drama_http(

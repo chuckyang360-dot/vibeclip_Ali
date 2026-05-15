@@ -65,6 +65,24 @@ class StoryOverviewSchema(BaseModel):
     conversion_goal: str = ""
 
 
+class StoryBeatSchema(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    title: str = ""
+    purpose: str = ""
+    content: str = ""
+
+
+class StoryOutlineSchema(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    title: str = ""
+    summary: str = ""
+    structure_type: str = ""
+    structure_reasoning: str = ""
+    story_beats: List[StoryBeatSchema] = Field(default_factory=list)
+
+
 class CreativeBlueprintCharacterSchema(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
@@ -279,6 +297,29 @@ def default_creative_blueprint_v2_attachment(*, product_name: str = "Product") -
             "emotional_arc": ["curiosity", "tension", "relief"],
             "conversion_goal": "Soft consideration / next step",
         },
+        "story_outline": {
+            "title": f"{product_name} · Creative Blueprint",
+            "summary": "Natural lifestyle integration built around a compact product story.",
+            "structure_type": "Opening pressure to product-in-context relief",
+            "structure_reasoning": "The mock outline keeps the story simple while preserving AI-authored dynamic beat structure.",
+            "story_beats": [
+                {
+                    "title": "Morning friction",
+                    "purpose": "Create a relatable entry point.",
+                    "content": "The lead moves through a rushed morning moment where the product can later appear naturally.",
+                },
+                {
+                    "title": "Natural product encounter",
+                    "purpose": "Connect product value to the story situation.",
+                    "content": "The product enters as part of the routine, not as a hard sales insert.",
+                },
+                {
+                    "title": "Calm resolution",
+                    "purpose": "Leave the viewer with a clear emotional memory.",
+                    "content": "The segment closes on a quieter payoff and a grounded brand impression.",
+                },
+            ],
+        },
         "characters": [
             {
                 "character_key": char_key,
@@ -462,6 +503,7 @@ class StoryBlueprintSchema(BaseModel):
     creative_brief: Dict[str, Any] = Field(default_factory=dict)
     market_visual_constraints: LegacyFlexibleValue = None
     visual_style_constraints: LegacyFlexibleValue = None
+    story_outline: Optional[StoryOutlineSchema] = None
     story_overview: Optional[StoryOverviewSchema] = None
     characters: List[CreativeBlueprintCharacterSchema] = Field(default_factory=list)
     scenes: List[CreativeBlueprintSceneSchema] = Field(default_factory=list)

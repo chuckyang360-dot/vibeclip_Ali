@@ -38,6 +38,9 @@ def normalize_step_status(raw: Any) -> dict[str, str]:
     base = default_step_status()
     if not isinstance(raw, dict):
         return base
+    for k, v in raw.items():
+        if isinstance(k, str) and k.startswith("_"):
+            base[k] = v
     for k in STEP_KEYS:
         v = raw.get(k)
         if isinstance(v, str) and v.strip():
