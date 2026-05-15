@@ -88,6 +88,20 @@ class AssetImageService:
     def __init__(self, provider: Any | None = None):
         self._provider = provider if provider is not None else build_short_drama_image_provider()
 
+    def _mark_image_generation_failed(self, row: CharacterAsset | SceneAsset | ProductAsset, err: Exception) -> None:
+        meta = dict(row.meta_json or {})
+        meta["image_generation_status"] = "failed"
+        meta["image_generation_error_type"] = type(err).__name__
+        meta["image_generation_error_message"] = str(err)[:500]
+        row.meta_json = meta
+
+    def _clear_image_generation_failure(self, row: CharacterAsset | SceneAsset | ProductAsset) -> None:
+        meta = dict(row.meta_json or {})
+        meta.pop("image_generation_status", None)
+        meta.pop("image_generation_error_type", None)
+        meta.pop("image_generation_error_message", None)
+        row.meta_json = meta
+
     def _max_workers(self) -> int:
         return max(1, int(settings.SHORT_DRAMA_IMAGE_MAX_CONCURRENT))
 
@@ -188,6 +202,8 @@ class AssetImageService:
             for fut in as_completed(futures):
                 rid, url, gen, err = fut.result()
                 if err is not None:
+                    row = by_id[rid]
+                    self._mark_image_generation_failed(row, err)
                     logger.warning(
                         "ASSET_IMAGE_CHAR_FAIL project_id=%s asset_id=%s err=%s",
                         project_id,
@@ -210,6 +226,7 @@ class AssetImageService:
                     merged.update(gen.meta)
                 row.image_url = url
                 row.meta_json = merged
+                self._clear_image_generation_failure(row)
         return len(rows), ok, errors
 
     def _run_parallel_scene(
@@ -333,8 +350,37 @@ class AssetImageService:
                 return
             merged = dict(row.meta_json or {})
             merged.update(meta_patch or {})
+            merged.pop("image_generation_status", None)
+            merged.pop("image_generation_error_type", None)
+            merged.pop("image_generation_error_message", None)
             row.image_url = image_url
             row.meta_json = merged
+            wdb.add(row)
+            wdb.commit()
+        except Exception:
+            wdb.rollback()
+            raise
+        finally:
+            wdb.close()
+
+    def _writeback_image_failure(self, *, project_id: int, asset_type: str, asset_id: int, error: str, error_type: str) -> None:
+        logger.info("[S3_DB_REOPEN_FOR_IMAGE_FAILURE] project_id=%s asset_type=%s asset_id=%s", project_id, asset_type, asset_id)
+        wdb = SessionLocal()
+        try:
+            if asset_type == "character":
+                row = wdb.query(CharacterAsset).filter(CharacterAsset.id == asset_id, CharacterAsset.project_id == project_id).first()
+            elif asset_type == "scene":
+                row = wdb.query(SceneAsset).filter(SceneAsset.id == asset_id, SceneAsset.project_id == project_id).first()
+            else:
+                row = wdb.query(ProductAsset).filter(ProductAsset.id == asset_id, ProductAsset.project_id == project_id).first()
+            if row is None:
+                wdb.rollback()
+                return
+            meta = dict(row.meta_json or {})
+            meta["image_generation_status"] = "failed"
+            meta["image_generation_error_type"] = error_type
+            meta["image_generation_error_message"] = str(error or "")[:500]
+            row.meta_json = meta
             wdb.add(row)
             wdb.commit()
         except Exception:
@@ -409,6 +455,7 @@ class AssetImageService:
                 if not row:
                     continue
                 if err is not None:
+                    self._mark_image_generation_failed(row, err)
                     logger.warning(
                         "ASSET_IMAGE_SCENE_FAIL project_id=%s asset_id=%s err=%s",
                         project_id,
@@ -430,6 +477,7 @@ class AssetImageService:
                     merged.update(gen.meta)
                 row.image_url = url
                 row.meta_json = merged
+                self._clear_image_generation_failure(row)
         return len(rows), ok, errors
 
     def _apply_product_results(
@@ -498,6 +546,7 @@ class AssetImageService:
                 if not row:
                     continue
                 if err is not None:
+                    self._mark_image_generation_failed(row, err)
                     logger.warning(
                         "ASSET_IMAGE_PRODUCT_FAIL project_id=%s asset_id=%s err=%s",
                         project_id,
@@ -519,6 +568,7 @@ class AssetImageService:
                     merged.update(gen.meta)
                 row.image_url = url
                 row.meta_json = merged
+                self._clear_image_generation_failure(row)
         return len(rows), ok, errors
 
     def _recover_after_image_batch_crash(self, db: Session, project_id: int) -> None:
@@ -687,18 +737,21 @@ class AssetImageService:
                 .order_by(CharacterAsset.id)
                 .all()
             )
+            chars = [row for row in chars if not str(row.image_url or "").strip()]
             scenes = (
                 db.query(SceneAsset)
                 .filter(SceneAsset.project_id == project_id)
                 .order_by(SceneAsset.id)
                 .all()
             )
+            scenes = [row for row in scenes if not str(row.image_url or "").strip()]
             products = (
                 db.query(ProductAsset)
                 .filter(ProductAsset.project_id == project_id)
                 .order_by(ProductAsset.id)
                 .all()
             )
+            products = [row for row in products if not str(row.image_url or "").strip()]
             logger.info("[S3_DB_RELEASE_BEFORE_EXTERNAL_CALL] project_id=%s", project_id)
             db.close()
 
@@ -722,6 +775,14 @@ class AssetImageService:
                 result.characters_attempted = n
                 result.characters_succeeded = ok
                 result.errors.extend(errs)
+                for err in errs:
+                    self._writeback_image_failure(
+                        project_id=project_id,
+                        asset_type="character",
+                        asset_id=int(err.get("asset_id") or 0),
+                        error=str(err.get("error") or ""),
+                        error_type=str(err.get("error_type") or "ImageGenerationError"),
+                    )
                 for row in chars:
                     if row.image_url:
                         self._writeback_image_result(
@@ -737,6 +798,14 @@ class AssetImageService:
                 result.scenes_attempted = n
                 result.scenes_succeeded = ok
                 result.errors.extend(errs)
+                for err in errs:
+                    self._writeback_image_failure(
+                        project_id=project_id,
+                        asset_type="scene",
+                        asset_id=int(err.get("asset_id") or 0),
+                        error=str(err.get("error") or ""),
+                        error_type=str(err.get("error_type") or "ImageGenerationError"),
+                    )
                 for sid, (url, meta_patch) in scene_results.items():
                     self._writeback_image_result(
                         project_id=project_id,
@@ -751,6 +820,14 @@ class AssetImageService:
                 result.products_attempted = n
                 result.products_succeeded = ok
                 result.errors.extend(errs)
+                for err in errs:
+                    self._writeback_image_failure(
+                        project_id=project_id,
+                        asset_type="product",
+                        asset_id=int(err.get("asset_id") or 0),
+                        error=str(err.get("error") or ""),
+                        error_type=str(err.get("error_type") or "ImageGenerationError"),
+                    )
                 for pid, (url, meta_patch) in product_results.items():
                     self._writeback_image_result(
                         project_id=project_id,

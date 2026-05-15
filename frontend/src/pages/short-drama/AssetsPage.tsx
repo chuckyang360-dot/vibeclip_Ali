@@ -425,6 +425,21 @@ function extractFailedAssetIds(errors: Record<string, unknown>[] | undefined): S
   return ids;
 }
 
+function pipelineHasS2AssetGenerationSpecs(pipeline: PipelineSummaryDto): boolean {
+  const specs = pipeline.story_blueprint?.blueprint?.asset_generation_specs;
+  return Array.isArray(specs) && specs.length > 0;
+}
+
+function assetImageGenerationFailed(row: AssetLibraryItemDto): boolean {
+  const extra = row.extra && typeof row.extra === 'object' ? row.extra as Record<string, unknown> : {};
+  const tf = extra.type_fields && typeof extra.type_fields === 'object' ? extra.type_fields as Record<string, unknown> : {};
+  const failedInMeta =
+    String(extra.image_generation_status || '').toLowerCase() === 'failed'
+    || String(tf.image_generation_status || '').toLowerCase() === 'failed';
+  const failedImageRow = (row.images ?? []).some((img) => String(img.status || '').toLowerCase() === 'failed');
+  return failedInMeta || failedImageRow;
+}
+
 function normalizeLibraryItem(row: AssetLibraryItemDto): AssetLibraryItemDto | null {
   const id = toPositiveInt((row as unknown as { id?: unknown }).id);
   if (id == null) {
@@ -463,6 +478,7 @@ function appendS3Debug(event: string, payload: Record<string, unknown>) {
 }
 
 function toReadableErrorMessage(error: unknown, fallback: string): string {
+  const looksLikeTraceback = (value: string) => /Traceback \(most recent call last\)|File ".+\.py"|[\r\n]\s*at\s+/i.test(value);
   if (error instanceof ShortDramaApiError) {
     const detail = error.detail;
     if (error.status === 429 && detail && typeof detail === 'object') {
@@ -471,9 +487,10 @@ function toReadableErrorMessage(error: unknown, fallback: string): string {
         return d.detail.trim();
       }
     }
-    if (error.message) return error.message;
+    if (error.message && !looksLikeTraceback(error.message)) return error.message;
+    return fallback;
   }
-  if (error instanceof Error && error.message) return error.message;
+  if (error instanceof Error && error.message && !looksLikeTraceback(error.message)) return error.message;
   return fallback;
 }
 
@@ -684,17 +701,78 @@ export function ShortDramaAssetsPage() {
         const effectiveStatus = String(
           pipeline.project?.effective_status || pipeline.project?.suggested_status || pipeline.project?.status || '',
         );
+        const assetRowsTotal = Number(pipeline.asset_rows_total || 0);
+        const imageUrlFilled = Number(pipeline.image_url_filled || 0);
+        const hasS2AssetSpecs = pipelineHasS2AssetGenerationSpecs(pipeline);
         console.info('[S3_AUTO_FLOW_CHECK]', JSON.stringify({
           project_id: projectId,
           project_status: pipeline.project.status,
           effective_status: effectiveStatus,
-          assets_rows_total: pipeline.asset_rows_total ?? null,
+          asset_rows_total: pipeline.asset_rows_total ?? null,
+          image_url_filled: pipeline.image_url_filled ?? null,
+          has_s2_asset_generation_specs: hasS2AssetSpecs,
         }));
-        if (effectiveStatus === 'story_generated' && Number(pipeline.asset_rows_total || 0) === 0) {
+        if (assetRowsTotal === 0 && hasS2AssetSpecs) {
+          setAutoPhase('generating_images');
+          setAutoHint('正在生成资产，请稍候…');
+          console.info('[S3_AUTO_TRIGGER_ASSETS]', JSON.stringify({ project_id: projectId }));
+          void (async () => {
+            try {
+              const result = await generateShortDramaAssetSpecs(projectId, { trigger: 'auto' });
+              setImageGenerationFailedIds(extractFailedAssetIds(result.image_generation?.errors));
+              const nextPipeline = await getShortDramaPipeline(projectId);
+              setCachedShortDramaPipeline(projectId, nextPipeline);
+              applyPipelineSnapshot(nextPipeline);
+              await reload({ background: true, reason: 'auto_assets_generated' });
+              setAutoPhase('ready');
+              setAutoHint(null);
+            } catch (e) {
+              console.error('[S3_AUTO_ASSET_GENERATION_FAILED]', { project_id: projectId, error: e });
+              setAutoPhase('error');
+              setAutoHint('资产图片生成失败，请稍后重试');
+              setError('资产图片生成失败，请稍后重试');
+              await reload({ background: true, reason: 'auto_assets_error' });
+            }
+          })();
+          await new Promise((resolve) => window.setTimeout(resolve, 300));
+          await reload({ background: true, reason: 'auto_assets_started' });
+          return;
+        }
+
+        if (assetRowsTotal > 0 && imageUrlFilled < assetRowsTotal) {
+          setAutoPhase('generating_images');
+          setAutoHint('正在生成资产图片，请稍候…');
+          console.info('[S3_AUTO_TRIGGER_MISSING_IMAGES]', JSON.stringify({
+            project_id: projectId,
+            asset_rows_total: assetRowsTotal,
+            image_url_filled: imageUrlFilled,
+          }));
+          void (async () => {
+            try {
+              const imageResult = await generateShortDramaAssetImages(projectId);
+              setImageGenerationFailedIds(extractFailedAssetIds(imageResult.errors));
+              const nextPipeline = await getShortDramaPipeline(projectId);
+              setCachedShortDramaPipeline(projectId, nextPipeline);
+              applyPipelineSnapshot(nextPipeline);
+              await reload({ background: true, reason: 'auto_missing_images_generated' });
+              setAutoPhase('ready');
+              setAutoHint(null);
+            } catch (e) {
+              console.error('[S3_AUTO_MISSING_IMAGES_FAILED]', { project_id: projectId, error: e });
+              setAutoPhase('error');
+              setAutoHint('资产图片生成失败，请稍后重试');
+              setError('资产图片生成失败，请稍后重试');
+              await reload({ background: true, reason: 'auto_missing_images_error' });
+            }
+          })();
+          await reload({ background: true, reason: 'auto_missing_images_started' });
+          return;
+        }
+
+        if (assetRowsTotal > 0 && imageUrlFilled >= assetRowsTotal) {
+          await reload({ background: true, reason: 'auto_assets_already_ready' });
           setAutoPhase('ready');
           setAutoHint(null);
-          console.info('[S3_ASSET_GENERATION_IDLE]', JSON.stringify({ project_id: projectId, reason: 'story_generated_without_assets_waiting_for_user_trigger' }));
-          await reload({ background: true, reason: 'story_generated_idle' });
           return;
         }
 
@@ -737,7 +815,8 @@ export function ShortDramaAssetsPage() {
           error: e,
         });
         setAutoPhase('error');
-        setAutoHint('资产自动生成失败，请点击重试或刷新页面。');
+        setAutoHint('资产图片生成失败，请稍后重试');
+        setError('资产图片生成失败，请稍后重试');
         s3FailureStreakRef.current = 0;
         confirmedS3PipelineFailureRef.current = false;
         setConfirmedS3PipelineFailure(false);
@@ -1096,7 +1175,8 @@ export function ShortDramaAssetsPage() {
     setAutoHint('正在生成角色/场景/产品资产规范…');
     console.info('[S3_MANUAL_TRIGGER_SPECS]', JSON.stringify({ project_id: projectId }));
     try {
-      await generateShortDramaAssetSpecs(projectId, { trigger: 'retry_button' });
+      const specsResult = await generateShortDramaAssetSpecs(projectId, { trigger: 'retry_button' });
+      setImageGenerationFailedIds(extractFailedAssetIds(specsResult.image_generation?.errors));
       let nextPipeline = await getShortDramaPipeline(projectId);
       setCachedShortDramaPipeline(projectId, nextPipeline);
       applyPipelineSnapshot(nextPipeline);
@@ -1107,10 +1187,7 @@ export function ShortDramaAssetsPage() {
       );
       if (effectiveAfterSpecs === 'asset_specs_generated') {
         setAutoPhase('generating_images');
-        setAutoHint('正在生成资产图片，请稍候…');
-        console.info('[S3_MANUAL_TRIGGER_IMAGES]', JSON.stringify({ project_id: projectId }));
-        const imageResult = await generateShortDramaAssetImages(projectId);
-        setImageGenerationFailedIds(extractFailedAssetIds(imageResult.errors));
+        setAutoHint('正在同步资产图片，请稍候…');
         nextPipeline = await getShortDramaPipeline(projectId);
         setCachedShortDramaPipeline(projectId, nextPipeline);
         applyPipelineSnapshot(nextPipeline);
@@ -1133,7 +1210,7 @@ export function ShortDramaAssetsPage() {
         setAutoHint(null);
       }
     } catch (e) {
-      const msg = toReadableErrorMessage(e, '资产生成失败，请重试。');
+      const msg = toReadableErrorMessage(e, '资产生成失败，请稍后重试。');
       setAutoPhase('error');
       setAutoHint(msg);
       setError(msg);
@@ -1168,8 +1245,9 @@ export function ShortDramaAssetsPage() {
       await reload({ background: true, reason: 'single_asset_image_generated' });
       if (detail?.id === row.id) await openDetail(row.id);
     } catch (e) {
+      console.error('[S3_SINGLE_ASSET_IMAGE_FAILED]', { asset_id: row.id, error: e });
       setImageGenerationFailedIds((prev) => new Set(prev).add(row.id));
-      window.alert(toReadableErrorMessage(e, '图片生成失败，请重试。'));
+      setError(toReadableErrorMessage(e, '资产图片生成失败，请稍后重试。'));
     } finally {
       setGeneratingImageAssetIds((prev) => {
         const next = new Set(prev);
@@ -1205,7 +1283,7 @@ export function ShortDramaAssetsPage() {
             setIsDirty(true);
             await reload({ background: true });
           } catch (e) {
-            window.alert(e instanceof Error ? e.message : '创建失败');
+            setError(toReadableErrorMessage(e, '创建失败，请稍后重试。'));
           } finally {
             setAddPending(null);
           }
@@ -1231,14 +1309,14 @@ export function ShortDramaAssetsPage() {
             setIsDirty(true);
             await reload({ background: true });
           } catch (e) {
-            window.alert(e instanceof Error ? e.message : '创建失败，请重试。');
+            setError(toReadableErrorMessage(e, '创建失败，请稍后重试。'));
           } finally {
             setAddPending(null);
           }
         })();
       }
     } catch (e) {
-      window.alert(e instanceof Error ? e.message : '创建失败');
+      setError(toReadableErrorMessage(e, '创建失败，请稍后重试。'));
     }
   }, [effectiveProjectId, activeTab, addMode, draft, uploadFiles, createLabel, reload]);
 
@@ -1285,7 +1363,7 @@ export function ShortDramaAssetsPage() {
               const isImageGenerating = cardImageGenerating || (workInProgress && !visualAnchor && !imageLoadFailed);
               const hasFailedImage =
                 !visualAnchor &&
-                (imageGenerationFailedIds.has(row.id) || (row.images ?? []).some((img) => String(img.status || '').toLowerCase() === 'failed'));
+                (imageGenerationFailedIds.has(row.id) || assetImageGenerationFailed(row));
               return (
                 <div key={row.id} className="flex h-full flex-col overflow-hidden rounded-2xl" style={{ background: '#fff', border: '1px solid #EAEAEA' }}>
                   <div
@@ -1322,7 +1400,7 @@ export function ShortDramaAssetsPage() {
                         待生成图片
                       </div>
                     )}
-                    {!visualAnchor || imageLoadFailed ? (
+                    {hasFailedImage && (!visualAnchor || imageLoadFailed) && !workInProgress ? (
                       <button
                         type="button"
                         disabled={cardImageGenerating}
@@ -1332,7 +1410,7 @@ export function ShortDramaAssetsPage() {
                         }}
                         className="absolute bottom-3 left-1/2 -translate-x-1/2 rounded-lg bg-[#1D1D1F] px-3 py-1.5 text-[11px] font-semibold text-white shadow-sm disabled:opacity-60"
                       >
-                        {cardImageGenerating ? '生成中…' : '生成图片'}
+                        {cardImageGenerating ? '生成中…' : '重试生成图片'}
                       </button>
                     ) : null}
                   </div>
@@ -1450,26 +1528,18 @@ export function ShortDramaAssetsPage() {
             {s3AssetGridUi === 'empty' ? (
               <div className="flex h-full flex-col self-start overflow-hidden rounded-2xl border border-[#EAEAEA] bg-[#FAFAFB] p-4">
                 <div className="flex h-48 shrink-0 flex-col items-center justify-center px-3">
-                  <i className="ri-inbox-archive-line text-[22px] text-[#8E8E93]" />
+                  <i className="ri-loader-4-line animate-spin text-[22px] text-[#8E8E93]" />
                 </div>
                 <div className="flex flex-1 flex-col">
-                  <div className="text-[14px] font-semibold text-[#1D1D1F]">尚未生成资产</div>
+                  <div className="text-[14px] font-semibold text-[#1D1D1F]">正在准备资产数据</div>
                   <div className="mt-2 text-[12px] leading-relaxed text-[#8E8E93]">
-                    当前还没有角色、场景或产品资产。请点击按钮开始生成。
+                    系统会根据 S2 已生成的资产 prompt 自动创建资产并生成图片。
                   </div>
                   {error ? (
                     <div className="mt-3 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-[12px] text-red-700">
                       {error}
                     </div>
                   ) : null}
-                  <button
-                    type="button"
-                    disabled={!canGenerateS3Assets}
-                    onClick={() => void handleGenerateS3Assets()}
-                    className="mt-4 rounded-xl bg-[#1D1D1F] px-4 py-2 text-[12px] font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50"
-                  >
-                    生成角色与场景资产
-                  </button>
                 </div>
               </div>
             ) : null}
@@ -1561,7 +1631,7 @@ export function ShortDramaAssetsPage() {
               error_name: e instanceof Error ? e.name : undefined,
               error_message: e instanceof Error ? e.message : String(e),
             });
-            window.alert(toReadableErrorMessage(e, '重生成失败，请稍后重试。'));
+            setError(toReadableErrorMessage(e, '资产图片生成失败，请稍后重试。'));
           } finally {
             setRegenerating(false);
           }

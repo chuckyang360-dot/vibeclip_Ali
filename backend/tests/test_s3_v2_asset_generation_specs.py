@@ -6,6 +6,7 @@ import pytest
 from pydantic import ValidationError
 
 from app.short_drama.exceptions import ShortDramaInvalidModelOutputError
+from app.short_drama.models import CharacterAsset
 from app.short_drama.schemas.product import ProductContextSchema
 from app.short_drama.schemas.story import (
     AssetGenerationSpecSchema,
@@ -14,6 +15,7 @@ from app.short_drama.schemas.story import (
     default_creative_blueprint_v2_attachment,
 )
 from app.short_drama.services.asset_image_service import _should_skip_prompt_mutations
+from app.short_drama.services.asset_image_service import AssetImageService
 from app.short_drama.services.asset_spec_service import asset_bundle_from_story_requirements
 from app.short_drama.services.asset_v2_materialize_service import (
     build_v2_asset_specs_bundle,
@@ -317,6 +319,21 @@ def test_v2_meta_skips_prompt_mutation_flag():
     assert _should_skip_prompt_mutations({"v2_asset_spec_pass_through": True})
     assert _should_skip_prompt_mutations({"type_fields": {"asset_spec_source": "s2_asset_generation_specs"}})
     assert not _should_skip_prompt_mutations({"type_fields": {}})
+
+
+def test_asset_image_failure_status_is_per_asset_and_cleared_on_success():
+    svc = AssetImageService(provider=object())
+    row = CharacterAsset(project_id=1, name="Lead", role_type="main", visual_prompt="prompt", meta_json={"keep": "x"})
+
+    svc._mark_image_generation_failed(row, RuntimeError("provider traceback should stay in logs"))
+
+    assert row.meta_json["keep"] == "x"
+    assert row.meta_json["image_generation_status"] == "failed"
+    assert row.meta_json["image_generation_error_type"] == "RuntimeError"
+
+    svc._clear_image_generation_failure(row)
+
+    assert row.meta_json == {"keep": "x"}
 
 
 def test_legacy_bundle_still_available_for_non_v2_blueprint():
