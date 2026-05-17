@@ -237,6 +237,24 @@ async def generate_all_asset_images(
             finally:
                 fail_db.close()
         raise_short_drama_http(e)
+    except Exception:
+        logger.exception("Asset image generation unexpected error project_id=%s", pid)
+        if lock_acquired:
+            fail_db = SessionLocal()
+            try:
+                mark_project_stage_failed(
+                    fail_db,
+                    pid,
+                    stage="s3_images",
+                    error_type_value="asset_image_generation_failed",
+                    message="资产图片生成失败，请稍后重试。",
+                )
+            finally:
+                fail_db.close()
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail={"error": "asset_image_generation_failed", "message": "资产图片生成失败，请稍后重试。"},
+        )
 
 
 @router.post("/generate/characters", response_model=AssetImageBatchResponse)
@@ -249,6 +267,12 @@ async def generate_character_images_only(
         return _to_response(result)
     except (ShortDramaImageProviderError, ShortDramaImageSaveError) as e:
         raise_short_drama_http(e)
+    except Exception:
+        logger.exception("Character asset image generation unexpected error project_id=%s", body.project_id)
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail={"error": "asset_image_generation_failed", "message": "资产图片生成失败，请稍后重试。"},
+        )
 
 
 @router.post("/generate/scenes", response_model=AssetImageBatchResponse)
@@ -261,6 +285,12 @@ async def generate_scene_images_only(
         return _to_response(result)
     except (ShortDramaImageProviderError, ShortDramaImageSaveError) as e:
         raise_short_drama_http(e)
+    except Exception:
+        logger.exception("Scene asset image generation unexpected error project_id=%s", body.project_id)
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail={"error": "asset_image_generation_failed", "message": "资产图片生成失败，请稍后重试。"},
+        )
 
 
 @router.post("/generate/products", response_model=AssetImageBatchResponse)
@@ -273,6 +303,12 @@ async def generate_product_images_only(
         return _to_response(result)
     except (ShortDramaImageProviderError, ShortDramaImageSaveError) as e:
         raise_short_drama_http(e)
+    except Exception:
+        logger.exception("Product asset image generation unexpected error project_id=%s", body.project_id)
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail={"error": "asset_image_generation_failed", "message": "资产图片生成失败，请稍后重试。"},
+        )
 
 
 @router.post("/regenerate-one", response_model=RegenerateOneAssetImageResponse)
@@ -306,3 +342,9 @@ async def regenerate_one_asset_image(
         raise_short_drama_http(e)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
+    except Exception:
+        logger.exception("Single asset image regeneration unexpected error project_id=%s", body.project_id)
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail={"error": "asset_image_generation_failed", "message": "资产图片生成失败，请稍后重试。"},
+        )

@@ -1978,9 +1978,8 @@ def _normalize_blueprint_legacy_for_execution(
     stage_names = stages
     total = float(project_constraints.get("duration_sec") or _duration_budget_seconds(project_config.get("duration")))
     requested_segment_count = len(blueprint.segment_plan or [])
-    desired_segment_count = _segment_count_for_project(total, project_config, product)
-    minimum_provider_safe_count = max(1, int((total + 9.999) // 10))
-    segment_count = max(requested_segment_count, len(stages), desired_segment_count, minimum_provider_safe_count)
+    desired_segment_count = 0
+    segment_count = max(requested_segment_count, len(stages), 1)
     segment_count = max(1, min(8, segment_count))
     plan = list(blueprint.segment_plan or [])
     workflow_language = str((project_config.get("workflow_language") or "zh-CN")).strip() or "zh-CN"
@@ -2030,7 +2029,6 @@ def _normalize_blueprint_legacy_for_execution(
                     "requested_segment_count": requested_segment_count,
                     "story_framework_structure_len": len(stages),
                     "desired_segment_count": desired_segment_count,
-                    "minimum_provider_safe_count": minimum_provider_safe_count,
                     "action": "keep_ai_segment_plan",
                 },
                 ensure_ascii=False,
@@ -2067,15 +2065,13 @@ def _normalize_blueprint_legacy_for_execution(
         selling_point = str(item.source_selling_point or mapping.get(sid, "")).strip()
         raw_duration = float(item.duration_seconds or item.duration_sec or 0.0)
         normalized_duration = raw_duration
-        if normalized_duration > 10.0:
-            logger.warning(
-                "[S2_SEGMENT_DURATION_CLAMPED] project_id=%s segment_id=%s requested_duration=%s provider_max_duration=%s",
-                pid,
-                sid,
-                raw_duration,
-                10.0,
+        if normalized_duration > PROVIDER_MAX_VIDEO_DURATION_SECONDS:
+            raise _duration_exceeded_error(
+                project_id=pid,
+                segment_id=sid,
+                duration_seconds=raw_duration,
+                field="duration_seconds",
             )
-            normalized_duration = 10.0
         req_visual = list(dict.fromkeys([x for x in (item.required_visual_elements or []) if str(x or "").strip()]))
         req_assets = list(item.required_assets or [])
         exp_assets = list(item.expected_assets or [])

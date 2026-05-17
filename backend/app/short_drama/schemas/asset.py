@@ -79,6 +79,7 @@ class GenerateAssetSpecsRequest(BaseModel):
 class GenerateAssetSpecsResponse(BaseModel):
     project_id: int
     assets: AssetSpecsBundleSchema
+    image_generation: Optional[Dict[str, Any]] = None
 
 
 class GenerateAssetImagesRequest(BaseModel):
@@ -189,6 +190,25 @@ class AssetListResponse(BaseModel):
     project_id: int
     asset_type: str
     assets: List[AssetDetailSchema] = Field(default_factory=list)
+
+
+class AssetLibrarySummarySchema(BaseModel):
+    id: int
+    project_id: int
+    project_name: str
+    asset_type: str
+    name: str
+    description: Optional[str] = None
+    image_url: Optional[str] = None
+    source: str = "system_generated"
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
+
+
+class AssetLibrarySummaryListResponse(BaseModel):
+    user_id: int
+    asset_type: str
+    assets: List[AssetLibrarySummarySchema] = Field(default_factory=list)
 
 
 class CreateAssetRequest(BaseModel):

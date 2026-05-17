@@ -8,13 +8,15 @@ from ...database import SessionLocal, get_db
 from ..exceptions import ShortDramaInvalidModelOutputError, ShortDramaProviderError
 from ..exceptions import ShortDramaImageProviderError
 from ..http_errors import raise_short_drama_http
-from ..models import AssetEntity, AssetImage, CharacterAsset, ProductAsset, SceneAsset
+from ..models import AssetEntity, AssetImage, CharacterAsset, ProductAsset, SceneAsset, ShortDramaProject
 from ..schemas.asset import (
     AnalyzeAssetReferenceImageRequest,
     AnalyzeAssetReferenceImageResponse,
     AppendUploadedImagesRequest,
     AssetDetailSchema,
     AssetListResponse,
+    AssetLibrarySummaryListResponse,
+    AssetLibrarySummarySchema,
     AssetSpecsBundleSchema,
     CharacterAssetSchema,
     CreateAssetFromImageRequest,
@@ -40,6 +42,7 @@ from ..services.asset_spec_service import (
     inspect_asset_requirements_source,
     resolve_scene_fields,
 )
+from ..services.asset_image_service import asset_image_service
 from ..services.asset_library_service import asset_library_service
 from ..services.asset_v2_materialize_service import (
     build_v2_asset_specs_bundle,
@@ -604,11 +607,12 @@ async def generate_asset_specs(body: GenerateAssetSpecsRequest, db: Session = De
             )
 
         logger.info("[S3_DB_REOPEN_FOR_WRITEBACK] project_id=%s", body.project_id)
-        db.query(CharacterAsset).filter(CharacterAsset.project_id == body.project_id).delete(
-            synchronize_session=False
-        )
-        db.query(SceneAsset).filter(SceneAsset.project_id == body.project_id).delete(synchronize_session=False)
-        db.query(ProductAsset).filter(ProductAsset.project_id == body.project_id).delete(synchronize_session=False)
+        if not is_v2_blueprint:
+            db.query(CharacterAsset).filter(CharacterAsset.project_id == body.project_id).delete(
+                synchronize_session=False
+            )
+            db.query(SceneAsset).filter(SceneAsset.project_id == body.project_id).delete(synchronize_session=False)
+            db.query(ProductAsset).filter(ProductAsset.project_id == body.project_id).delete(synchronize_session=False)
 
         if is_v2_blueprint:
             persist_v2_asset_specs_bundle_to_legacy_tables(db, body.project_id, bundle)
@@ -1220,6 +1224,43 @@ async def generate_asset_specs(body: GenerateAssetSpecsRequest, db: Session = De
             mark_project_stage_succeeded(post_db, body.project_id, stage="s3_assets", status_after=final_status)
         finally:
             post_db.close()
+        lock_acquired = False
+
+        image_generation: dict[str, object] | None = None
+        try:
+            image_result = asset_image_service.generate_all_asset_images(db, body.project_id)
+            asset_library_service.sync_legacy_assets_for_project(db, body.project_id)
+            db.commit()
+            image_generation = {
+                "project_id": image_result.project_id,
+                "characters_attempted": image_result.characters_attempted,
+                "characters_succeeded": image_result.characters_succeeded,
+                "scenes_attempted": image_result.scenes_attempted,
+                "scenes_succeeded": image_result.scenes_succeeded,
+                "products_attempted": image_result.products_attempted,
+                "products_succeeded": image_result.products_succeeded,
+                "errors": image_result.errors,
+            }
+        except Exception as e:
+            logger.exception("Asset image generation failed project_id=%s", body.project_id)
+            fail_db = SessionLocal()
+            try:
+                mark_project_stage_failed(
+                    fail_db,
+                    body.project_id,
+                    stage="s3_images",
+                    error_type_value="asset_image_generation_failed",
+                    message="资产图片生成失败，请稍后重试。",
+                )
+            finally:
+                fail_db.close()
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                detail={
+                    "error": "asset_image_generation_failed",
+                    "message": "资产图片生成失败，请稍后重试。",
+                },
+            ) from e
 
         chars = (
             db.query(CharacterAsset)
@@ -1294,7 +1335,7 @@ async def generate_asset_specs(body: GenerateAssetSpecsRequest, db: Session = De
             scenes=len(out_bundle.scenes),
             products=len(out_bundle.products),
         )
-        return GenerateAssetSpecsResponse(project_id=body.project_id, assets=out_bundle)
+        return GenerateAssetSpecsResponse(project_id=body.project_id, assets=out_bundle, image_generation=image_generation)
     except HTTPException as e:
         if lock_acquired:
             et = "storage_or_db_error" if e.status_code >= 500 else "request_conflict"
@@ -1333,6 +1374,56 @@ async def get_asset_library_detail(asset_id: int, project_id: int, db: Session =
     if not row:
         raise HTTPException(status_code=404, detail="Asset not found")
     return AssetDetailSchema.model_validate(asset_library_service.to_detail(db, row))
+
+
+@router.get("/library", response_model=AssetLibrarySummaryListResponse)
+async def list_assets_library_for_user(
+    user_id: int,
+    asset_type: str = Query(..., pattern="^(character|scene|product)$"),
+    db: Session = Depends(get_db),
+):
+    normalized_type = asset_type.strip().lower()
+    rows = (
+        db.query(AssetEntity, ShortDramaProject.project_name)
+        .join(ShortDramaProject, ShortDramaProject.id == AssetEntity.project_id)
+        .filter(
+            ShortDramaProject.user_id == user_id,
+            AssetEntity.asset_type == normalized_type,
+            AssetEntity.status == "active",
+        )
+        .order_by(AssetEntity.updated_at.desc().nullslast(), AssetEntity.created_at.desc().nullslast(), AssetEntity.id.desc())
+        .limit(200)
+        .all()
+    )
+    assets: list[AssetLibrarySummarySchema] = []
+    for asset, project_name in rows:
+        detail = asset_library_service.to_detail(db, asset)
+        cover = detail.get("cover_image") if isinstance(detail.get("cover_image"), dict) else None
+        image_url = str((cover or {}).get("image_url") or "").strip() or None
+        if image_url is None:
+            images = detail.get("images")
+            if isinstance(images, list):
+                for img in images:
+                    if isinstance(img, dict) and str(img.get("status") or "active").lower() == "active":
+                        candidate = str(img.get("image_url") or "").strip()
+                        if candidate:
+                            image_url = candidate
+                            break
+        assets.append(
+            AssetLibrarySummarySchema(
+                id=int(asset.id),
+                project_id=int(asset.project_id),
+                project_name=str(project_name or f"项目 {asset.project_id}"),
+                asset_type=str(asset.asset_type or normalized_type),
+                name=str(asset.name or f"{normalized_type} asset"),
+                description=asset.description,
+                image_url=image_url,
+                source=str(asset.source or "system_generated"),
+                created_at=asset.created_at,
+                updated_at=asset.updated_at,
+            )
+        )
+    return AssetLibrarySummaryListResponse(user_id=user_id, asset_type=normalized_type, assets=assets)
 
 
 @router.get("/library/{project_id}/{asset_type}", response_model=AssetListResponse)
@@ -1400,12 +1491,21 @@ async def regenerate_asset_library(body: RegenerateAssetRequest, db: Session = D
             raise HTTPException(
                 status_code=status.HTTP_429_TOO_MANY_REQUESTS,
                 detail={
-                    "success": False,
-                    "error": "XAI_IMAGE_QUOTA_EXHAUSTED",
-                    "detail": _XAI_IMAGE_QUOTA_DETAIL,
+                    "error": "asset_image_generation_failed",
+                    "message": "资产图片生成失败，请稍后重试。",
                 },
             )
-        raise
+        logger.exception("Asset library image regeneration failed project_id=%s asset_id=%s", body.project_id, body.asset_id)
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail={"error": "asset_image_generation_failed", "message": "资产图片生成失败，请稍后重试。"},
+        ) from e
+    except Exception as e:
+        logger.exception("Asset library image regeneration unexpected error project_id=%s asset_id=%s", body.project_id, body.asset_id)
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail={"error": "asset_image_generation_failed", "message": "资产图片生成失败，请稍后重试。"},
+        ) from e
 
 
 @router.post("/library/{asset_id}/uploaded-images", response_model=AssetDetailSchema)

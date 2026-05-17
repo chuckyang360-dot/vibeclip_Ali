@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { SDWorkflowNav } from './components/SDWorkflowNav';
 import { AssetLightbox, type LightboxItem } from './components/AssetLightbox';
@@ -356,13 +356,6 @@ function displayAssetName(row: AssetLibraryItemDto): string {
   return finalize(normalizeSceneDisplayName(out || '场景'));
 }
 
-function assetCoverImageClass(row: AssetLibraryItemDto): string {
-  if (row.asset_type === 'character') {
-    return 'h-full w-full object-cover object-top';
-  }
-  return 'h-full w-full object-cover object-center';
-}
-
 function normalizeSceneDisplayName(name: string): string {
   const raw = String(name || '').trim();
   if (!raw) return '场景';
@@ -376,6 +369,187 @@ function normalizeSceneDisplayName(name: string): string {
     park: '公园',
   };
   return fallbackMap[key] || raw;
+}
+
+type AssetCardGalleryVariant = 'ready' | 'generating' | 'load_failed' | 'gen_failed';
+
+type AssetCardImageGalleryProps = {
+  heightClass: string;
+  contain: boolean;
+  alt: string;
+  galleryUrls: string[];
+  coverUrl: string | null;
+  variant: AssetCardGalleryVariant;
+  badge: ReactNode | null;
+  showReferenceBadge: boolean;
+  onOpenPreview?: (currentImageUrl: string) => void;
+  onImageLoadError?: () => void;
+  /** Retry CTA overlays main image viewport (outside thumb strip). */
+  actionOverlay?: ReactNode | null;
+};
+
+/** Framer Step3 CardImageGallery 视觉：真实 URL，多图底部缩略条；状态沿用线上分支 copy。 */
+function AssetCardImageGallery({
+  heightClass,
+  contain,
+  alt,
+  galleryUrls,
+  coverUrl,
+  variant,
+  badge,
+  showReferenceBadge,
+  onOpenPreview,
+  onImageLoadError,
+  actionOverlay,
+}: AssetCardImageGalleryProps) {
+  const effectiveUrls =
+    galleryUrls.length > 0 ? galleryUrls : coverUrl ? [coverUrl] : [];
+  const urlKey = effectiveUrls.join('|');
+  const [activeIdx, setActiveIdx] = useState(0);
+  useEffect(() => {
+    setActiveIdx(0);
+  }, [urlKey]);
+
+  const showGallery = variant === 'ready' && effectiveUrls.length > 0;
+
+  let mainBody: ReactNode;
+  if (variant === 'generating') {
+    mainBody = (
+      <div className="flex h-full w-full flex-col items-center justify-center gap-1.5" style={{ background: '#F9F9FB' }}>
+        <div className="flex h-8 w-8 items-center justify-center rounded-xl" style={{ background: '#EAEAEA' }}>
+          <i className="ri-loader-4-line block animate-spin text-[15px]" style={{ color: '#AEAEB2' }} aria-hidden />
+        </div>
+        <span className="text-[11px] font-medium" style={{ color: '#AEAEB2' }}>
+          资产图片生成中…
+        </span>
+      </div>
+    );
+  } else if (variant === 'load_failed') {
+    mainBody = (
+      <div className="flex h-full w-full flex-col items-center justify-center gap-1.5 px-3 text-center" style={{ background: '#F9F9FB' }}>
+        <div className="flex h-8 w-8 items-center justify-center rounded-xl" style={{ background: '#FDE8E8' }}>
+          <i className="ri-image-broken-line text-[15px] text-[#B42318]" aria-hidden />
+        </div>
+        <span className="text-[11px] font-medium text-[#B42318]">图片加载失败</span>
+      </div>
+    );
+  } else if (variant === 'gen_failed') {
+    mainBody = (
+      <div className="flex h-full w-full flex-col items-center justify-center gap-1.5 px-3 text-center" style={{ background: '#F9F9FB' }}>
+        <div className="flex h-8 w-8 items-center justify-center rounded-xl" style={{ background: '#FDE8E8' }}>
+          <i className="ri-error-warning-line text-[15px] text-[#B42318]" aria-hidden />
+        </div>
+        <span className="text-[11px] font-medium text-[#B42318]">图片生成失败</span>
+      </div>
+    );
+  } else if (showGallery) {
+    const src = effectiveUrls[Math.min(activeIdx, effectiveUrls.length - 1)] ?? '';
+    mainBody = (
+      <>
+        <img
+          src={src}
+          alt={alt}
+          className={`h-full w-full transition-opacity duration-200 ${contain ? 'object-contain object-center' : 'object-cover object-center'}`}
+          onError={() => onImageLoadError?.()}
+        />
+        <div className="absolute inset-0 flex items-end justify-end bg-black/0 p-2.5 transition-all duration-200 group-hover:pointer-events-none group-hover:bg-black/20">
+          <div
+            className="pointer-events-none flex h-7 w-7 translate-y-1 items-center justify-center rounded-full opacity-0 shadow-sm transition-all duration-200 group-hover:pointer-events-none group-hover:translate-y-0 group-hover:opacity-100"
+            style={{ background: 'rgba(255,255,255,0.92)', border: '1px solid rgba(0,0,0,0.08)' }}
+          >
+            <i className="ri-zoom-in-line text-[12px]" style={{ color: '#1D1D1F' }} aria-hidden />
+          </div>
+        </div>
+        {effectiveUrls.length > 1 ? (
+          <div
+            className="absolute bottom-2.5 right-2.5 rounded-full px-2 py-0.5 text-[10px] font-medium text-white"
+            style={{ background: 'rgba(0,0,0,0.45)' }}
+          >
+            {Math.min(activeIdx + 1, effectiveUrls.length)}/{effectiveUrls.length}
+          </div>
+        ) : null}
+      </>
+    );
+  } else {
+    mainBody = (
+      <div className="flex h-full w-full flex-col items-center justify-center gap-1.5" style={{ background: '#F9F9FB' }}>
+        <div className="flex h-8 w-8 items-center justify-center rounded-xl" style={{ background: '#EAEAEA' }}>
+          <i className="ri-loader-4-line animate-spin text-[15px]" style={{ color: '#AEAEB2' }} aria-hidden />
+        </div>
+        <span className="text-[11px] font-medium" style={{ color: '#AEAEB2' }}>
+          资产图片生成中…
+        </span>
+      </div>
+    );
+  }
+
+  return (
+    <div style={{ background: '#F5F5F7' }}>
+      <div
+        role={showGallery && onOpenPreview ? 'button' : undefined}
+        tabIndex={showGallery && onOpenPreview ? 0 : undefined}
+        className={`group relative flex w-full shrink-0 items-center justify-center overflow-hidden ${heightClass} ${showGallery && onOpenPreview ? 'cursor-pointer' : 'cursor-default'}`}
+        style={{ background: '#F5F5F7' }}
+        onClick={() => {
+          if (!(variant === 'ready' && showGallery && onOpenPreview)) return;
+          const chosen = effectiveUrls[Math.min(activeIdx, Math.max(effectiveUrls.length - 1, 0))] ?? '';
+          if (chosen) onOpenPreview(chosen);
+        }}
+        onKeyDown={(e) => {
+          if (!(e.key === 'Enter' || e.key === ' ') || !(variant === 'ready' && showGallery && onOpenPreview)) return;
+          e.preventDefault();
+          const chosen = effectiveUrls[Math.min(activeIdx, Math.max(effectiveUrls.length - 1, 0))] ?? '';
+          if (chosen) onOpenPreview(chosen);
+        }}
+      >
+        {mainBody}
+        {badge ? <div className="pointer-events-none absolute left-2.5 top-2.5">{badge}</div> : null}
+        {showReferenceBadge ? (
+          <div className="pointer-events-none absolute right-2.5 top-2.5">
+            <span
+              className="rounded-full px-2 py-0.5 text-[10px] font-semibold"
+              style={{
+                background: 'rgba(255,255,255,0.92)',
+                border: '1px solid rgba(0,0,0,0.06)',
+                color: '#0B8D5A',
+              }}
+            >
+              有参考图
+            </span>
+          </div>
+        ) : null}
+        {actionOverlay}
+      </div>
+      {showGallery && effectiveUrls.length > 1 ? (
+        <div
+          className="flex gap-1.5 px-3 py-2"
+          style={{ background: '#F0F0F2', borderTop: '1px solid #E8E8EA' }}
+          onClick={(e) => e.stopPropagation()}
+        >
+          {effectiveUrls.map((srcUrl, idx) => (
+            <button
+              key={`${srcUrl}-${idx}`}
+              type="button"
+              onClick={() => setActiveIdx(idx)}
+              className="relative flex-shrink-0 cursor-pointer overflow-hidden rounded-md transition-all duration-150"
+              style={{
+                width: 36,
+                height: 28,
+                border:
+                  idx === Math.min(activeIdx, effectiveUrls.length - 1) ? '1.5px solid #1D1D1F' : '1.5px solid transparent',
+                outline: 'none',
+              }}
+            >
+              <img src={srcUrl} alt={`${alt}-${idx + 1}`} className="h-full w-full object-cover" />
+              {idx !== Math.min(activeIdx, effectiveUrls.length - 1) ? (
+                <div className="absolute inset-0" style={{ background: 'rgba(255,255,255,0.35)' }} />
+              ) : null}
+            </button>
+          ))}
+        </div>
+      ) : null}
+    </div>
+  );
 }
 
 function activeRenderableImages(row: AssetLibraryItemDto) {
@@ -1374,20 +1548,51 @@ export function ShortDramaAssetsPage() {
         }
       }} />
       <div className="pt-14">
-        <div className="px-6 lg:px-10 py-6 flex items-start justify-between" style={{ borderBottom: '1px solid #EAEAEA' }}>
+        <div
+          className="flex flex-col gap-4 px-6 py-6 md:flex-row md:items-center md:justify-between lg:px-10"
+          style={{ borderBottom: '1px solid #EAEAEA', background: '#ffffff' }}
+        >
           <div>
-            <span className="text-[11px] font-bold tracking-widest uppercase" style={{ color: '#8E8E93' }}>STEP 03</span>
-            <h1 className="text-2xl font-black mt-0.5" style={{ fontFamily: "'Syne', sans-serif", color: '#1D1D1F' }}>角色与场景资产</h1>
-            <p className="text-[13px] mt-1" style={{ color: '#8E8E93' }}>构建可复用的视觉资产库，统一整部商品营销短视频的视觉风格</p>
+            <span className="text-[11px] font-bold uppercase tracking-widest" style={{ color: '#8E8E93' }}>STEP 03</span>
+            <h1 className="mt-0.5 text-2xl font-black" style={{ fontFamily: "'Syne', sans-serif", color: '#1D1D1F' }}>
+              角色与场景资产
+            </h1>
+            <p className="mt-1 text-[13px]" style={{ color: '#8E8E93' }}>
+              构建可复用的视觉资产库，统一整部商品营销短视频的视觉风格
+            </p>
           </div>
         </div>
-        <div className="px-6 lg:px-10 pt-5">
-          <div className="flex gap-1 p-1 rounded-xl w-fit" style={{ background: '#F5F5F7', border: '1px solid #EAEAEA' }}>
-            {tabs.map((tab) => (
-              <button key={tab.key} type="button" onClick={() => setActiveTab(tab.key)} className="flex items-center gap-2 px-5 py-2 rounded-lg text-[13px] font-medium" style={{ background: activeTab === tab.key ? '#fff' : 'transparent', color: activeTab === tab.key ? '#1D1D1F' : '#8E8E93' }}>
-                <i className={`${tab.icon} text-[13px]`} />{tab.label}<span className="text-[11px] px-1.5 py-0.5 rounded-full" style={{ background: '#EAEAEA' }}>{tab.count}</span>
-              </button>
-            ))}
+        <div className="px-6 pb-0 pt-5 lg:px-10">
+          <div className="flex w-fit gap-1 rounded-xl p-1" style={{ background: '#F5F5F7', border: '1px solid #EAEAEA' }}>
+            {tabs.map((tab) => {
+              const active = activeTab === tab.key;
+              return (
+                <button
+                  key={tab.key}
+                  type="button"
+                  onClick={() => setActiveTab(tab.key)}
+                  className="flex cursor-pointer items-center gap-2 whitespace-nowrap rounded-lg px-5 py-2 text-[13px] font-medium transition-all duration-200"
+                  style={{
+                    background: active ? '#ffffff' : 'transparent',
+                    color: active ? '#1D1D1F' : '#8E8E93',
+                    border: active ? '1px solid #EAEAEA' : '1px solid transparent',
+                    boxShadow: active ? '0 1px 4px rgba(0,0,0,0.06)' : 'none',
+                  }}
+                >
+                  <i className={`${tab.icon} text-[13px]`} />
+                  {tab.label}
+                  <span
+                    className="rounded-full px-1.5 py-0.5 text-[11px]"
+                    style={{
+                      background: active ? '#F5F5F7' : '#EAEAEA',
+                      color: active ? '#444444' : '#8E8E93',
+                    }}
+                  >
+                    {tab.count}
+                  </span>
+                </button>
+              );
+            })}
           </div>
         </div>
         <div className="px-6 lg:px-10 py-7">
@@ -1407,69 +1612,84 @@ export function ShortDramaAssetsPage() {
                 !visualAnchor &&
                 (imageGenerationFailedIds.has(row.id) || assetImageGenerationFailed(row));
               const isImageGenerating =
-                !hasFailedImage
-                && !visualAnchor
-                && !imageLoadFailed
-                && (cardImageGenerating || rowMarkedGenerating || autoPreparing || workInProgress);
+                !hasFailedImage &&
+                !visualAnchor &&
+                !imageLoadFailed &&
+                (cardImageGenerating || rowMarkedGenerating || autoPreparing || workInProgress);
+
+              let galleryVariant: AssetCardGalleryVariant;
+              if (visualAnchor && !imageLoadFailed) galleryVariant = 'ready';
+              else if (imageLoadFailed) galleryVariant = 'load_failed';
+              else if (isImageGenerating) galleryVariant = 'generating';
+              else if (hasFailedImage) galleryVariant = 'gen_failed';
+              else galleryVariant = 'generating';
+
+              const galleryUrls = activeRenderableImages(row).map((img) => img.resolvedUrl);
+              const galHeight =
+                row.asset_type === 'character' ? 'h-52' : row.asset_type === 'product' ? 'h-44' : 'h-48';
+              const useContain = row.asset_type === 'character';
+
+              const showRetryOverlay =
+                hasFailedImage &&
+                (!visualAnchor || imageLoadFailed) &&
+                !autoPreparing &&
+                !workInProgress;
+
+              const roleBadge = (
+                <span
+                  className="rounded-full px-2 py-1 text-[10px] font-semibold"
+                  style={{
+                    background: 'rgba(255,255,255,0.92)',
+                    border: '1px solid rgba(0,0,0,0.06)',
+                    color: '#444444',
+                  }}
+                >
+                  {roleLabel}
+                </span>
+              );
+
               return (
-                <div key={row.id} className="flex h-full flex-col overflow-hidden rounded-2xl" style={{ background: '#fff', border: '1px solid #EAEAEA' }}>
-                  <div
-                    className="relative h-48 shrink-0 overflow-hidden"
-                    style={{ background: '#F7F8FA', cursor: 'pointer' }}
-                    onClick={() => visualAnchor && setLightbox({ img: visualAnchor, name: displayAssetName(row) })}
-                    role="button"
-                    tabIndex={0}
-                  >
-                    {visualAnchor && !imageLoadFailed ? (
-                      <img
-                        src={visualAnchor}
-                        alt={displayAssetName(row)}
-                        className={assetCoverImageClass(row)}
-                        onError={() => setImageLoadFailedIds((prev) => new Set(prev).add(row.id))}
-                      />
-                    ) : isImageGenerating ? (
-                      <div className="flex h-full w-full items-center justify-center bg-[#ECEDEF]">
-                        <div className="text-center text-[12px] text-[#6E6E73]">
-                          <i className="ri-loader-4-line mb-1 block animate-spin text-[18px]" aria-hidden />
-                          资产图片生成中...
+                <div
+                  key={row.id}
+                  className="flex h-full flex-col overflow-hidden rounded-2xl transition-all duration-200 hover:shadow-[0_8px_30px_rgba(0,0,0,0.06)]"
+                  style={{ background: '#fff', border: '1px solid #EAEAEA' }}
+                >
+                  <AssetCardImageGallery
+                    heightClass={galHeight}
+                    contain={useContain}
+                    alt={displayAssetName(row)}
+                    galleryUrls={galleryUrls}
+                    coverUrl={visualAnchor}
+                    variant={galleryVariant}
+                    badge={roleBadge}
+                    showReferenceBadge={Boolean(row.has_reference_images)}
+                    actionOverlay={
+                      showRetryOverlay ? (
+                        <div className="flex justify-center pb-3 pt-14">
+                          <button
+                            type="button"
+                            disabled={cardImageGenerating}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              void handleGenerateAssetImage(row);
+                            }}
+                            className="rounded-lg bg-[#1D1D1F] px-3 py-1.5 text-[11px] font-semibold text-white shadow-sm disabled:opacity-60"
+                          >
+                            重试生成图片
+                          </button>
                         </div>
-                      </div>
-                    ) : imageLoadFailed ? (
-                      <div className="flex h-full w-full items-center justify-center bg-[#F7F8FA] px-3 text-center text-[12px] text-[#B42318]">
-                        图片加载失败
-                      </div>
-                    ) : hasFailedImage ? (
-                      <div className="flex h-full w-full items-center justify-center bg-[#F7F8FA] px-3 text-center text-[12px] text-[#B42318]">
-                        图片生成失败
-                      </div>
-                    ) : (
-                      <div className="flex h-full w-full items-center justify-center bg-[#ECEDEF]">
-                        <div className="text-center text-[12px] text-[#6E6E73]">
-                          <i className="ri-loader-4-line mb-1 block animate-spin text-[18px]" aria-hidden />
-                          资产图片生成中...
-                        </div>
-                      </div>
-                    )}
-                    {hasFailedImage && (!visualAnchor || imageLoadFailed) && !autoPreparing && !workInProgress ? (
-                      <button
-                        type="button"
-                        disabled={cardImageGenerating}
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          void handleGenerateAssetImage(row);
-                        }}
-                        className="absolute bottom-3 left-1/2 -translate-x-1/2 rounded-lg bg-[#1D1D1F] px-3 py-1.5 text-[11px] font-semibold text-white shadow-sm disabled:opacity-60"
-                      >
-                        重试生成图片
-                      </button>
-                    ) : null}
-                  </div>
+                      ) : null
+                    }
+                    onImageLoadError={() => setImageLoadFailedIds((prev) => new Set(prev).add(row.id))}
+                    onOpenPreview={(url) => setLightbox({ img: url, name: displayAssetName(row) })}
+                  />
                   <div className="flex flex-1 flex-col p-4">
                     <div className="flex-1">
                       <div className="min-h-[42px]">
                         <h3
-                          className="text-[14px] font-bold leading-[1.35]"
+                          className="text-[15px] font-bold leading-[1.35]"
                           style={{
+                            fontFamily: "'Syne', sans-serif",
                             color: '#1D1D1F',
                             display: '-webkit-box',
                             WebkitLineClamp: 2,
@@ -1480,9 +1700,13 @@ export function ShortDramaAssetsPage() {
                           {displayAssetName(row)}
                         </h3>
                       </div>
-                      <div className="mt-1 h-[24px] flex items-center justify-between">
-                        <span className="text-[10px] rounded-full px-2 py-1" style={{ background: '#F5F5F7', color: '#6E6E73' }}>{roleLabel}</span>
-                        <span className="text-[11px]" style={{ color: '#8E8E93' }}>{row.image_count}/6</span>
+                      <div className="mt-1 flex h-[24px] items-center justify-between">
+                        <span className="rounded-full px-2 py-1 text-[10px]" style={{ background: '#F5F5F7', color: '#6E6E73' }}>
+                          {roleLabel}
+                        </span>
+                        <span className="text-[11px]" style={{ color: '#8E8E93' }}>
+                          {row.image_count}/6
+                        </span>
                       </div>
                       <div className="mt-2 min-h-[40px]">
                         <p
@@ -1498,28 +1722,36 @@ export function ShortDramaAssetsPage() {
                           {row.description || '—'}
                         </p>
                       </div>
-                      <div className="mt-2 h-[40px] flex items-center gap-1 overflow-hidden">
-                        {activeRenderableImages(row).slice(0, 3).map((img) => (
-                          <img key={img.id} src={img.resolvedUrl} alt={img.variant_label ?? 'thumb'} className="h-9 w-9 shrink-0 rounded border border-[#EAEAEA] object-cover" />
-                        ))}
-                        {row.has_reference_images ? <span className="ml-1 text-[11px] text-[#0B8D5A]">有参考图</span> : <span className="ml-1 text-[11px] text-transparent">占位</span>}
-                      </div>
                     </div>
-                    <div className="mt-auto pt-3 grid grid-cols-2 gap-3">
+                    <div className="mt-auto flex gap-2 pt-3">
                       <button
                         type="button"
-                        className="h-9 rounded-lg px-2 text-[11.5px] font-medium text-white"
+                        className="flex flex-1 cursor-pointer items-center justify-center gap-1 rounded-lg py-2 text-[11.5px] font-medium whitespace-nowrap text-white transition-all duration-200 hover:bg-[#374151]"
                         style={{ background: '#1D1D1F' }}
                         onClick={() => void openDetail(row.id, row)}
                       >
+                        <i className="ri-zoom-in-line text-[11px]" aria-hidden />
                         查看详情
                       </button>
                       <button
                         type="button"
-                        className="h-9 rounded-lg border border-dashed border-[#D1D1D6] bg-[#F7F8FA] px-2 text-[11.5px] font-medium text-[#444]"
+                        className={`flex flex-1 cursor-pointer items-center justify-center gap-1 rounded-lg border px-2 py-2 text-[11.5px] font-medium whitespace-nowrap transition-all duration-200 ${
+                          analyzingAssetIds.has(row.id)
+                            ? 'cursor-wait opacity-75'
+                            : 'hover:bg-[#EAEAEA]'
+                        }`}
+                        style={{
+                          background: '#F7F8FA',
+                          color: '#444444',
+                          border: '1px solid #EAEAEA',
+                        }}
                         disabled={analyzingAssetIds.has(row.id)}
-                        onClick={() => { refTargetAssetId.current = row.id; refUploadInput.current?.click(); }}
+                        onClick={() => {
+                          refTargetAssetId.current = row.id;
+                          refUploadInput.current?.click();
+                        }}
                       >
+                        <i className="ri-upload-2-line text-[11px]" aria-hidden />
                         {analyzingAssetIds.has(row.id) ? '正在分析参考图...' : '上传参考图'}
                       </button>
                     </div>
@@ -1529,17 +1761,22 @@ export function ShortDramaAssetsPage() {
             })}
             {s3AssetGridUi === 'waiting' ? (
               <div
-                className="flex h-full flex-col self-start overflow-hidden rounded-2xl"
-                style={{ background: '#fff', border: '1px solid #EAEAEA', boxShadow: '0 4px 14px rgba(0,0,0,0.06)' }}
+                className="flex h-full flex-col self-start overflow-hidden rounded-2xl transition-all duration-200 hover:shadow-[0_8px_30px_rgba(0,0,0,0.06)]"
+                style={{ background: '#fff', border: '1px solid #EAEAEA' }}
               >
-                <div className="relative flex h-48 shrink-0 flex-col items-center justify-center overflow-hidden bg-[#ECEDEF] px-4">
-                  <i className="ri-loader-4-line mb-2 block animate-spin text-[22px] text-[#6E6E73]" aria-hidden />
-                  <span className="text-[11px] font-medium text-[#8E8E93]">生成中</span>
+                <div className="relative flex h-52 shrink-0 flex-col items-center justify-center overflow-hidden px-4" style={{ background: '#F5F5F7' }}>
+                  <div className="mb-2 flex h-8 w-8 items-center justify-center rounded-xl" style={{ background: '#EAEAEA' }}>
+                    <i className="ri-loader-4-line animate-spin text-[17px]" style={{ color: '#AEAEB2' }} aria-hidden />
+                  </div>
+                  <span className="text-[11px] font-medium" style={{ color: '#AEAEB2' }}>
+                    生成中
+                  </span>
                 </div>
                 <div className="flex flex-1 flex-col p-4">
                   <h3
-                    className="text-[14px] font-bold leading-[1.35] text-[#1D1D1F]"
+                    className="text-[15px] font-bold leading-[1.35] text-[#1D1D1F]"
                     style={{
+                      fontFamily: "'Syne', sans-serif",
                       display: '-webkit-box',
                       WebkitLineClamp: 2,
                       WebkitBoxOrient: 'vertical',
@@ -1555,8 +1792,8 @@ export function ShortDramaAssetsPage() {
               </div>
             ) : null}
             {s3AssetGridUi === 'failed' ? (
-              <div className="flex h-full flex-col self-start overflow-hidden rounded-2xl" style={{ background: '#fff', border: '1px solid #FECACA' }}>
-                <div className="relative flex h-48 shrink-0 flex-col items-center justify-center overflow-hidden bg-[#FEF2F2] px-4">
+              <div className="flex h-full flex-col self-start overflow-hidden rounded-2xl transition-all duration-200 hover:shadow-[0_8px_30px_rgba(0,0,0,0.06)]" style={{ background: '#fff', border: '1px solid #FECACA' }}>
+                <div className="relative flex h-52 shrink-0 flex-col items-center justify-center overflow-hidden px-4" style={{ background: '#FEF2F2' }}>
                   <div className="text-center text-[12px] text-[#B91C1C]">
                     <i className="ri-error-warning-line mb-1 block text-[18px]" aria-hidden />
                     资产生成失败，可重试
@@ -1568,7 +1805,7 @@ export function ShortDramaAssetsPage() {
                     type="button"
                     disabled={!canGenerateS3Assets}
                     onClick={() => void handleGenerateS3Assets()}
-                    className="mt-4 rounded-xl bg-[#1D1D1F] px-4 py-2 text-[12px] font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50"
+                    className="mt-4 rounded-lg bg-[#1D1D1F] px-4 py-2 text-[12px] font-semibold text-white transition-all duration-200 hover:bg-[#374151] disabled:cursor-not-allowed disabled:opacity-50"
                   >
                     重试生成资产
                   </button>
@@ -1576,12 +1813,16 @@ export function ShortDramaAssetsPage() {
               </div>
             ) : null}
             {s3AssetGridUi === 'empty' ? (
-              <div className="flex h-full flex-col self-start overflow-hidden rounded-2xl border border-[#EAEAEA] bg-[#FAFAFB] p-4">
-                <div className="flex h-48 shrink-0 flex-col items-center justify-center px-3">
-                  <i className="ri-loader-4-line animate-spin text-[22px] text-[#8E8E93]" />
+              <div className="flex h-full flex-col self-start overflow-hidden rounded-2xl border border-[#EAEAEA] bg-white p-4 transition-all duration-200 hover:shadow-[0_8px_30px_rgba(0,0,0,0.06)]">
+                <div className="flex h-52 shrink-0 flex-col items-center justify-center px-3" style={{ background: '#F5F5F7' }}>
+                  <div className="flex h-8 w-8 items-center justify-center rounded-xl" style={{ background: '#EAEAEA' }}>
+                    <i className="ri-loader-4-line animate-spin text-[17px]" style={{ color: '#AEAEB2' }} aria-hidden />
+                  </div>
                 </div>
                 <div className="flex flex-1 flex-col">
-                  <div className="text-[14px] font-semibold text-[#1D1D1F]">正在准备资产数据</div>
+                  <div className="text-[15px] font-semibold text-[#1D1D1F]" style={{ fontFamily: "'Syne', sans-serif" }}>
+                    正在准备资产数据
+                  </div>
                   <div className="mt-2 text-[12px] leading-relaxed text-[#8E8E93]">
                     系统会根据 S2 已生成的资产 prompt 自动创建资产并生成图片。
                   </div>
@@ -1610,17 +1851,58 @@ export function ShortDramaAssetsPage() {
             ) : null}
             <button
               type="button"
-              className="flex h-full min-h-[340px] flex-col items-center justify-center rounded-2xl border border-dashed border-[#D1D1D6] bg-[#FAFAFB] p-6 text-center"
+              className="flex min-h-[320px] w-full cursor-pointer flex-col items-center justify-center gap-3 rounded-2xl p-6 text-center transition-all duration-200"
+              style={{ border: '1.5px dashed #D1D1D6', background: '#F7F8FA' }}
+              onMouseEnter={(e) => {
+                (e.currentTarget as HTMLElement).style.borderColor = '#1D1D1F';
+                (e.currentTarget as HTMLElement).style.background = '#F5F5F7';
+              }}
+              onMouseLeave={(e) => {
+                (e.currentTarget as HTMLElement).style.borderColor = '#D1D1D6';
+                (e.currentTarget as HTMLElement).style.background = '#F7F8FA';
+              }}
               onClick={() => setShowCreate(true)}
             >
-              <i className="ri-add-circle-line text-[26px] text-[#6E6E73]" />
-              <div className="mt-2 text-[14px] font-semibold text-[#1D1D1F]">{createLabel}</div>
-              <div className="mt-1 text-[12px] text-[#8E8E93]">文字输入或图片上传（二选一）</div>
+              <div className="flex h-12 w-12 items-center justify-center rounded-2xl" style={{ background: '#EAEAEA' }}>
+                <i
+                  className={`text-[20px] text-[#8E8E93] ${
+                    activeTab === 'characters'
+                      ? 'ri-user-add-line'
+                      : activeTab === 'scenes'
+                        ? 'ri-landscape-line'
+                        : 'ri-archive-line'
+                  }`}
+                  aria-hidden
+                />
+              </div>
+              <span className="text-[13px]" style={{ color: '#8E8E93' }}>
+                {createLabel}
+              </span>
+              <span className="text-[11.5px] leading-snug" style={{ color: '#AEAEB2' }}>
+                文字输入或图片上传（二选一）
+              </span>
             </button>
           </div>
-          <div className="flex items-center justify-between mt-10 pt-6" style={{ borderTop: '1px solid #EAEAEA' }}>
-            <button type="button" onClick={() => navigate(withProjectQuery('/short-drama/story-blueprint', effectiveProjectId))} className="flex items-center gap-2 px-5 py-3 rounded-xl text-[13.5px]" style={{ background: '#F7F8FA', color: '#444', border: '1px solid #EAEAEA' }}><i className="ri-arrow-left-line text-[13px]" />上一步</button>
-            <button type="button" disabled={!effectiveProjectId} onClick={() => navigate(withProjectQuery('/short-drama/step4', effectiveProjectId))} className="flex items-center gap-2 px-7 py-3 rounded-xl text-[14px] font-semibold disabled:opacity-45" style={{ background: '#1D1D1F', color: '#fff' }}>下一步：生成片段脚本<i className="ri-arrow-right-line text-[13px]" /></button>
+          <div className="mt-10 flex items-center justify-between border-t pt-6" style={{ borderColor: '#EAEAEA' }}>
+            <button
+              type="button"
+              onClick={() => navigate(withProjectQuery('/short-drama/story-blueprint', effectiveProjectId))}
+              className="flex cursor-pointer items-center gap-2 whitespace-nowrap rounded-xl px-5 py-3 text-[13.5px] transition-all duration-200 hover:bg-[#EAEAEA]"
+              style={{ background: '#F7F8FA', color: '#444', border: '1px solid #EAEAEA' }}
+            >
+              <i className="ri-arrow-left-line text-[13px]" aria-hidden />
+              上一步
+            </button>
+            <button
+              type="button"
+              disabled={!effectiveProjectId}
+              onClick={() => navigate(withProjectQuery('/short-drama/step4', effectiveProjectId))}
+              className="flex cursor-pointer items-center gap-2 whitespace-nowrap rounded-xl px-7 py-3 text-[14px] font-semibold transition-all duration-200 hover:bg-[#374151] disabled:opacity-45"
+              style={{ background: '#1D1D1F', color: '#fff' }}
+            >
+              下一步：生成片段脚本
+              <i className="ri-arrow-right-line text-[13px]" aria-hidden />
+            </button>
           </div>
         </div>
       </div>

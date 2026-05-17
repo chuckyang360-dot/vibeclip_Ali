@@ -18,6 +18,7 @@ from .segment_director_service import (
 )
 
 logger = logging.getLogger(__name__)
+_PROVIDER_MAX_DURATION_SECONDS = 10.0
 
 
 def _log_validate_fail(
@@ -338,6 +339,18 @@ def materialize_segment_scripts_from_v2_video_generation_specs(
                 missing_field="duration_sec",
                 reason="duration_sec must be > 0.",
             )
+        if d_sec > _PROVIDER_MAX_DURATION_SECONDS:
+            _raise_v(
+                project_id,
+                spec_key=sk,
+                segment_id=segment_id,
+                shot_id=str(spec.shot_id or ""),
+                missing_field="duration_sec",
+                reason=(
+                    f"duration_sec must be <= {_PROVIDER_MAX_DURATION_SECONDS}; "
+                    "regenerate or repair S2 so the AI shortens or splits this segment."
+                ),
+            )
 
         plan_row = next(
             (p for p in (blueprint.segment_plan or []) if str(p.segment_id or "").strip() == segment_id),
@@ -345,7 +358,6 @@ def materialize_segment_scripts_from_v2_video_generation_specs(
         )
         title = _segment_title_from_plan(plan_row, segment_id=segment_id)
         duration_limit = float(d_sec)
-        duration_limit = max(1.0, min(10.0, duration_limit))
 
         bind = _bind_reference_asset_keys_strict(project_id, spec, assets)
 

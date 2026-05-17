@@ -463,8 +463,8 @@ function NewSegmentEditor({ seg }: { seg: Step4SegmentItem }) {
     return (
       <div className="flex flex-col items-center justify-center py-8 gap-3">
         <i className="ri-loader-4-line animate-spin text-[24px]" style={{ color: seg.color }} />
-        <p className="text-[13px]" style={{ color: "#444444" }}>AI 正在生成片段脚本...</p>
-        <p className="text-[11px]" style={{ color: "#8E8E93" }}>预计 20-30 秒完成</p>
+        <p className="text-[13px]" style={{ color: "#444444" }}>正在准备片段脚本...</p>
+        <p className="text-[11px]" style={{ color: "#8E8E93" }}>请稍候</p>
       </div>
     );
   }

@@ -24,13 +24,22 @@ const emptyProductInput: ProductInputDto = {
 };
 
 const placeholderItems = [
-  ['商品是什么', '商品类型、核心功能和产品定位'],
-  ['商品长什么样', '外观、材质、结构和视觉特征'],
-  ['用户为什么需要它', '真实需求场景和购买动机'],
-  ['适合什么生活场景', '具体使用时机和生活情境'],
-  ['哪些视觉特征需要保留', '品牌感、质感和视觉亮点'],
-  ['哪些表达方式应该避免', '禁止方向和风格边界'],
+  { icon: 'ri-box-3-line', label: '商品是什么', desc: '商品类型、核心功能和产品定位' },
+  { icon: 'ri-eye-line', label: '商品长什么样', desc: '外观、材质、结构和视觉特征' },
+  { icon: 'ri-user-heart-line', label: '用户为什么需要它', desc: '真实需求场景和购买动机' },
+  { icon: 'ri-map-pin-line', label: '适合什么生活场景', desc: '具体使用时机和生活情境' },
+  { icon: 'ri-camera-line', label: '哪些视觉特征需要保留', desc: '品牌感、质感和视觉亮点' },
+  { icon: 'ri-forbid-line', label: '哪些表达方式应该避免', desc: '禁止方向和风格边界' },
 ];
+
+const briefSectionMeta = [
+  { title: '创作目标', icon: 'ri-focus-3-line', accent: '#B45309', bg: 'rgba(180,83,9,0.05)', border: 'rgba(180,83,9,0.12)' },
+  { title: '商品理解', icon: 'ri-box-3-line', accent: '#047857', bg: 'rgba(4,120,87,0.05)', border: 'rgba(4,120,87,0.12)' },
+  { title: '表达方向', icon: 'ri-heart-pulse-line', accent: '#334155', bg: 'rgba(51,65,85,0.05)', border: 'rgba(51,65,85,0.12)' },
+  { title: '视觉方向', icon: 'ri-camera-lens-line', accent: '#92400E', bg: 'rgba(146,64,14,0.04)', border: 'rgba(146,64,14,0.12)' },
+  { title: '需要避免', icon: 'ri-forbid-2-line', accent: '#DC2626', bg: 'rgba(220,38,38,0.04)', border: 'rgba(220,38,38,0.12)' },
+  { title: '不确定信息', icon: 'ri-question-line', accent: '#6B7280', bg: 'rgba(107,114,128,0.04)', border: 'rgba(107,114,128,0.12)' },
+] as const;
 
 function serializeProductInput(input: ProductInputDto): string {
   return JSON.stringify({
@@ -69,20 +78,61 @@ function briefText(value: unknown): string {
   return '';
 }
 
+function PlaceholderLines({ count = 2 }: { count?: number }) {
+  return (
+    <div className="mt-1.5 space-y-1.5">
+      {Array.from({ length: count }).map((_, i) => (
+        <div
+          key={i}
+          className="rounded-full"
+          style={{ height: '7px', background: '#EAEAEA', width: i === count - 1 ? '60%' : '100%' }}
+        />
+      ))}
+    </div>
+  );
+}
+
+function LoadingDots() {
+  return (
+    <div className="flex flex-col items-center justify-center gap-5 py-14">
+      <div className="flex gap-1.5">
+        {[0, 1, 2, 3, 4].map((i) => (
+          <div
+            key={i}
+            className="h-2 w-2 rounded-full"
+            style={{ background: '#1D1D1F', animation: `vcBounce 1.2s ease-in-out ${i * 0.15}s infinite` }}
+          />
+        ))}
+      </div>
+      <p className="text-[12.5px] text-[#8E8E93]">AI 正在理解你的商品和创作意图…</p>
+      <style>{`
+        @keyframes vcBounce {
+          0%, 80%, 100% { transform: translateY(0); opacity: 0.3; }
+          40% { transform: translateY(-8px); opacity: 1; }
+        }
+      `}</style>
+    </div>
+  );
+}
+
 function BriefSection({ title, children }: { title: string; children: string | string[] }) {
+  const meta = briefSectionMeta.find((x) => x.title === title) ?? briefSectionMeta[0];
   const items = Array.isArray(children) ? children : textList(children);
   const single = !Array.isArray(children) ? String(children || '').trim() : '';
   return (
-    <div className="rounded-2xl border border-[#EAEAEA] bg-[#FAFAFA] px-4 py-3">
-      <p className="text-[12px] font-bold text-[#1D1D1F]">{title}</p>
+    <div className="rounded-xl p-3.5" style={{ background: meta.bg, border: `1px solid ${meta.border}` }}>
+      <div className="mb-1.5 flex items-center gap-2">
+        <i className={ri(meta.icon, 'text-[12px]')} style={{ color: meta.accent }} aria-hidden />
+        <p className="text-[10.5px] font-bold uppercase tracking-wider" style={{ color: meta.accent }}>{title}</p>
+      </div>
       {items.length > 1 ? (
-        <ul className="mt-2 space-y-1.5 text-[12.5px] leading-relaxed text-[#6E6E73]">
+        <ul className="space-y-1 text-[12.5px] leading-relaxed text-[#444444]">
           {items.map((item) => (
             <li key={item}>- {item}</li>
           ))}
         </ul>
       ) : (
-        <p className="mt-2 text-[12.5px] leading-relaxed text-[#6E6E73]">{single || items[0] || '暂未明确'}</p>
+        <p className="text-[12.5px] leading-relaxed text-[#444444]">{single || items[0] || '暂未明确'}</p>
       )}
     </div>
   );
@@ -98,6 +148,9 @@ export function ShortDramaProductInputPage() {
   const [isSaving, setIsSaving] = useState(false);
   const [navTitle, setNavTitle] = useState<string | null>(null);
   const [isDragging, setIsDragging] = useState(false);
+  const [noteFocused, setNoteFocused] = useState(false);
+  const [urlFocused, setUrlFocused] = useState(false);
+  const productImageInputRef = useRef<HTMLInputElement>(null);
   const lastSavedProductInputRef = useRef<string>(serializeProductInput(emptyProductInput));
 
   useEffect(() => {
@@ -237,135 +290,277 @@ export function ShortDramaProductInputPage() {
         }}
       />
       <div className="pt-14">
-        <main className="mx-auto max-w-6xl px-5 py-10">
-          <header className="mb-8">
-            <span className="text-[11px] font-bold uppercase tracking-[0.2em] text-[#8E8E93]">S1 商品理解</span>
-            <h1 className="mt-2 text-3xl font-black" style={{ ...sdFontHeading, color: sdColors.ink }}>
+        <main className="mx-auto max-w-[1200px] px-5 py-8 lg:px-8">
+          <header className="mb-7">
+            <span className="mb-2 inline-block rounded-full bg-[#EAEAEA] px-3 py-1 text-[11px] font-bold uppercase tracking-widest text-[#8E8E93]">
+              S1 · 商品理解
+            </span>
+            <h1 className="mb-1 text-2xl font-black" style={{ ...sdFontHeading, color: sdColors.ink }}>
               告诉 AI，这个商品是什么
             </h1>
-            <p className="mt-2 text-[14px] text-[#8E8E93]">
+            <p className="text-[13.5px] text-[#8E8E93]">
               上传商品图片，补充少量信息，让 AI 理解这个商品适合怎么被表达。
             </p>
           </header>
 
-          <div className="grid grid-cols-1 gap-6 lg:grid-cols-[minmax(0,1fr)_420px]">
-            <section className="space-y-5">
-              <div className="rounded-[28px] border border-[#EAEAEA] bg-white p-6 shadow-sm">
-                <div className="mb-4 flex items-end justify-between">
-                  <div>
-                    <h2 className="text-[16px] font-bold text-[#1D1D1F]">上传商品图片</h2>
-                    <p className="mt-1 text-[12.5px] text-[#8E8E93]">建议上传 1-5 张，支持 JPG / PNG / WEBP。</p>
+          <div className="flex flex-col items-start gap-6 lg:flex-row">
+            <section className="w-full space-y-4 lg:flex-1">
+              <div className="rounded-2xl border border-[#E5E5EA] bg-white p-5">
+                <div className="mb-4 flex items-center gap-2">
+                  <div className="flex h-6 w-6 items-center justify-center rounded-lg bg-[#F5F5F7]">
+                    <i className={ri('ri-image-add-line', 'text-[12px] text-[#1D1D1F]')} aria-hidden />
                   </div>
-                  <span className="rounded-full bg-[#F5F5F7] px-3 py-1 text-[11px] text-[#8E8E93]">
-                    {input.product_images.length} 张
-                  </span>
+                  <p className="text-[13px] font-bold text-[#444444]">上传商品图片</p>
                 </div>
-                <label
-                  className="flex min-h-[190px] cursor-pointer flex-col items-center justify-center rounded-3xl border border-dashed px-6 py-8 text-center transition-colors"
-                  style={{
-                    borderColor: isDragging ? '#1D1D1F' : '#D1D1D6',
-                    background: isDragging ? '#F5F5F7' : '#FAFAFA',
+                <input
+                  ref={productImageInputRef}
+                  type="file"
+                  accept="image/jpeg,image/png,image/webp"
+                  multiple
+                  className="hidden"
+                  onChange={(e) => {
+                    if (e.target.files) void addFiles(e.target.files);
+                    e.currentTarget.value = '';
                   }}
-                  onDragOver={(e) => {
-                    e.preventDefault();
-                    setIsDragging(true);
-                  }}
-                  onDragLeave={() => setIsDragging(false)}
-                  onDrop={(e) => {
-                    e.preventDefault();
-                    setIsDragging(false);
-                    void addFiles(e.dataTransfer.files);
-                  }}
-                >
-                  <i className={ri('ri-upload-cloud-2-line', 'mb-3 text-[30px] text-[#1D1D1F]')} aria-hidden />
-                  <p className="text-[14px] font-semibold text-[#1D1D1F]">拖拽图片到这里，或点击上传</p>
-                  <p className="mt-1 text-[12.5px] text-[#8E8E93]">商品主图、包装、细节图都可以</p>
-                  <input
-                    type="file"
-                    accept="image/jpeg,image/png,image/webp"
-                    multiple
-                    className="hidden"
-                    onChange={(e) => {
-                      if (e.target.files) void addFiles(e.target.files);
-                      e.currentTarget.value = '';
+                />
+
+                {input.product_images.length === 0 ? (
+                  <div
+                    role="button"
+                    tabIndex={0}
+                    className="relative cursor-pointer overflow-hidden rounded-2xl transition-all duration-200"
+                    style={{
+                      background: isDragging ? 'rgba(29,29,31,0.04)' : 'linear-gradient(145deg, #FAFAFA 0%, #F4F4F6 100%)',
+                      border: `2px dashed ${isDragging ? '#1D1D1F' : '#D9D9DF'}`,
+                      minHeight: '200px',
                     }}
-                  />
-                </label>
-                {input.product_images.length ? (
-                  <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-3">
+                    onClick={() => productImageInputRef.current?.click()}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' || e.key === ' ') productImageInputRef.current?.click();
+                    }}
+                    onDragOver={(e) => {
+                      e.preventDefault();
+                      setIsDragging(true);
+                    }}
+                    onDragLeave={() => setIsDragging(false)}
+                    onDrop={(e) => {
+                      e.preventDefault();
+                      setIsDragging(false);
+                      void addFiles(e.dataTransfer.files);
+                    }}
+                  >
+                    <div className="flex flex-col items-center justify-center px-8 py-12 text-center">
+                      <div className="mb-4 flex h-14 w-14 items-center justify-center rounded-2xl border border-[#E8E8EC] bg-[#F0F0F3]">
+                        <i className={ri('ri-image-add-line', 'text-[24px] text-[#AEAEB2]')} aria-hidden />
+                      </div>
+                      <p className="mb-1.5 text-[14px] font-semibold text-[#444444]">拖拽上传商品图片</p>
+                      <p className="mb-4 text-[12.5px] text-[#AEAEB2]">或点击此区域选择文件</p>
+                      <div className="inline-flex items-center gap-2 rounded-xl border border-[#E5E5EA] bg-white px-4 py-2 text-[12.5px] font-medium text-[#444444]">
+                        <i className={ri('ri-folder-open-line', 'text-[13px]')} aria-hidden />
+                        选择图片
+                      </div>
+                      <p className="mt-4 text-[11px] text-[#C7C7CC]">建议上传 1-5 张清晰图片 · 支持 JPG PNG WEBP</p>
+                    </div>
+                  </div>
+                ) : (
+                  <div>
+                    <div className="mb-3 grid grid-cols-3 gap-3">
                     {input.product_images.map((img, idx) => (
-                      <div key={`${idx}-${img.url.slice(0, 24)}`} className="group relative overflow-hidden rounded-2xl border border-[#EAEAEA] bg-[#F7F8FA]">
-                        <img src={img.url} alt={`product-${idx + 1}`} className="h-32 w-full object-cover" />
-                        <button
-                          type="button"
-                          onClick={() => removeImage(idx)}
-                          className="absolute right-2 top-2 rounded-full bg-white/90 px-2 py-1 text-[11px] text-[#B91C1C] shadow-sm"
-                        >
-                          删除
-                        </button>
+                      <div key={`${idx}-${img.url.slice(0, 24)}`} className="group relative aspect-square overflow-hidden rounded-xl border border-[#E5E5EA]">
+                        <img src={img.url} alt={`product-${idx + 1}`} className="h-full w-full object-cover object-top" />
+                        <div className="absolute inset-0 flex items-center justify-center bg-black/0 transition-all duration-200 group-hover:bg-black/30">
+                          <button
+                            type="button"
+                            onClick={() => removeImage(idx)}
+                            className="flex h-8 w-8 cursor-pointer items-center justify-center rounded-full opacity-0 transition-opacity duration-200 group-hover:opacity-100"
+                            style={{ background: 'rgba(255,255,255,0.9)' }}
+                          >
+                            <i className={ri('ri-delete-bin-line', 'text-[13px] text-[#DC2626]')} aria-hidden />
+                          </button>
+                        </div>
                       </div>
                     ))}
+                    {input.product_images.length < 5 ? (
+                      <button
+                        type="button"
+                        onClick={() => productImageInputRef.current?.click()}
+                        className="flex aspect-square cursor-pointer flex-col items-center justify-center gap-2 rounded-xl transition-all duration-200"
+                        style={{ border: '2px dashed #D9D9DF', background: '#FAFAFA' }}
+                        onMouseEnter={(e) => {
+                          e.currentTarget.style.borderColor = '#1D1D1F';
+                          e.currentTarget.style.background = '#F5F5F7';
+                        }}
+                        onMouseLeave={(e) => {
+                          e.currentTarget.style.borderColor = '#D9D9DF';
+                          e.currentTarget.style.background = '#FAFAFA';
+                        }}
+                      >
+                        <i className={ri('ri-add-line', 'text-[20px] text-[#AEAEB2]')} aria-hidden />
+                        <span className="text-[10px] text-[#AEAEB2]">添加图片</span>
+                      </button>
+                    ) : null}
+                    </div>
+                    <p className="text-[11px] text-[#C7C7CC]">已上传 {input.product_images.length}/5 张 · 悬停可删除</p>
                   </div>
-                ) : null}
+                )}
               </div>
 
-              <div className="rounded-[28px] border border-[#EAEAEA] bg-white p-6 shadow-sm">
+              <div
+                className="rounded-2xl bg-white p-5 transition-colors duration-200"
+                style={{ border: `1.5px solid ${noteFocused ? '#1D1D1F' : '#E5E5EA'}` }}
+              >
                 <div className="mb-3 flex items-center justify-between">
-                  <h2 className="text-[16px] font-bold text-[#1D1D1F]">补充商品信息</h2>
-                  <span className="text-[12px] text-[#AEAEB2]">可选</span>
+                  <div className="flex items-center gap-2">
+                    <div className="flex h-6 w-6 items-center justify-center rounded-lg bg-[#F5F5F7]">
+                      <i className={ri('ri-file-text-line', 'text-[12px] text-[#1D1D1F]')} aria-hidden />
+                    </div>
+                    <p className="text-[13px] font-bold text-[#444444]">补充商品信息</p>
+                  </div>
+                  <span className="text-[11px] text-[#C7C7CC]">可选</span>
                 </div>
                 <textarea
-                  className="min-h-[140px] w-full resize-none rounded-2xl border border-[#E5E5EA] bg-[#FAFAFA] px-4 py-3 text-[14px] leading-relaxed outline-none transition-colors focus:border-[#1D1D1F] focus:bg-white"
+                  rows={4}
+                  className="w-full resize-none bg-transparent text-[13.5px] leading-relaxed text-[#1D1D1F] outline-none"
                   value={input.product_note}
                   onChange={(e) => setInput((p) => ({ ...p, product_note: e.target.value }))}
+                  onFocus={() => setNoteFocused(true)}
+                  onBlur={() => setNoteFocused(false)}
                   placeholder="例如：这是一款便携式鼻毛器，想突出安全、方便、适合出差。也可以粘贴商品详情、卖点、适用人群。"
                 />
+              </div>
+
+              <div
+                className="rounded-2xl bg-white p-5 transition-colors duration-200"
+                style={{ border: `1.5px solid ${urlFocused ? '#1D1D1F' : '#E5E5EA'}` }}
+              >
+                <div className="mb-3 flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <div className="flex h-6 w-6 items-center justify-center rounded-lg bg-[#F5F5F7]">
+                      <i className={ri('ri-links-line', 'text-[12px] text-[#1D1D1F]')} aria-hidden />
+                    </div>
+                    <p className="text-[13px] font-bold text-[#444444]">商品链接</p>
+                  </div>
+                  <span className="text-[11px] text-[#C7C7CC]">可选</span>
+                </div>
                 <input
-                  className="mt-4 w-full rounded-2xl border border-[#E5E5EA] bg-[#FAFAFA] px-4 py-3 text-[13px] outline-none transition-colors focus:border-[#1D1D1F] focus:bg-white"
+                  className="w-full bg-transparent text-[13.5px] text-[#1D1D1F] outline-none"
                   value={input.product_url}
                   onChange={(e) => setInput((p) => ({ ...p, product_url: e.target.value }))}
-                  placeholder="粘贴 Amazon / TEMU / 淘宝 / 1688 / 独立站商品链接，可选"
+                  onFocus={() => setUrlFocused(true)}
+                  onBlur={() => setUrlFocused(false)}
+                  placeholder="粘贴 Amazon / TEMU / 淘宝 / 1688 / 独立站商品链接"
                 />
+                <p className="mt-2 text-[11px] text-[#C7C7CC]">当前可作为商品资料保存，后续可用于扩展解析。</p>
               </div>
             </section>
 
-            <aside className="rounded-[28px] border border-[#EAEAEA] bg-white p-6 shadow-sm">
-              <h2 className="text-[17px] font-black text-[#1D1D1F]">AI 创作理解</h2>
-              <p className="mt-2 text-[13px] leading-relaxed text-[#8E8E93]">
-                AI 会结合上一步的创作意图和当前商品信息，生成后续剧本创作的基础理解。
-              </p>
-
-              {briefStatus === 'loading' ? (
-                <div className="mt-6 space-y-3">
-                  {[1, 2, 3, 4, 5, 6].map((x) => (
-                    <div key={x} className="h-16 animate-pulse rounded-2xl bg-[#F5F5F7]" />
-                  ))}
-                </div>
-              ) : briefStatus === 'ready' && brief ? (
-                <div className="mt-6 space-y-3">
-                  <BriefSection title="创作目标">{brief.user_goal || ''}</BriefSection>
-                  <BriefSection title="商品理解">{briefText(productUnderstanding)}</BriefSection>
-                  <BriefSection title="表达方向">{briefText(interpretation.core_direction)}</BriefSection>
-                  <BriefSection title="视觉方向">{briefText(interpretation.visual_direction)}</BriefSection>
-                  <BriefSection title="需要避免">{avoid}</BriefSection>
-                  <BriefSection title="不确定信息">{textList(brief.uncertainties)}</BriefSection>
-                </div>
-              ) : (
-                <div className="mt-6 space-y-3">
-                  {placeholderItems.map(([title, body]) => (
-                    <div key={title} className="rounded-2xl border border-[#EAEAEA] bg-[#FAFAFA] px-4 py-3">
-                      <p className="text-[12px] font-bold text-[#1D1D1F]">{title}</p>
-                      <p className="mt-1 text-[12.5px] text-[#8E8E93]">{body}</p>
+            <aside className="w-full shrink-0 lg:sticky lg:top-20 lg:w-[400px]">
+              <div className="min-h-[560px]">
+                <div className="flex h-full min-h-[560px] flex-col overflow-hidden rounded-2xl border border-[#E5E5EA] bg-white">
+                  <div className="shrink-0 border-b border-[#F0F0F0] px-5 pb-4 pt-5">
+                    <div className="mb-2 flex items-center gap-2.5">
+                      <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg border border-[#E5E5EA] bg-[#F5F5F7]">
+                        <i className={ri('ri-sparkling-2-line', 'text-[14px] text-[#1D1D1F]')} aria-hidden />
+                      </div>
+                      <div className="flex-1">
+                        <p className="text-[13px] font-bold leading-none text-[#1D1D1F]">AI 创作理解</p>
+                      </div>
+                      {briefStatus === 'ready' ? (
+                        <span className="flex items-center gap-1 rounded-full border border-[rgba(5,150,105,0.15)] bg-[rgba(5,150,105,0.08)] px-2.5 py-1 text-[11px] font-medium text-[#047857]">
+                          <i className={ri('ri-checkbox-circle-line', 'text-[12px]')} aria-hidden />
+                          已生成
+                        </span>
+                      ) : null}
                     </div>
-                  ))}
-                </div>
-              )}
+                    <p className="text-[12px] leading-relaxed text-[#8E8E93]">
+                      AI 会结合上一步的创作意图和当前商品信息，生成后续剧本创作的基础理解。
+                    </p>
+                  </div>
 
-              {briefStatus === 'error' && error ? (
-                <div className="mt-4 rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-[13px] text-red-800">
-                  {error}
+                  <div className="flex-1 overflow-y-auto">
+                    {briefStatus === 'loading' ? (
+                      <LoadingDots />
+                    ) : briefStatus === 'ready' && brief ? (
+                      <div className="space-y-3 p-5">
+                        <BriefSection title="创作目标">{brief.user_goal || ''}</BriefSection>
+                        <BriefSection title="商品理解">{briefText(productUnderstanding)}</BriefSection>
+                        <BriefSection title="表达方向">{briefText(interpretation.core_direction)}</BriefSection>
+                        <BriefSection title="视觉方向">{briefText(interpretation.visual_direction)}</BriefSection>
+                        <BriefSection title="需要避免">{avoid}</BriefSection>
+                        <BriefSection title="不确定信息">{textList(brief.uncertainties)}</BriefSection>
+                      </div>
+                    ) : (
+                      <div className="p-5">
+                        <p className="mb-4 text-[12px] text-[#AEAEB2]">
+                          上传商品并点击分析后，AI 会把你的创作意图和商品信息整理成一份创作理解。
+                        </p>
+                        <div className="space-y-4">
+                          {placeholderItems.map((g) => (
+                            <div key={g.label} className="flex gap-3">
+                              <div className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-lg border border-[#EAEAEA] bg-[#F7F8FA]">
+                                <i className={ri(g.icon, 'text-[12px] text-[#C7C7CC]')} aria-hidden />
+                              </div>
+                              <div className="flex-1">
+                                <p className="mb-0.5 text-[12px] font-semibold text-[#C7C7CC]">{g.label}</p>
+                                <p className="text-[11px] text-[#D1D1D6]">{g.desc}</p>
+                                <PlaceholderLines count={2} />
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                        {briefStatus === 'error' && error ? (
+                          <div className="mt-5 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-[13px] text-red-800">
+                            {error}
+                          </div>
+                        ) : null}
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="shrink-0 border-t border-[#F0F0F0] px-5 pb-5 pt-3">
+                    {briefStatus === 'loading' ? (
+                      <div className="flex w-full items-center justify-center gap-2 rounded-xl bg-[#F5F5F7] py-3 text-[13px] text-[#8E8E93]">
+                        <i className={ri('ri-loader-4-line', 'animate-spin text-[14px]')} aria-hidden />
+                        AI 正在分析中…
+                      </div>
+                    ) : briefStatus === 'ready' ? (
+                      <button
+                        type="button"
+                        onClick={() => void saveAndContinue()}
+                        disabled={!canContinue}
+                        className="flex w-full cursor-pointer items-center justify-center gap-2 rounded-xl py-3 text-[13.5px] font-semibold text-white transition-all duration-200 disabled:cursor-not-allowed disabled:bg-[#EAEAEA] disabled:text-[#AEAEB2]"
+                        style={{ background: canContinue ? '#1D1D1F' : undefined }}
+                        onMouseEnter={(e) => {
+                          if (canContinue) e.currentTarget.style.background = '#374151';
+                        }}
+                        onMouseLeave={(e) => {
+                          if (canContinue) e.currentTarget.style.background = '#1D1D1F';
+                        }}
+                      >
+                        <i className={ri('ri-checkbox-circle-line', 'text-[14px]')} aria-hidden />
+                        理解没问题，进入剧本生成
+                      </button>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={() => void runAnalysis()}
+                        disabled={!canAnalyze}
+                        className="flex w-full cursor-pointer items-center justify-center gap-2 rounded-xl py-3 text-[13.5px] font-semibold text-white transition-all duration-200 disabled:cursor-not-allowed disabled:bg-[#EAEAEA] disabled:text-[#AEAEB2]"
+                        style={{ background: canAnalyze ? '#1D1D1F' : undefined }}
+                        onMouseEnter={(e) => {
+                          if (canAnalyze) e.currentTarget.style.background = '#374151';
+                        }}
+                        onMouseLeave={(e) => {
+                          if (canAnalyze) e.currentTarget.style.background = '#1D1D1F';
+                        }}
+                      >
+                        <i className={ri('ri-sparkling-2-line', 'text-[14px]')} aria-hidden />
+                        分析商品并生成创作理解
+                      </button>
+                    )}
+                  </div>
                 </div>
-              ) : null}
+              </div>
             </aside>
           </div>
 
@@ -373,42 +568,50 @@ export function ShortDramaProductInputPage() {
             <p className="mt-4 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-[13px] text-red-800">{error}</p>
           ) : null}
 
-          <div className="mt-8 flex flex-col justify-between gap-3 sm:flex-row sm:items-center">
-            <div className="flex gap-3">
+          <div className="mt-8 flex items-center justify-between border-t border-[#E5E5EA] pt-6">
+            <div className="flex items-center gap-3">
               <button
                 type="button"
                 onClick={() => navigate(withProjectQuery('/short-drama/create', projectId))}
-                className="rounded-xl border border-[#EAEAEA] bg-white px-5 py-3 text-[13.5px] text-[#444444] hover:bg-[#F5F5F7]"
+                className="flex cursor-pointer items-center gap-2 whitespace-nowrap rounded-xl border border-[#E5E5EA] bg-white px-5 py-2.5 text-[13px] font-medium text-[#6E6E73] transition-all duration-200 hover:bg-[#F5F5F7]"
               >
+                <i className={ri('ri-arrow-left-line', 'text-[12px]')} aria-hidden />
                 返回创作意图
               </button>
               <button
                 type="button"
                 onClick={() => void persistProductInput()}
                 disabled={projectId == null || isSaving}
-                className="rounded-xl border border-[#EAEAEA] bg-white px-5 py-3 text-[13.5px] text-[#444444] hover:bg-[#F5F5F7] disabled:cursor-not-allowed disabled:text-[#AEAEB2]"
+                className="flex cursor-pointer items-center gap-2 whitespace-nowrap rounded-xl border border-[#E5E5EA] bg-white px-5 py-2.5 text-[13px] font-medium text-[#6E6E73] transition-all duration-200 hover:bg-[#F5F5F7] disabled:cursor-not-allowed disabled:text-[#AEAEB2]"
               >
-                保存草稿
+                <i className={ri(isSaving ? 'ri-loader-4-line' : 'ri-save-line', isSaving ? 'animate-spin text-[12px]' : 'text-[12px]')} aria-hidden />
+                {isSaving ? '保存中…' : '保存草稿'}
               </button>
             </div>
             {canContinue ? (
               <button
                 type="button"
                 onClick={() => void saveAndContinue()}
-                className="rounded-xl bg-[#1D1D1F] px-7 py-3 text-[14px] font-semibold text-white hover:bg-[#374151]"
+                className="flex cursor-pointer items-center gap-2 whitespace-nowrap rounded-xl bg-[#1D1D1F] px-6 py-2.5 text-[13.5px] font-semibold text-white transition-all duration-200 hover:bg-[#374151]"
               >
-                保存并进入剧本生成
+                <i className={ri('ri-arrow-right-line', 'text-[13px]')} aria-hidden />
+                进入剧本生成
               </button>
+            ) : briefStatus === 'loading' ? (
+              <div className="flex items-center gap-2 whitespace-nowrap rounded-xl bg-[#F5F5F7] px-6 py-2.5 text-[13px] text-[#8E8E93]">
+                <i className={ri('ri-loader-4-line', 'animate-spin text-[14px]')} aria-hidden />
+                AI 分析中…
+              </div>
             ) : (
               <button
                 type="button"
                 onClick={() => void runAnalysis()}
                 disabled={!canAnalyze}
-                className="inline-flex items-center justify-center gap-2 rounded-xl px-7 py-3 text-[14px] font-semibold transition-colors disabled:cursor-not-allowed disabled:bg-[#EAEAEA] disabled:text-[#AEAEB2]"
-                style={{ background: canAnalyze ? sdColors.ink : undefined, color: canAnalyze ? '#ffffff' : undefined }}
+                className="flex cursor-pointer items-center justify-center gap-2 whitespace-nowrap rounded-xl px-6 py-2.5 text-[13.5px] font-semibold text-white transition-all duration-200 disabled:cursor-not-allowed disabled:bg-[#EAEAEA] disabled:text-[#AEAEB2]"
+                style={{ background: canAnalyze ? sdColors.ink : undefined }}
               >
-                <i className={ri(briefStatus === 'loading' ? 'ri-loader-4-line' : 'ri-sparkling-2-line', briefStatus === 'loading' ? 'animate-spin text-[14px]' : 'text-[14px]')} aria-hidden />
-                {briefStatus === 'loading' ? '分析中…' : '分析商品并生成创作理解'}
+                <i className={ri('ri-sparkling-2-line', 'text-[13px]')} aria-hidden />
+                分析商品并生成创作理解
               </button>
             )}
           </div>

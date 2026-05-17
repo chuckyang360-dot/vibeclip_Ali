@@ -567,15 +567,11 @@ def _duration_for_segment(segment: SegmentScriptSchema) -> int:
     if d < 1:
         d = 1
     if d > 10:
-        logger.warning(
-            "[S4_SEGMENT_DURATION_CLAMPED] segment_id=%s requested_segment_duration=%s provider_max_duration=%s note=%s",
-            segment.segment_id,
-            d,
-            10,
-            "single-segment cap only; full project duration should be achieved by multiple segments + merge",
+        raise ShortDramaVideoInputError(
+            f"Segment {segment.segment_id!r} duration {d} exceeds provider maximum 10 seconds; "
+            "repair S2 by shortening or splitting this segment."
         )
-        d = 10
-    return min(10, d)
+    return d
 
 
 def _char_by_name(chars: list[CharacterAsset]) -> dict[str, CharacterAsset]:

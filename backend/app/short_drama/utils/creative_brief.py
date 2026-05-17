@@ -92,14 +92,6 @@ def normalize_visual_style(raw: Any) -> str:
     return "realistic_cinematic"
 
 
-def segment_count_for_duration(duration_sec: int) -> int:
-    if duration_sec <= 35:
-        return 4
-    if duration_sec <= 50:
-        return 5
-    return 6
-
-
 VISUAL_WORLD_MATRIX = {
     "realistic_cinematic": {
         "display": "写实电影感",

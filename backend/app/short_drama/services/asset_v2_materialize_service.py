@@ -323,18 +323,48 @@ def build_v2_asset_specs_bundle(*, project_id: int, blueprint: StoryBlueprintSch
     return AssetSpecsBundleSchema(characters=characters, scenes=scenes, products=products)
 
 
+def _asset_key_from_meta(meta: dict | None) -> str:
+    root = meta if isinstance(meta, dict) else {}
+    tf = root.get("type_fields")
+    if isinstance(tf, dict):
+        return str(tf.get("asset_key") or "").strip()
+    return ""
+
+
+def _rows_by_asset_key(rows: list[CharacterAsset | SceneAsset | ProductAsset]) -> dict[str, CharacterAsset | SceneAsset | ProductAsset]:
+    out: dict[str, CharacterAsset | SceneAsset | ProductAsset] = {}
+    for row in rows:
+        key = _asset_key_from_meta(getattr(row, "meta_json", None))
+        if key:
+            out[key] = row
+    return out
+
+
 def persist_v2_asset_specs_bundle_to_legacy_tables(db: Session, project_id: int, bundle: AssetSpecsBundleSchema) -> None:
-    """Insert legacy Character/Scene/Product rows from a v2-only bundle (no name/prompt rewriting)."""
+    """Upsert legacy Character/Scene/Product rows from v2 asset_generation_specs."""
+    existing_chars = _rows_by_asset_key(
+        db.query(CharacterAsset).filter(CharacterAsset.project_id == project_id).all()
+    )
+    existing_scenes = _rows_by_asset_key(
+        db.query(SceneAsset).filter(SceneAsset.project_id == project_id).all()
+    )
+    existing_products = _rows_by_asset_key(
+        db.query(ProductAsset).filter(ProductAsset.project_id == project_id).all()
+    )
+
     for c in bundle.characters:
-        row = CharacterAsset(
-            project_id=project_id,
-            name=c.name,
-            role_type=c.role_type or "main",
-            description=c.description,
-            visual_prompt=(c.visual_prompt or "").strip(),
-            image_url=c.image_url,
-            meta_json=dict(c.meta or {}),
-        )
+        meta = dict(c.meta or {})
+        asset_key = _asset_key_from_meta(meta)
+        row = existing_chars.get(asset_key) if asset_key else None
+        if row is None:
+            row = CharacterAsset(project_id=project_id)
+        row.name = c.name
+        row.role_type = c.role_type or "main"
+        row.description = c.description
+        row.visual_prompt = (c.visual_prompt or "").strip()
+        if not str(row.image_url or "").strip():
+            row.image_url = c.image_url
+        row.meta_json = {**(row.meta_json or {}), **meta}
         db.add(row)
         db.flush()
         tf = (row.meta_json or {}).get("type_fields") or {}
@@ -354,15 +384,18 @@ def persist_v2_asset_specs_bundle_to_legacy_tables(db: Session, project_id: int,
 
     for s in bundle.scenes:
         st = (str(s.scene_type or "").strip() or "scene_reference")
-        row = SceneAsset(
-            project_id=project_id,
-            name=s.name,
-            scene_type=st,
-            description=s.description,
-            visual_prompt=(s.visual_prompt or "").strip(),
-            image_url=s.image_url,
-            meta_json=dict(s.meta or {}),
-        )
+        meta = dict(s.meta or {})
+        asset_key = _asset_key_from_meta(meta)
+        row = existing_scenes.get(asset_key) if asset_key else None
+        if row is None:
+            row = SceneAsset(project_id=project_id)
+        row.name = s.name
+        row.scene_type = st
+        row.description = s.description
+        row.visual_prompt = (s.visual_prompt or "").strip()
+        if not str(row.image_url or "").strip():
+            row.image_url = s.image_url
+        row.meta_json = {**(row.meta_json or {}), **meta}
         db.add(row)
         db.flush()
         tf = (row.meta_json or {}).get("type_fields") or {}
@@ -381,14 +414,17 @@ def persist_v2_asset_specs_bundle_to_legacy_tables(db: Session, project_id: int,
         )
 
     for p in bundle.products:
-        row = ProductAsset(
-            project_id=project_id,
-            name=p.name,
-            description=p.description,
-            visual_prompt=(p.visual_prompt or "").strip(),
-            image_url=p.image_url,
-            meta_json=dict(p.meta or {}),
-        )
+        meta = dict(p.meta or {})
+        asset_key = _asset_key_from_meta(meta)
+        row = existing_products.get(asset_key) if asset_key else None
+        if row is None:
+            row = ProductAsset(project_id=project_id)
+        row.name = p.name
+        row.description = p.description
+        row.visual_prompt = (p.visual_prompt or "").strip()
+        if not str(row.image_url or "").strip():
+            row.image_url = p.image_url
+        row.meta_json = {**(row.meta_json or {}), **meta}
         db.add(row)
         db.flush()
         tf = (row.meta_json or {}).get("type_fields") or {}

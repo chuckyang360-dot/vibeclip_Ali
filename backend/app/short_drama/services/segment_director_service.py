@@ -31,6 +31,22 @@ from ..utils.segment_slots import (
 )
 
 logger = logging.getLogger(__name__)
+_PROVIDER_MAX_DURATION_SECONDS = 10.0
+
+
+def _provider_safe_duration(value: Any, *, segment_id: str) -> float:
+    duration = max(1.0, float(value or 0.0))
+    if duration > _PROVIDER_MAX_DURATION_SECONDS:
+        raise ShortDramaInvalidModelOutputError(
+            (
+                f"S2 segment {segment_id} duration {duration} exceeds provider maximum "
+                f"{_PROVIDER_MAX_DURATION_SECONDS}; repair S2 by shortening or splitting this segment."
+            ),
+            segment_id=segment_id,
+            code="s2_provider_duration_exceeded",
+            missing_fields=["duration_seconds"],
+        )
+    return duration
 
 
 def _reject_v2_for_legacy_s4_entrypoints(blueprint: StoryBlueprintSchema, *, entry: str) -> None:
@@ -555,7 +571,7 @@ def materialize_segment_scripts_from_s2_video_specs(
             duration_limit = float(plan_row.duration_sec or plan_row.duration_seconds or 0.0)
         if duration_limit <= 0:
             duration_limit = max(float(s.duration_sec or 0.0) for s in seg_specs) or 6.0
-        duration_limit = max(1.0, min(10.0, float(duration_limit)))
+        duration_limit = _provider_safe_duration(duration_limit, segment_id=segment_id)
 
         function_label = ""
         if plan_row is not None:
@@ -579,7 +595,17 @@ def materialize_segment_scripts_from_s2_video_specs(
             d_sec = float(spec.duration_sec or 0.0)
             if d_sec <= 0:
                 d_sec = default_per
-            d_sec = max(1.0, min(duration_limit, float(d_sec)))
+            d_sec = _provider_safe_duration(d_sec, segment_id=segment_id)
+            if d_sec > duration_limit:
+                raise ShortDramaInvalidModelOutputError(
+                    (
+                        f"S2 video_generation_specs segment {segment_id} duration {d_sec} exceeds segment "
+                        f"duration {duration_limit}; repair S2 so durations are coherent."
+                    ),
+                    segment_id=segment_id,
+                    code="s2_segment_duration_mismatch",
+                    missing_fields=["video_generation_specs.duration_sec"],
+                )
 
             shot_id = str(spec.shot_id or "").strip() or str(spec.spec_key or "").strip() or f"{segment_id}_shot_{shot_i + 1}"
 
@@ -692,19 +718,6 @@ def materialize_segment_scripts_from_s2_video_specs(
         shot_total,
     )
     return segments_out
-
-
-def _desired_segment_count(duration_text: str, format_text: str) -> int:
-    fmt = str(format_text or "").strip().lower()
-    if fmt == "series":
-        return 3
-    m = re.search(r"\d+", str(duration_text or ""))
-    d = int(m.group(0)) if m else 30
-    if d >= 60:
-        return 5
-    if d >= 45:
-        return 4
-    return 3
 
 
 def _default_shot_count(segment_duration: float) -> int:
@@ -1191,11 +1204,23 @@ class MockSegmentDirectorProvider:
         risks = [str(x) for x in s1_constraints.get("visual_risk_notes", []) if x]
         mapping = _blueprint_selling_point_mapping_dict(blueprint)
         plan = list(blueprint.segment_plan or [])
+        seg_1_duration = _provider_safe_duration(
+            (plan[0].duration_seconds if len(plan) > 0 else 6.0) or 6.0,
+            segment_id="seg_1",
+        )
+        seg_2_duration = _provider_safe_duration(
+            (plan[1].duration_seconds if len(plan) > 1 else 8.0) or 8.0,
+            segment_id="seg_2",
+        )
+        seg_3_duration = _provider_safe_duration(
+            (plan[2].duration_seconds if len(plan) > 2 else 7.0) or 7.0,
+            segment_id="seg_3",
+        )
         return [
             SegmentScriptSchema(
                 segment_id="seg_1",
                 title="Hook",
-                duration_limit=max(1.0, min(10.0, (plan[0].duration_seconds if len(plan) > 0 else 6.0) or 6.0)),
+                duration_limit=seg_1_duration,
                 goal=(plan[0].goal if len(plan) > 0 else "") or "共鸣开场",
                 shots=[
                     ShotSchema(
@@ -1211,7 +1236,7 @@ class MockSegmentDirectorProvider:
                         dialogue="又要迟到了…",
                         narration="",
                         emotion="窘迫",
-                        duration_seconds=max(1.0, min(10.0, (plan[0].duration_seconds if len(plan) > 0 else 6.0) or 6.0)),
+                        duration_seconds=seg_1_duration,
                         image_prompt="",
                         video_prompt="",
                         product_refs=[prod],
@@ -1233,7 +1258,7 @@ class MockSegmentDirectorProvider:
             SegmentScriptSchema(
                 segment_id="seg_2",
                 title="Conflict / Build",
-                duration_limit=max(1.0, min(10.0, (plan[1].duration_seconds if len(plan) > 1 else 8.0) or 8.0)),
+                duration_limit=seg_2_duration,
                 goal=(plan[1].goal if len(plan) > 1 else "") or "产品引入",
                 shots=[
                     ShotSchema(
@@ -1271,7 +1296,7 @@ class MockSegmentDirectorProvider:
             SegmentScriptSchema(
                 segment_id="seg_3",
                 title="Twist / Resolution",
-                duration_limit=max(1.0, min(10.0, (plan[2].duration_seconds if len(plan) > 2 else 7.0) or 7.0)),
+                duration_limit=seg_3_duration,
                 goal=(plan[2].goal if len(plan) > 2 else "") or "收尾与 CTA",
                 shots=[
                     ShotSchema(
@@ -1451,7 +1476,10 @@ def _validate_segments(
         if len(seg.shots) < 2:
             raise ShortDramaInvalidModelOutputError(f"segment {seg.segment_id} must include at least 2 shots")
         source_plan = next((x for x in blueprint.segment_plan if x.segment_id == seg.segment_id), None)
-        segment_limit = max(1.0, min(10.0, float(seg.duration_limit or (source_plan.duration_seconds if source_plan else 6.0) or 6.0)))
+        segment_limit = _provider_safe_duration(
+            seg.duration_limit or (source_plan.duration_seconds if source_plan else 6.0) or 6.0,
+            segment_id=seg.segment_id,
+        )
         enriched_shots: list[ShotSchema] = []
         seen_actions: list[str] = []
         for sh in seg.shots:
@@ -1627,11 +1655,7 @@ def segments_from_story_shot_plan(
     visual_features = [str(x).strip() for x in (product_facts.get("product_visual_features") or []) if str(x).strip()] if isinstance(product_facts.get("product_visual_features"), list) else []
     asset_summaries = _asset_prompt_summaries(assets)
     framework_type = str(framework.get("type") or "brand_seeding").strip()
-    segment_count = max(1, min(8, len(segments_raw))) if segments_raw else (
-        _desired_segment_count(str(cfg.get("duration") or ""), str(cfg.get("format") or "single_ad"))
-        if cfg
-        else 3
-    )
+    segment_count = max(1, min(8, len(segments_raw)))
     segment_functions = stage_names[:segment_count] if len(stage_names) >= segment_count else _framework_functions(framework_type, segment_count)
     out: list[SegmentScriptSchema] = []
     for idx in range(segment_count):
@@ -1788,7 +1812,7 @@ def segments_from_story_shot_plan(
             SegmentScriptSchema(
                 segment_id=segment_id,
                 title=str(row.get("name") or function_label or f"Segment {idx+1}"),
-                duration_limit=min(10.0, fallback_duration),
+                duration_limit=_provider_safe_duration(fallback_duration, segment_id=segment_id),
                 goal=str(row.get("goal") or function_label),
                 shots=shots,
                 meta={

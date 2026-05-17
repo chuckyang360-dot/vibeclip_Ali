@@ -754,7 +754,8 @@ export function mergeVideoStatus(
 ): Step4VideoStatusMap {
   const out: Step4VideoStatusMap = { ...base };
   for (const [key, val] of Object.entries(overrides)) {
-    if (val !== undefined) out[Number(key)] = val;
+    const id = Number(key);
+    if (val !== undefined && out[id] !== 'completed') out[id] = val;
   }
   return out;
 }

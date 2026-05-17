@@ -24,6 +24,7 @@ import type {
   RegenerateOneAssetImageResponseDto,
   AssetLibraryItemDto,
   AssetLibraryListResponseDto,
+  AssetLibrarySummaryListResponseDto,
   AnalyzeAssetReferenceImageBody,
   AnalyzeAssetReferenceImageResponseDto,
   CreateAssetFromImageBody,
@@ -328,6 +329,14 @@ export async function listShortDramaAssetLibrary(
   assetType: 'character' | 'scene' | 'product',
 ): Promise<AssetLibraryListResponseDto> {
   return sdFetchJson<AssetLibraryListResponseDto>(`/api/short-drama/assets/specs/library/${projectId}/${assetType}`);
+}
+
+export async function listShortDramaGlobalAssetLibrary(
+  userId: number,
+  assetType: 'character' | 'scene' | 'product',
+): Promise<AssetLibrarySummaryListResponseDto> {
+  const q = `user_id=${encodeURIComponent(String(userId))}&asset_type=${encodeURIComponent(assetType)}`;
+  return sdFetchJson<AssetLibrarySummaryListResponseDto>(`/api/short-drama/assets/specs/library?${q}`);
 }
 
 export async function getShortDramaAssetLibraryDetail(projectId: number, assetId: number): Promise<AssetLibraryItemDto> {

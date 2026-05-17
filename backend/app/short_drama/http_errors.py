@@ -69,7 +69,7 @@ def _to_http_exception(exc: Exception) -> HTTPException:
         if isinstance(exc, ShortDramaImageSaveError):
             return HTTPException(
                 status_code=status.HTTP_502_BAD_GATEWAY,
-                detail={"message": msg, "error_type": "storage_or_db_error"},
+                detail={"error": "asset_image_generation_failed", "message": "资产图片生成失败，请稍后重试。"},
             )
         cat = getattr(exc, "category", None) or "provider"
         if cat == "auth" or "GEMINI_API_KEY" in msg or "XAI_API_KEY" in msg or "not configured" in msg.lower():
@@ -80,22 +80,37 @@ def _to_http_exception(exc: Exception) -> HTTPException:
         if cat in ("rate_limit", "quota"):
             return HTTPException(
                 status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-                detail={"message": "AI provider quota exceeded. Please try again later.", "error_type": "provider_quota"},
+                detail={"error": "asset_image_generation_failed", "message": "资产图片生成失败，请稍后重试。"},
             )
         if cat in ("download_failed", "xai_response_invalid"):
-            return HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=msg)
+            return HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                detail={"error": "asset_image_generation_failed", "message": "资产图片生成失败，请稍后重试。"},
+            )
         if cat == "unsupported":
-            return HTTPException(status_code=status.HTTP_501_NOT_IMPLEMENTED, detail=msg)
+            return HTTPException(
+                status_code=status.HTTP_501_NOT_IMPLEMENTED,
+                detail={"error": "asset_image_generation_failed", "message": "资产图片生成失败，请稍后重试。"},
+            )
         if cat == "configuration":
-            return HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=msg)
+            return HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail={"error": "asset_image_generation_failed", "message": "资产图片生成失败，请稍后重试。"},
+            )
         if "timeout" in msg.lower():
             return HTTPException(
                 status_code=status.HTTP_504_GATEWAY_TIMEOUT,
-                detail={"message": "AI provider timeout. Please retry.", "error_type": "provider_timeout"},
+                detail={"error": "asset_image_generation_failed", "message": "资产图片生成失败，请稍后重试。"},
             )
         if "429" in msg or "quota" in msg.lower() or "resource" in msg.lower():
-            return HTTPException(status_code=status.HTTP_429_TOO_MANY_REQUESTS, detail=msg)
-        return HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=msg)
+            return HTTPException(
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                detail={"error": "asset_image_generation_failed", "message": "资产图片生成失败，请稍后重试。"},
+            )
+        return HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail={"error": "asset_image_generation_failed", "message": "资产图片生成失败，请稍后重试。"},
+        )
     if isinstance(exc, ShortDramaProviderError):
         msg = str(exc)
         low = msg.lower()
