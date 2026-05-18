@@ -6,6 +6,11 @@ import re
 from typing import Any
 
 from ...config import settings
+from ..providers.geoq_s1_vision import generate_product_image_understanding_json, s1_vision_wants_geoq
+from ..providers.railway_s1_vision import (
+    ai_provider_wants_railway_proxy,
+    generate_product_image_understanding_via_railway_proxy,
+)
 from ..providers.xai_text_provider import XAITextProvider, get_xai_text_provider
 from ..schemas.product import ProductImageUnderstandingSchema, ProductRawInputSchema
 from ..utils.prompts import (
@@ -176,6 +181,17 @@ class ProductImageUnderstandingService:
             "project_id": project_id,
             "raw_input": text_payload,
         }
+        use_railway_proxy = ai_provider_wants_railway_proxy()
+        use_geoq = (not use_railway_proxy) and s1_vision_wants_geoq()
+        if use_railway_proxy:
+            provider_trace = "railway_proxy"
+            model_trace = "railway_ai_proxy"
+        elif use_geoq:
+            provider_trace = "geoq"
+            model_trace = "geoq_s1_vision"
+        else:
+            provider_trace = "xai_text_provider"
+            model_trace = "effective_xai_text_model"
         _trace(
             "S1_IMAGE_UNDERSTANDING_PROMPT",
             {
@@ -183,19 +199,34 @@ class ProductImageUnderstandingService:
                 "system_prompt": PRODUCT_IMAGE_UNDERSTANDING_SYSTEM_PROMPT,
                 "user_payload": payload,
                 "image_urls_count": len(image_urls),
-                "provider": "xai_text_provider",
-                "model": "effective_xai_text_model",
+                "provider": provider_trace,
+                "model": model_trace,
             },
         )
-        data = self._text.generate_structured_json(
-            project_id=project_id,
-            service_name="product_image_understanding",
-            system_prompt=PRODUCT_IMAGE_UNDERSTANDING_SYSTEM_PROMPT,
-            user_payload=payload,
-            image_urls=image_urls,
-            expected_schema_name="ProductImageUnderstanding",
-            stage="PRODUCT_IMAGE_UNDERSTANDING",
-        )
+        if use_railway_proxy:
+            data = generate_product_image_understanding_via_railway_proxy(
+                project_id=project_id,
+                system_prompt=PRODUCT_IMAGE_UNDERSTANDING_SYSTEM_PROMPT,
+                user_payload=payload,
+                image_urls=image_urls,
+            )
+        elif use_geoq:
+            data = generate_product_image_understanding_json(
+                project_id=project_id,
+                system_prompt=PRODUCT_IMAGE_UNDERSTANDING_SYSTEM_PROMPT,
+                user_payload=payload,
+                image_urls=image_urls,
+            )
+        else:
+            data = self._text.generate_structured_json(
+                project_id=project_id,
+                service_name="product_image_understanding",
+                system_prompt=PRODUCT_IMAGE_UNDERSTANDING_SYSTEM_PROMPT,
+                user_payload=payload,
+                image_urls=image_urls,
+                expected_schema_name="ProductImageUnderstanding",
+                stage="PRODUCT_IMAGE_UNDERSTANDING",
+            )
         data = _normalize_image_understanding_list_fields(project_id, data)
         _trace(
             "S1_IMAGE_UNDERSTANDING_RESPONSE",

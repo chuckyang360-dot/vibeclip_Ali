@@ -9,6 +9,33 @@ class Settings(BaseSettings):
     DEBUG: bool = True
     API_V1_STR: str = "/api/v1"
 
+    # Deploy / integration (Aliyun prep). Defaults keep existing local & Railway behavior; no runtime branch on these yet.
+    APP_ENV: str = Field(default="development", env="APP_ENV")
+    #: e.g. local | aliyun — informational / future routing only
+    APP_DEPLOY_TARGET: str = Field(default="local", env="APP_DEPLOY_TARGET")
+    #: Browser-facing marketing/site origin, e.g. https://www.vibeclip.cn (optional; distinct from FRONTEND_URL when both set)
+    PUBLIC_SITE_URL: Optional[str] = Field(default=None, env="PUBLIC_SITE_URL")
+    #: Public API origin for documentation / future features, e.g. https://api.vibeclip.cn (optional; billing notify fallback remains BACKEND_PUBLIC_BASE_URL)
+    API_BASE_URL: Optional[str] = Field(default=None, env="API_BASE_URL")
+    #: r2 = Cloudflare R2 (current default, boto3 client unchanged); oss = reserved for Aliyun OSS
+    STORAGE_PROVIDER: str = Field(default="r2", env="STORAGE_PROVIDER")
+    #: direct_xai = backend calls xAI; gateway = reserved outbound gateway; railway_proxy = outbound AI via Railway AI Proxy (AI_PROXY_*); currently S1 vision uses this switch.
+    AI_PROVIDER: str = Field(default="direct_xai", env="AI_PROVIDER")
+    #: When AI_PROVIDER=gateway is wired, use these; empty has no effect on direct_xai
+    AI_GATEWAY_BASE_URL: Optional[str] = Field(default=None, env="AI_GATEWAY_BASE_URL")
+    AI_GATEWAY_API_KEY: Optional[str] = Field(default=None, env="AI_GATEWAY_API_KEY")
+
+    # S1 product image understanding — geoq = legacy GeoQ experiment only (not Railway). unset (= xAI multimodal). Not model names.
+    S1_VISION_PROVIDER: Optional[str] = Field(default=None, env="S1_VISION_PROVIDER")
+    #: Railway AI Proxy root URL (no path); model config lives on proxy
+    AI_PROXY_BASE_URL: Optional[str] = Field(default=None, env="AI_PROXY_BASE_URL")
+    AI_PROXY_TOKEN: Optional[str] = Field(default=None, env="AI_PROXY_TOKEN")
+    AI_PROXY_TIMEOUT_SECONDS: int = Field(default=120, env="AI_PROXY_TIMEOUT_SECONDS")
+    GEOQ_BASE_URL: str = Field(default="https://api.geoq.help/v1", env="GEOQ_BASE_URL")
+    GEOQ_API_KEY: Optional[str] = Field(default=None, env="GEOQ_API_KEY")
+    GEOQ_S1_VISION_MODEL: str = Field(default="gpt-image-2", env="GEOQ_S1_VISION_MODEL")
+    GEOQ_TIMEOUT_SECONDS: int = Field(default=120, env="GEOQ_TIMEOUT_SECONDS")
+
     # Database Configuration
     DATABASE_URL: str = "sqlite:///./vibeclip.db"
     DB_DEBUG: bool = Field(default=False, env="DB_DEBUG")

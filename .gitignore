@@ -60,3 +60,8 @@ generated-*.webp
 /frontend/*fixed*.png
 backend/examples/
 frontend/scripts/
+vibe clip前端framer/
+.env
+*.env
+deploy/aliyun/.env
+vibe clip前端framer/
