@@ -1262,6 +1262,26 @@ async def generate_asset_specs(body: GenerateAssetSpecsRequest, db: Session = De
                 },
             ) from e
 
+        if image_generation is not None:
+            total_attempts = int(image_generation.get("characters_attempted") or 0) + int(
+                image_generation.get("scenes_attempted") or 0
+            ) + int(image_generation.get("products_attempted") or 0)
+            total_succeeded = int(image_generation.get("characters_succeeded") or 0) + int(
+                image_generation.get("scenes_succeeded") or 0
+            ) + int(image_generation.get("products_succeeded") or 0)
+            if total_attempts > 0 and total_succeeded == 0:
+                fail_db = SessionLocal()
+                try:
+                    mark_project_stage_failed(
+                        fail_db,
+                        body.project_id,
+                        stage="s3_images",
+                        error_type_value="image_generation_failed",
+                        message="Image generation failed for all assets. Please retry.",
+                    )
+                finally:
+                    fail_db.close()
+
         chars = (
             db.query(CharacterAsset)
             .filter(CharacterAsset.project_id == body.project_id)

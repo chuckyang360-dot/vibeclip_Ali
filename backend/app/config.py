@@ -19,7 +19,7 @@ class Settings(BaseSettings):
     API_BASE_URL: Optional[str] = Field(default=None, env="API_BASE_URL")
     #: r2 = Cloudflare R2 (current default, boto3 client unchanged); oss = reserved for Aliyun OSS
     STORAGE_PROVIDER: str = Field(default="r2", env="STORAGE_PROVIDER")
-    #: direct_xai = backend calls xAI; gateway = reserved outbound gateway; railway_proxy = structured text + S1 vision via Railway (AI_PROXY_*), no direct xAI from ECS when set
+    #: direct_xai = backend calls xAI; gateway = reserved outbound gateway; railway_proxy = S1 vision + structured text + S3 images via Railway (AI_PROXY_*), no direct xAI from ECS when set
     AI_PROVIDER: str = Field(default="direct_xai", env="AI_PROVIDER")
     #: When AI_PROVIDER=gateway is wired, use these; empty has no effect on direct_xai
     AI_GATEWAY_BASE_URL: Optional[str] = Field(default=None, env="AI_GATEWAY_BASE_URL")
@@ -31,6 +31,9 @@ class Settings(BaseSettings):
     AI_PROXY_BASE_URL: Optional[str] = Field(default=None, env="AI_PROXY_BASE_URL")
     AI_PROXY_TOKEN: Optional[str] = Field(default=None, env="AI_PROXY_TOKEN")
     AI_PROXY_TIMEOUT_SECONDS: int = Field(default=120, env="AI_PROXY_TIMEOUT_SECONDS")
+    #: Optional override for S3 image proxy; empty → AI_PROXY_BASE_URL
+    RAILWAY_IMAGE_PROXY_BASE_URL: Optional[str] = Field(default=None, env="RAILWAY_IMAGE_PROXY_BASE_URL")
+    RAILWAY_IMAGE_PROXY_TIMEOUT_SECONDS: int = Field(default=300, env="RAILWAY_IMAGE_PROXY_TIMEOUT_SECONDS")
     GEOQ_BASE_URL: str = Field(default="https://api.geoq.help/v1", env="GEOQ_BASE_URL")
     GEOQ_API_KEY: Optional[str] = Field(default=None, env="GEOQ_API_KEY")
     GEOQ_S1_VISION_MODEL: str = Field(default="gpt-image-2", env="GEOQ_S1_VISION_MODEL")
@@ -142,7 +145,8 @@ class Settings(BaseSettings):
     GEMINI_BASE_URL: Optional[str] = Field(default=None, env="GEMINI_BASE_URL")
     GEMINI_TIMEOUT_SECONDS: int = Field(default=120, env="GEMINI_TIMEOUT_SECONDS")
     GEMINI_MAX_RETRIES: int = Field(default=2, env="GEMINI_MAX_RETRIES")
-    # Short Drama asset images: xai | gemini | mock (SHORT_DRAMA_USE_MOCK_IMAGE_PROVIDER still forces mock)
+    # Short Drama asset images: xai | gemini | mock | railway_proxy (SHORT_DRAMA_USE_MOCK_IMAGE_PROVIDER still forces mock)
+    # When AI_PROVIDER=railway_proxy and this is xai (default), images also use Railway without changing this key.
     SHORT_DRAMA_IMAGE_PROVIDER: str = Field(default="xai", env="SHORT_DRAMA_IMAGE_PROVIDER")
     SHORT_DRAMA_XAI_IMAGE_MODEL: Optional[str] = Field(default=None, env="SHORT_DRAMA_XAI_IMAGE_MODEL")
     SHORT_DRAMA_IMAGE_RETURN_FORMAT: str = Field(default="url", env="SHORT_DRAMA_IMAGE_RETURN_FORMAT")

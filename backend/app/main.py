@@ -13,6 +13,7 @@ from .admin.router import router as admin_router
 from .auth.routes import router as auth_router
 from .routes.billing import router as billing_router
 from .short_drama.routes import router as short_drama_router
+from .short_drama.providers.ai_provider_config_audit import log_ai_provider_config_audit
 
 # Import models so Base.metadata includes short drama tables before init_db()
 from .models import (  # noqa: F401
@@ -114,6 +115,7 @@ app.add_middleware(
 )
 
 init_db()
+log_ai_provider_config_audit()
 
 app.include_router(auth_router, prefix="/api/auth", tags=["Authentication"])
 app.include_router(admin_router, prefix="/api/admin", tags=["Admin"])
