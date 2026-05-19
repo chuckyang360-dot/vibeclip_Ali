@@ -393,13 +393,15 @@ def test_normalize_accepts_minimal_v2_segment_without_legacy_enhancements():
     assert str(seg0.summary or "").strip()
 
 
-def test_normalize_rejects_segment_without_summary_or_story_beat():
+def test_normalize_rejects_segment_without_summary_story_beat_or_goal():
     raw = _v2_normalize_shell(
         segment_plan=[
             {
                 "segment_id": "seg_1",
                 "segment_title": "T",
-                "segment_goal": "g",
+                "segment_goal": "",
+                "goal": "",
+                "key_message": "",
                 "summary": "",
                 "story_beat": "",
                 "duration_seconds": 10.0,
@@ -552,7 +554,8 @@ def test_xai_story_planner_repair_failure_keeps_specific_duration_error():
     assert ei.value.duration_seconds == 11.0
 
 
-def test_normalize_rejects_segment_without_asset_hints():
+def test_normalize_accepts_v2_segment_without_legacy_asset_hints():
+    """creative_blueprint_v2 does not require required_assets on segment_plan rows."""
     raw = _v2_normalize_shell(
         segment_plan=[
             {
@@ -567,8 +570,8 @@ def test_normalize_rejects_segment_without_asset_hints():
             }
         ]
     )
-    with pytest.raises(ShortDramaInvalidModelOutputError):
-        _normalize_blueprint_for_execution(parse_story_blueprint_json(raw), _product(), _project_config())
+    out = _normalize_blueprint_for_execution(parse_story_blueprint_json(raw), _product(), _project_config())
+    assert out.blueprint_schema_version == "creative_blueprint_v2"
 
 
 def test_normalize_rejects_segment_missing_segment_id():

@@ -1165,6 +1165,31 @@ def _validate_creative_blueprint_v2(blueprint: StoryBlueprintSchema, *, project_
         _fail("S2 creative_blueprint_v2 requires scenes[].", missing_fields=["scenes"])
     if not blueprint.product_assets:
         _fail("S2 creative_blueprint_v2 requires product_assets[].", missing_fields=["product_assets"])
+    if not blueprint.segment_plan:
+        _fail(
+            "S2 creative_blueprint_v2 requires segment_plan[].",
+            missing_fields=["segment_plan"],
+        )
+    for spi, sp_item in enumerate(blueprint.segment_plan):
+        if not str(sp_item.segment_id or "").strip():
+            _fail(
+                f"S2 segment_plan[{spi}] requires segment_id.",
+                missing_fields=[f"segment_plan[{spi}].segment_id"],
+            )
+        sid_chk = str(sp_item.segment_id or "").strip()
+        title_chk = str(sp_item.segment_title or sp_item.title or sp_item.stage_name or "").strip()
+        if not title_chk:
+            _fail(
+                f"S2 segment_plan[{spi}] ({sid_chk}) requires segment_title or title or stage_name.",
+                missing_fields=[f"segment_plan[{spi}].segment_title"],
+            )
+        body_chk = str(sp_item.summary or sp_item.segment_goal or sp_item.story_beat or "").strip()
+        if not body_chk:
+            _fail(
+                f"S2 segment_plan[{spi}] ({sid_chk}) requires summary or segment_goal or story_beat.",
+                missing_fields=[f"segment_plan[{spi}].summary_or_segment_goal"],
+            )
+
     if not blueprint.asset_generation_specs:
         _fail(
             "S2 creative_blueprint_v2 requires asset_generation_specs[].",
@@ -1288,6 +1313,16 @@ def _validate_creative_blueprint_v2(blueprint: StoryBlueprintSchema, *, project_
         )
 
     for vidx, vs in enumerate(vid_rows):
+        if not str(vs.spec_key or "").strip():
+            _fail(
+                f"S2 video_generation_specs[{vidx}] requires spec_key.",
+                missing_fields=["video_generation_specs.spec_key"],
+            )
+        if not str(vs.aspect_ratio or "").strip():
+            _fail(
+                f"S2 video_generation_specs[{vidx}] requires aspect_ratio.",
+                missing_fields=["video_generation_specs.aspect_ratio"],
+            )
         if not str(vs.video_prompt or "").strip():
             _fail(
                 f"S2 video_generation_specs[{vidx}] requires video_prompt.",
@@ -1592,6 +1627,81 @@ def _validate_story_content_quality(blueprint: StoryBlueprintSchema, product: Pr
             raise ShortDramaInvalidModelOutputError("S2 segment_title is too templated")
 
 
+def _validate_segment_plan_row_v2(
+    *,
+    idx: int,
+    item: SegmentPlanItemSchema,
+    sid: str,
+    project_id: Any,
+    is_brand_seeding: bool,
+) -> None:
+    """creative_blueprint_v2: execution rows without legacy shot_plan / required_assets."""
+    row_label = str(getattr(item, "segment_id", None) or "").strip() or f"row_{idx + 1}"
+    if not str(getattr(item, "segment_id", None) or "").strip():
+        logger.warning(
+            "[AI_BLUEPRINT_VALIDATE_FAILED] project_id=%s segment_id=%s missing_field=%s",
+            project_id,
+            row_label,
+            "segment_id",
+        )
+        raise ShortDramaInvalidModelOutputError(
+            f"S2 segment row {idx + 1} missing segment_id; regenerate S2.",
+            segment_id=None,
+            code="ai_blueprint_validate_failed",
+            missing_fields=["segment_id"],
+        )
+
+    title = str(item.segment_title or item.title or item.stage_name or "").strip()
+    if not title:
+        logger.warning(
+            "[AI_BLUEPRINT_VALIDATE_FAILED] project_id=%s segment_id=%s missing_field=%s",
+            project_id,
+            sid,
+            "segment_title",
+        )
+        raise ShortDramaInvalidModelOutputError(
+            f"S2 segment {sid} missing segment_title/title/stage_name; regenerate S2.",
+            segment_id=sid,
+            code="ai_blueprint_validate_failed",
+            missing_fields=["segment_title"],
+        )
+    body = str(item.summary or item.segment_goal or item.story_beat or "").strip()
+    if not body:
+        logger.warning(
+            "[AI_BLUEPRINT_VALIDATE_FAILED] project_id=%s segment_id=%s missing_field=%s",
+            project_id,
+            sid,
+            "segment_plan.summary_or_segment_goal",
+        )
+        raise ShortDramaInvalidModelOutputError(
+            f"S2 segment {sid} missing summary/segment_goal/story_beat; regenerate S2.",
+            segment_id=sid,
+            code="ai_blueprint_validate_failed",
+            missing_fields=["segment_plan.summary_or_segment_goal"],
+        )
+    raw_duration = float(item.duration_seconds or item.duration_sec or 0.0)
+    if raw_duration <= 0:
+        logger.warning(
+            "[AI_BLUEPRINT_VALIDATE_FAILED] project_id=%s segment_id=%s missing_field=%s",
+            project_id,
+            sid,
+            "duration_seconds",
+        )
+        raise ShortDramaInvalidModelOutputError(
+            f"S2 segment {sid} missing positive duration_seconds/duration_sec; regenerate S2.",
+            segment_id=sid,
+            code="ai_blueprint_validate_failed",
+            missing_fields=["duration_seconds"],
+        )
+    narrative = str(item.summary or item.story_beat or "").strip()
+    goal = str(item.segment_goal or item.goal or item.key_message or "").strip()
+    if is_brand_seeding:
+        beat_text = str(item.stage_name or item.story_beat or item.summary or "").strip()
+        _warn_brand_seeding_risk_terms(project_id=project_id, field="summary", text=narrative)
+        _warn_brand_seeding_risk_terms(project_id=project_id, field="goal", text=goal)
+        _warn_brand_seeding_risk_terms(project_id=project_id, field="story_beat", text=beat_text)
+
+
 def _validate_segment_plan_row(
     *,
     idx: int,
@@ -1703,6 +1813,14 @@ def _normalize_blueprint_v2_for_execution(
 ) -> StoryBlueprintSchema:
     """creative_blueprint_v2: engineering validation + segment timing; preserve Grok creative fields verbatim."""
     pid = project_config.get("project_id")
+    logger.info(
+        "[S2_V2_BLUEPRINT_DETECTED] %s",
+        json.dumps(
+            {"project_id": pid, "blueprint_schema_version": CREATIVE_BLUEPRINT_V2_SCHEMA},
+            ensure_ascii=False,
+            default=str,
+        ),
+    )
 
     def _value_type(v: Any) -> str:
         if v is None:
@@ -1786,7 +1904,14 @@ def _normalize_blueprint_v2_for_execution(
             missing_fields=["script_type_display"],
         )
 
-    _validate_executable_shot_plan(blueprint.shot_plan, segment_plan_len=len(plan), project_id=pid)
+    logger.info(
+        "[S2_V2_SKIP_LEGACY_SHOT_PLAN_VALIDATION] %s",
+        json.dumps(
+            {"project_id": pid, "reason": "creative_blueprint_v2"},
+            ensure_ascii=False,
+            default=str,
+        ),
+    )
 
     next_plan: list[SegmentPlanItemSchema] = []
     for idx, item in enumerate(plan):
@@ -1805,7 +1930,7 @@ def _normalize_blueprint_v2_for_execution(
                 missing_fields=["segment_id"],
             )
         sid = raw_sid
-        _validate_segment_plan_row(
+        _validate_segment_plan_row_v2(
             idx=idx,
             item=item,
             sid=sid,
@@ -1927,6 +2052,14 @@ def _normalize_blueprint_for_execution(
     if ver == CREATIVE_BLUEPRINT_V2_SCHEMA:
         normalized = _normalize_blueprint_v2_for_execution(blueprint, product, project_config)
         _validate_creative_blueprint_v2(normalized, project_id=project_config.get("project_id"))
+        logger.info(
+            "[S2_V2_VALIDATE_SUCCESS] %s",
+            json.dumps(
+                {"project_id": project_config.get("project_id"), "blueprint_schema_version": ver},
+                ensure_ascii=False,
+                default=str,
+            ),
+        )
         return normalized
     logger.warning(
         "[S2_LEGACY_NORMALIZE_PATH] %s",
