@@ -46,10 +46,54 @@ def test_build_provider_xai_direct(monkeypatch: pytest.MonkeyPatch) -> None:
     assert isinstance(prov, XaiImageProvider)
 
 
-def test_railway_create_image_url_response(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_railway_create_image_defaults_b64_json_request(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(settings, "AI_PROXY_BASE_URL", "https://proxy.example")
     monkeypatch.setattr(settings, "AI_PROXY_TOKEN", "tok")
     monkeypatch.setattr(settings, "RAILWAY_IMAGE_PROXY_TIMEOUT_SECONDS", 300)
+
+    captured: dict = {}
+
+    class FakeResp:
+        status_code = 200
+        text = json.dumps({"b64_json": "aGVsbG8="})
+
+        def json(self):
+            return {"b64_json": "aGVsbG8="}
+
+    class FakeClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def post(self, url, headers=None, json=None):
+            captured["body"] = json
+            return FakeResp()
+
+    monkeypatch.setattr("app.short_drama.providers.railway_image_proxy.httpx.Client", FakeClient)
+    u, b64, raw = railway_create_image_from_text(
+        project_id=1,
+        target_type="character",
+        target_id=9,
+        prompt="a cat",
+        model="grok-imagine-image",
+        response_format="",
+        aspect_ratio=None,
+        resolution=None,
+    )
+    assert captured["body"]["response_format"] == "b64_json"
+    assert u is None
+    assert b64 == "aGVsbG8="
+    assert raw == b"hello"
+
+
+def test_railway_create_image_url_response_when_explicit_url(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(settings, "AI_PROXY_BASE_URL", "https://proxy.example")
+    monkeypatch.setattr(settings, "AI_PROXY_TOKEN", "tok")
 
     class FakeResp:
         status_code = 200
@@ -69,9 +113,7 @@ def test_railway_create_image_url_response(monkeypatch: pytest.MonkeyPatch) -> N
             return False
 
         def post(self, url, headers=None, json=None):
-            assert url == "https://proxy.example/images/generations"
-            assert headers["Authorization"] == "Bearer tok"
-            assert json["prompt"] == "a cat"
+            assert json["response_format"] == "url"
             return FakeResp()
 
     monkeypatch.setattr("app.short_drama.providers.railway_image_proxy.httpx.Client", FakeClient)
@@ -90,24 +132,21 @@ def test_railway_create_image_url_response(monkeypatch: pytest.MonkeyPatch) -> N
     assert raw is None
 
 
-def test_railway_image_provider_no_direct_xai_client(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(settings, "AI_PROXY_BASE_URL", "https://proxy.example")
-    monkeypatch.setattr(settings, "AI_PROXY_TOKEN", "tok")
-
+def test_railway_image_provider_b64_json_no_download(monkeypatch: pytest.MonkeyPatch) -> None:
     fake_bytes = b"\x89PNG\r\n\x1a\n"
 
     def fake_railway(**kwargs):
-        return None, None, fake_bytes
-
-    def boom_create_image(*args, **kwargs):
-        raise AssertionError("XaiImageClient.create_image_from_text must not run when railway proxy is used")
+        assert kwargs["response_format"] == "b64_json"
+        return None, "e30=", fake_bytes
 
     monkeypatch.setattr(
         "app.short_drama.providers.railway_image_provider.railway_create_image_from_text",
         fake_railway,
     )
     download = MagicMock()
-    download.create_image_from_text = boom_create_image
+    download.download_url = MagicMock(
+        side_effect=AssertionError("download_url must not run when b64_json bytes are returned")
+    )
     prov = RailwayImageProvider(download_client=download)
     out = prov.generate_from_text(
         prompt="test",
@@ -117,3 +156,29 @@ def test_railway_image_provider_no_direct_xai_client(monkeypatch: pytest.MonkeyP
     )
     assert out.data == fake_bytes
     assert out.provider == "railway_proxy"
+    assert out.meta.get("image_source") == "b64_json"
+    download.download_url.assert_not_called()
+
+
+def test_railway_image_provider_url_fallback_download(monkeypatch: pytest.MonkeyPatch) -> None:
+    fake_bytes = b"\x89PNG\r\n\x1a\n"
+
+    def fake_railway(**kwargs):
+        return "https://cdn.example/img.png", None, None
+
+    monkeypatch.setattr(
+        "app.short_drama.providers.railway_image_provider.railway_create_image_from_text",
+        fake_railway,
+    )
+    download = MagicMock()
+    download.download_url.return_value = (fake_bytes, "image/png")
+    prov = RailwayImageProvider(download_client=download)
+    out = prov.generate_from_text(
+        prompt="test",
+        asset_type="scene",
+        project_id=2,
+        asset_id=3,
+    )
+    assert out.data == fake_bytes
+    assert out.meta.get("image_source") == "url_fallback"
+    download.download_url.assert_called_once_with("https://cdn.example/img.png")

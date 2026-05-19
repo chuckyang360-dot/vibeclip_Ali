@@ -58,13 +58,12 @@ class RailwayImageProvider:
     ) -> GeneratedImage:
         model = effective_xai_image_model()
         meta_in = metadata or {}
-        fmt = (settings.SHORT_DRAMA_IMAGE_RETURN_FORMAT or "url").strip().lower()
         proxy_base = effective_railway_image_proxy_base_url()
         timeout_sec = effective_railway_image_proxy_timeout_seconds()
 
         logger.info(
             "[IMAGE_RENDER_STARTED] provider=%s model=%s project_id=%s target_type=%s target_id=%s "
-            "image_proxy_base_url=%s timeout_seconds=%s direct=false",
+            "image_proxy_base_url=%s timeout_seconds=%s response_format=b64_json direct=false",
             _PROVIDER_ID,
             model,
             project_id,
@@ -73,6 +72,7 @@ class RailwayImageProvider:
             proxy_base,
             timeout_sec,
         )
+        image_source = "b64_json"
         try:
             url, _b64, raw_opt = railway_create_image_from_text(
                 project_id=project_id,
@@ -80,7 +80,7 @@ class RailwayImageProvider:
                 target_id=asset_id,
                 prompt=prompt,
                 model=model,
-                response_format=fmt,
+                response_format="b64_json",
                 aspect_ratio=(settings.SHORT_DRAMA_IMAGE_ASPECT_RATIO or "").strip() or None,
                 resolution=(settings.SHORT_DRAMA_IMAGE_RESOLUTION or "").strip() or None,
             )
@@ -88,6 +88,16 @@ class RailwayImageProvider:
                 raw = raw_opt
                 mime = "image/png"
             elif url:
+                image_source = "url_fallback"
+                logger.warning(
+                    "[RAILWAY_PROXY_IMAGE_URL_FALLBACK_DOWNLOAD] provider=%s project_id=%s target_type=%s "
+                    "target_id=%s image_url=%s",
+                    _PROVIDER_ID,
+                    project_id,
+                    asset_type,
+                    asset_id,
+                    url[:240],
+                )
                 raw, mime = self._download_client.download_url(url)
             else:
                 raise ShortDramaImageProviderError(
@@ -124,16 +134,19 @@ class RailwayImageProvider:
             "prompt_hash": prompt_hash,
             "generation_seed": meta_in.get("generation_seed"),
             "style_tags": meta_in.get("style_tags") or ["commercial_short_drama", "clean_composition"],
-            "response_format": fmt,
+            "response_format": "b64_json",
             "via_railway_proxy": True,
+            "image_source": image_source,
         }
         logger.info(
-            "[IMAGE_RENDER_SUCCESS] provider=%s model=%s project_id=%s target_type=%s target_id=%s direct=false",
+            "[IMAGE_RENDER_SUCCESS] provider=%s model=%s project_id=%s target_type=%s target_id=%s "
+            "direct=false source=%s",
             _PROVIDER_ID,
             model,
             project_id,
             asset_type,
             asset_id,
+            image_source,
         )
         return GeneratedImage(
             data=raw,

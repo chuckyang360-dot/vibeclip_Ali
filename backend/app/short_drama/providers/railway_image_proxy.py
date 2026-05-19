@@ -91,7 +91,8 @@ def railway_create_image_from_text(
             category="auth",
         )
 
-    fmt = (response_format or "url").strip().lower()
+    # Railway path always prefers b64_json so ECS/阿里云 never downloads xAI CDN URLs directly.
+    fmt = (response_format or "b64_json").strip().lower()
     logger.info(
         "[RAILWAY_PROXY_IMAGE_REQUEST] provider=railway_proxy image_proxy_base_url=%s project_id=%s "
         "target_type=%s target_id=%s model=%s timeout_seconds=%s response_format=%s direct=false",
