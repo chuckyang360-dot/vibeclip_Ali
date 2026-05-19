@@ -267,3 +267,143 @@ def build_xai_ready_reference_image(project_id: int, source_public_url: str) -> 
         raise ShortDramaVideoProviderError(f"xAI reference prep: failed to process image {normalized!r}: {e}") from e
 
     return public_rel
+
+
+_REF_PROBE_CONNECT = 10.0
+_REF_PROBE_READ = 30.0
+_REF_PROBE_WRITE = 30.0
+_REF_PROBE_POOL = 5.0
+
+
+def probe_reference_image_url(url: str) -> tuple[bool, int, str]:
+    """
+    GET url; return (accessible, status_code, content_type).
+    accessible is True only for HTTP 200 with content-type image/*.
+    """
+    u = (url or "").strip()
+    if not u:
+        return False, 0, ""
+    timeout = httpx.Timeout(
+        connect=_REF_PROBE_CONNECT,
+        read=_REF_PROBE_READ,
+        write=_REF_PROBE_WRITE,
+        pool=_REF_PROBE_POOL,
+    )
+    try:
+        with httpx.Client(
+            timeout=timeout,
+            http2=False,
+            verify=True,
+            follow_redirects=True,
+        ) as client:
+            with client.stream("GET", u) as resp:
+                status = int(resp.status_code)
+                ct = (resp.headers.get("content-type") or "").split(";")[0].strip().lower()
+                for _ in resp.iter_bytes(chunk_size=65536):
+                    break
+    except Exception:
+        return False, 0, ""
+    ok = status == 200 and ct.startswith("image/")
+    return ok, status, ct
+
+
+def resolve_xai_reference_public_url(
+    *,
+    project_id: int,
+    segment_id: int | str,
+    source_url: str,
+    xai_ready_relative_path: str,
+) -> str:
+    """
+    Upload xAI-ready JPEG to R2 when configured, then pick the first publicly reachable URL:
+    R2 public URL (if upload succeeded and GET probe passes), else static mount URL.
+    """
+    from ...utils.r2_storage import upload_file
+    from .public_static_url import build_public_static_url
+
+    static_url = build_public_static_url(xai_ready_relative_path)
+    xai_local = local_path_from_xai_ready_public_url(xai_ready_relative_path)
+    uploaded_key: str | None = None
+    uploaded_public_url: str | None = None
+
+    if xai_local.is_file():
+        uploaded_key = f"short-drama/{project_id}/{xai_local.name}"
+        logger.info(
+            "[R2_UPLOAD_START] project_id=%s segment_id=%s file_path=%s key=%s",
+            project_id,
+            segment_id,
+            str(xai_local.resolve()),
+            uploaded_key,
+        )
+        try:
+            uploaded_public_url = upload_file(str(xai_local.resolve()), uploaded_key)
+            logger.info(
+                "[R2_UPLOAD_SUCCESS] project_id=%s segment_id=%s key=%s url=%s",
+                project_id,
+                segment_id,
+                uploaded_key,
+                uploaded_public_url,
+            )
+        except Exception as e:
+            logger.warning(
+                "[R2_UPLOAD_FAIL] project_id=%s segment_id=%s file_path=%s key=%s exception_class=%s err=%s",
+                project_id,
+                segment_id,
+                str(xai_local.resolve()),
+                uploaded_key,
+                type(e).__name__,
+                str(e),
+            )
+
+    candidates: list[str] = []
+    if uploaded_public_url:
+        candidates.append(uploaded_public_url)
+    if static_url not in candidates:
+        candidates.append(static_url)
+
+    final_reference_url: str | None = None
+    reference_check_status_code = 0
+    reference_check_content_type = ""
+
+    for cand in candidates:
+        ok, status, ct = probe_reference_image_url(cand)
+        logger.info(
+            "[XAI_REFERENCE_URL_CANDIDATE] project_id=%s segment_id=%s source_url=%s "
+            "uploaded_key=%s uploaded_public_url=%s candidate_url=%s "
+            "reference_check_status_code=%s reference_check_content_type=%s accessible=%s",
+            project_id,
+            segment_id,
+            source_url,
+            uploaded_key,
+            uploaded_public_url,
+            cand,
+            status,
+            ct,
+            ok,
+        )
+        if ok:
+            final_reference_url = cand
+            reference_check_status_code = status
+            reference_check_content_type = ct
+            break
+
+    if not final_reference_url:
+        raise ShortDramaVideoProviderError(
+            f"xAI reference image has no publicly reachable URL "
+            f"(project_id={project_id}, segment_id={segment_id}, source_url={source_url!r})"
+        )
+
+    logger.info(
+        "[XAI_REFERENCE_URL_RESOLVED] project_id=%s segment_id=%s source_url=%s "
+        "uploaded_key=%s uploaded_public_url=%s final_reference_url=%s "
+        "reference_check_status_code=%s reference_check_content_type=%s",
+        project_id,
+        segment_id,
+        source_url,
+        uploaded_key,
+        uploaded_public_url,
+        final_reference_url,
+        reference_check_status_code,
+        reference_check_content_type,
+    )
+    return final_reference_url

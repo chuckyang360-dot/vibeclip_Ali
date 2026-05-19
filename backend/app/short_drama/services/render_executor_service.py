@@ -37,6 +37,7 @@ from ..utils.video_storage import (
 from ..utils.xai_reference_image import (
     build_xai_ready_reference_image,
     local_path_from_xai_ready_public_url,
+    resolve_xai_reference_public_url,
 )
 from .read_models import all_segment_scripts_have_video, list_asset_rows, list_segment_scripts
 from .workflow_orchestrator import orchestrator
@@ -445,41 +446,15 @@ class RenderExecutorService:
                         str(e),
                     )
                     raise
-                final_u = absolutize_media_url_for_provider(pub_rel)
+                final_u = resolve_xai_reference_public_url(
+                    project_id=project_id,
+                    segment_id=segment_id,
+                    source_url=src_abs,
+                    xai_ready_relative_path=pub_rel,
+                )
                 xai_local = local_path_from_xai_ready_public_url(pub_rel)
                 xai_ok = xai_local.is_file()
                 xai_sz = xai_local.stat().st_size if xai_ok else 0
-                filename = xai_local.name
-                r2_key = f"short-drama/{project_id}/{filename}"
-                logger.info(
-                    "[R2_UPLOAD_START] project_id=%s segment_id=%s file_path=%s key=%s",
-                    project_id,
-                    segment_id,
-                    str(xai_local.resolve()),
-                    r2_key,
-                )
-                try:
-                    r2_url = upload_file(str(xai_local.resolve()), r2_key)
-                    logger.info(
-                        "[R2_UPLOAD_SUCCESS] project_id=%s segment_id=%s file_path=%s key=%s url=%s",
-                        project_id,
-                        segment_id,
-                        str(xai_local.resolve()),
-                        r2_key,
-                        r2_url,
-                    )
-                    final_u = r2_url
-                except Exception as e:
-                    logger.error(
-                        "[R2_UPLOAD_FAIL] project_id=%s segment_id=%s file_path=%s key=%s exception_class=%s err=%s",
-                        project_id,
-                        segment_id,
-                        str(xai_local.resolve()),
-                        r2_key,
-                        type(e).__name__,
-                        str(e),
-                    )
-                    raise
                 ref_for_api.append(final_u)
                 logger.info(
                     "[XAI_REFERENCE_IMAGE_PREPARE_DONE] project_id=%s segment_id=%s source_url=%s "
