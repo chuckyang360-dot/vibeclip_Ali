@@ -6,6 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException, Response, status
 from sqlalchemy.orm import Session
 
 from ...database import get_db
+from ..utils.credit_guards import charge_hd_export, require_hd_export_credits
 from ..exceptions import ShortDramaVideoSaveError
 from ..models import ShortDramaProject
 from ..services.overview_export_zip import build_all_zip_bytes, build_videos_zip_bytes
@@ -86,8 +87,13 @@ async def export_all_zip(project_id: int, db: Session = Depends(get_db)):
     sb = latest_story_blueprint(db, project_id)
     blueprint_json = sb.blueprint_json if sb and isinstance(sb.blueprint_json, dict) else None
 
+    require_hd_export_credits(db, project_id)
+    export_key = f"all_{project_id}"
+
     try:
         data, filename = build_all_zip_bytes(db, project_id, blueprint_json)
+        charge_hd_export(db, project_id, export_key=export_key)
+        db.commit()
     except ValueError as e:
         if str(e) == "incomplete_videos_all":
             logger.info(

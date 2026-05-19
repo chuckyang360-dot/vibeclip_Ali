@@ -66,6 +66,10 @@ async def authenticate_or_create_user(user_info: dict, db: Session) -> User:
             )
             user.set_password(secrets.token_urlsafe(32))
             db.add(user)
+            db.flush()
+            from ..services.credit_service import grant_free_starter_credits_if_needed
+
+            grant_free_starter_credits_if_needed(db, user.id)
 
         db.commit()
         db.refresh(user)

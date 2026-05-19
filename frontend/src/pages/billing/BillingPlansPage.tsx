@@ -35,10 +35,13 @@ const CREDIT_USAGE = [
   { label: '图片理解', cost: '5 积分 / 张' },
   { label: '脚本生成与解析', cost: '30 积分 / 次' },
   { label: '图片资产生成', cost: '10-15 积分 / 张' },
-  { label: '视频片段生成', cost: '120 积分 / 条' },
+  { label: '视频片段生成', cost: '120 积分 / 每个分镜片段' },
   { label: '高清导出', cost: '20 积分 / 次' },
   { label: '普通视频合成', cost: '暂不扣积分' },
 ];
+
+const CREDIT_USAGE_FOOTNOTE =
+  '完整视频由多个分镜片段合成，普通合成本身暂不扣积分。';
 
 export function BillingPlansPage() {
   const navigate = useNavigate();
@@ -207,6 +210,7 @@ export function BillingPlansPage() {
                     </div>
                   ))}
                 </div>
+                <p className="mt-3 text-[12px] leading-relaxed text-[#8E8E93]">{CREDIT_USAGE_FOOTNOTE}</p>
               </div>
               <div className="space-y-5">
                 <div className="rounded-2xl border border-[#EAEAEA] bg-white p-6">

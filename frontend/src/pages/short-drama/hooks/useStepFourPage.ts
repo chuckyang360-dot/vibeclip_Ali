@@ -21,6 +21,7 @@ import { touchProjectNameFromPipeline } from '../utils/shortDramaStorage';
 import { workflowNavProjectName } from '../utils/workflowProjectName';
 import { getCachedShortDramaPipeline, setCachedShortDramaPipeline } from '../utils/shortDramaPipelineCache';
 import { useEffectiveShortDramaProjectId } from './useEffectiveShortDramaProjectId';
+import { handleApiInsufficientCredits } from '@/utils/insufficientCredits';
 
 export type Step4MergeButtonType = 'merge_only' | 'merge_and_view';
 
@@ -451,6 +452,10 @@ export function useStepFourPage() {
               }
             } catch (e) {
               if (cancelled) return;
+              if (e instanceof ShortDramaApiError && e.isInsufficientCredits) {
+                handleApiInsufficientCredits(e.status, e.detail, navigate);
+                return;
+              }
               const busy = isBusyGenerationError(e);
               setSegmentScriptsBusyError(busy);
               setSegmentScriptsError(busy ? '当前服务繁忙，请稍后重试。' : '生成失败，请稍后重试。');
@@ -501,7 +506,7 @@ export function useStepFourPage() {
     return () => {
       cancelled = true;
     };
-  }, [projectId, isBusyGenerationError]);
+  }, [projectId, isBusyGenerationError, navigate]);
 
   const handleRetryGenerateSegments = useCallback(async () => {
     if (projectId == null) return;
@@ -519,6 +524,10 @@ export function useStepFourPage() {
         setSegmentScriptsErrorRaw('segment scripts missing after retry generation');
       }
     } catch (e) {
+      if (e instanceof ShortDramaApiError && e.isInsufficientCredits) {
+        handleApiInsufficientCredits(e.status, e.detail, navigate);
+        return;
+      }
       const busy = isBusyGenerationError(e);
       setSegmentScriptsBusyError(busy);
       setSegmentScriptsError(busy ? '当前服务繁忙，请稍后重试。' : '生成失败，请稍后重试。');
@@ -529,7 +538,7 @@ export function useStepFourPage() {
     } finally {
       setPhase('ready');
     }
-  }, [projectId, isBusyGenerationError, refreshPipeline]);
+  }, [projectId, isBusyGenerationError, navigate, refreshPipeline]);
 
   useEffect(() => {
     if (!pipeline || projectId == null) return;
@@ -715,12 +724,17 @@ export function useStepFourPage() {
       await refreshPipeline();
       console.info('[FRONT_STEP_STATUS_UPDATED]', { project_id: projectId, step: 'step_4', action: 'generate_all_videos' });
     } catch (e) {
+      if (e instanceof ShortDramaApiError && e.isInsufficientCredits) {
+        handleApiInsufficientCredits(e.status, e.detail, navigate);
+        setGenerateError(e.message);
+        return;
+      }
       const msg = e instanceof ShortDramaApiError ? e.message : SHORT_DRAMA_UI.error.videoBatch;
       setGenerateError(msg);
     } finally {
       setBatchGenerating(false);
     }
-  }, [projectId, refreshPipeline, hasBackendSegmentScripts, canGenerateVideos]);
+  }, [projectId, refreshPipeline, hasBackendSegmentScripts, canGenerateVideos, navigate]);
 
   const runSingleGenerate = useCallback(
     async (segId: number) => {
@@ -753,11 +767,16 @@ export function useStepFourPage() {
         await refreshPipeline();
         console.info('[FRONT_STEP_STATUS_UPDATED]', { project_id: projectId, step: 'step_4', action: 'generate_single_video' });
       } catch (e) {
+        if (e instanceof ShortDramaApiError && e.isInsufficientCredits) {
+          handleApiInsufficientCredits(e.status, e.detail, navigate);
+          setGenerateError(e.message);
+          return;
+        }
         const msg = e instanceof ShortDramaApiError ? e.message : SHORT_DRAMA_UI.error.videoSingle;
         setGenerateError(msg);
       }
     },
-    [projectId, refreshPipeline, segments, canGenerateVideos, startSegmentJobPolling, videoStatusBlockedHint],
+    [projectId, refreshPipeline, segments, canGenerateVideos, startSegmentJobPolling, videoStatusBlockedHint, navigate],
   );
 
   const handleGenerateVideo = useCallback(

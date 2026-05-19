@@ -1,12 +1,15 @@
 import { useCallback, useEffect, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import type { PipelineSummaryDto } from '@/types/shortDramaApi';
 import { generateShortDramaStory, getShortDramaPipeline, ShortDramaApiError } from '@/services/shortDramaApi';
 import { SHORT_DRAMA_UI } from '../utils/shortDramaUiCopy';
 import { STORY_PIPELINE_LOCKED_STATUSES } from '../utils/storyBlueprintDerived';
 import { touchProjectNameFromPipeline } from '../utils/shortDramaStorage';
 import { getCachedShortDramaPipeline, setCachedShortDramaPipeline } from '../utils/shortDramaPipelineCache';
+import { handleApiInsufficientCredits } from '@/utils/insufficientCredits';
 
 export function useStoryBlueprint(projectId: number | null) {
+  const navigate = useNavigate();
   const [pipeline, setPipeline] = useState<PipelineSummaryDto | null>(null);
   const [pipelineLoading, setPipelineLoading] = useState(false);
   const [pipelineError, setPipelineError] = useState<string | null>(null);
@@ -66,13 +69,18 @@ export function useStoryBlueprint(projectId: number | null) {
       console.info('[FRONT_STEP_STATUS_UPDATED]', { project_id: projectId, step: 'step_2', action: 'save_generate_story' });
       await loadPipeline();
     } catch (e) {
+      if (e instanceof ShortDramaApiError && e.isInsufficientCredits) {
+        handleApiInsufficientCredits(e.status, e.detail, navigate);
+        setGenerateError(e.message);
+        return;
+      }
       const msg =
         e instanceof ShortDramaApiError ? e.message : e instanceof Error ? e.message : SHORT_DRAMA_UI.error.storyGenerate;
       setGenerateError(msg);
     } finally {
       setGenerateLoading(false);
     }
-  }, [projectId, pipeline, loadPipeline]);
+  }, [projectId, pipeline, loadPipeline, navigate]);
 
   useEffect(() => {
     if (projectId == null) return;

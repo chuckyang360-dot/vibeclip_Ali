@@ -1,4 +1,5 @@
 import { useCallback } from 'react';
+import { useNavigate } from 'react-router-dom';
 import type { ProductInputDraft, ProductPreviewSummary } from '@/types/shortDrama';
 import type { ProductImageUnderstandingDto } from '@/types/shortDramaApi';
 import { parseShortDramaProduct, ShortDramaApiError } from '@/services/shortDramaApi';
@@ -10,8 +11,10 @@ import {
   PRODUCT_PARSE_GENERIC_MESSAGE,
   PRODUCT_PARSE_SERVICE_UNAVAILABLE_MESSAGE,
 } from '../utils/productParseErrors';
+import { handleApiInsufficientCredits } from '@/utils/insufficientCredits';
 
 export function useProductParse() {
+  const navigate = useNavigate();
   const parse = useCallback(async (
     projectId: number,
     draft: ProductInputDraft,
@@ -50,6 +53,10 @@ export function useProductParse() {
       try {
         return await parse(projectId, draft, mode);
       } catch (e) {
+        if (e instanceof ShortDramaApiError && e.isInsufficientCredits) {
+          handleApiInsufficientCredits(e.status, e.detail, navigate);
+          throw e;
+        }
         const rawMsg = e instanceof ShortDramaApiError
           ? (e.message?.trim()
             || (e.status === 500 ? PRODUCT_PARSE_SERVICE_UNAVAILABLE_MESSAGE : PRODUCT_PARSE_GENERIC_MESSAGE))
@@ -88,7 +95,7 @@ export function useProductParse() {
         };
       }
     },
-    [parse],
+    [parse, navigate],
   );
 
   return { parse, parseSafe };

@@ -34,6 +34,7 @@ from ..services.project_task_guard import (
     recover_stale_processing_status_if_possible,
 )
 from ..utils.enums import WorkflowStep
+from ..utils.credit_guards import charge_s1_product_parse_credits, require_s1_product_parse_credits
 from ..utils.flow_logging import log_api_error, log_api_request, log_api_success
 from ..utils.language import build_language_policy, language_prompt_rules, resolve_project_language_policy
 
@@ -156,6 +157,7 @@ async def parse_product(body: ParseProductRequest, db: Session = Depends(get_db)
         orchestrator.assert_step_allowed(db, project, WorkflowStep.PARSE_PRODUCT)
         acquire_project_task_lock(db, project, stage="s1_product")
         lock_acquired = True
+        require_s1_product_parse_credits(db, body)
         existing_context = latest_product_context(db, body.project_id)
         had_existing_context = existing_context is not None
 
@@ -252,6 +254,7 @@ async def parse_product(body: ParseProductRequest, db: Session = Depends(get_db)
                 artifacts.product_context,
             )
             version = next_product_context_version(write_db, body.project_id)
+            charge_s1_product_parse_credits(write_db, body, version=version)
             record = ProductContextRecord(
                 project_id=body.project_id,
                 raw_inputs_json=artifacts.raw_input.model_dump(),

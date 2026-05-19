@@ -5,6 +5,7 @@ import type { BillingMeResponse, CreditRecordDto, PaymentOrderListItemDto } from
 import { SUBSCRIPTION_PLANS } from '../../constants/billing';
 import { getToken } from '../../services/api';
 import {
+  creditTransactionTypeLabel,
   parseSubscriptionGrantNote,
   subscriptionGrantTitle,
   type SubscriptionGrantParts,
@@ -50,10 +51,7 @@ function providerTxnDisplay(o: PaymentOrderListItemDto): string {
 }
 
 function creditTxnLabel(t: CreditRecordDto): string {
-  if (t.transaction_type === 'subscription_grant') return '订阅积分发放';
-  if (t.transaction_type === 'admin_grant') return '管理员发放';
-  if (t.transaction_type === 'admin_deduct') return '管理员扣减';
-  return t.transaction_type;
+  return creditTransactionTypeLabel(t.transaction_type);
 }
 
 function resolveSubscriptionGrantParts(row: CreditRecordDto): SubscriptionGrantParts | null {

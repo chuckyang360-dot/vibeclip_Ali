@@ -978,8 +978,12 @@ async def list_operation_logs(
 async def admin_settings(_: User = Depends(require_admin_user)):
     return {
         "credit_rules": {
-            "asset_generation_cost": 10,
-            "video_generation_cost": 100,
+            "text_understanding_cost": 3,
+            "image_understanding_cost": 5,
+            "script_generation_cost": 30,
+            "asset_generation_cost": 15,
+            "video_generation_cost": 120,
+            "hd_export_cost": 20,
             "full_video_compose_cost": 0,
             "refund_policy": "Refund on provider/system failure",
             "manual_adjustment_requires_reason": True,

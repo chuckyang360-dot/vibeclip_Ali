@@ -1,6 +1,7 @@
 import logging
 import json
 import re
+import time
 from datetime import datetime, timezone
 from typing import Any
 
@@ -36,6 +37,10 @@ from ..services.segment_director_service import (
 from ..services.video_v2_materialize_service import (
     materialize_segment_scripts_from_v2_video_generation_specs,
     v2_video_spec_expects_product_reference,
+)
+from ..utils.credit_guards import (
+    charge_segment_script_generation,
+    require_segment_script_generation_credits,
 )
 from ..services.project_state_service import STEP_4, mark_step_completed, update_last_active_step
 from ..services.workflow_orchestrator import orchestrator
@@ -315,6 +320,7 @@ def _validate_step4_visual_anchor(assets: AssetSpecsBundleSchema) -> None:
 async def generate_segments(body: GenerateSegmentsRequest, db: Session = Depends(get_db)):
     log_api_request(logger, "POST /segment/generate", project_id=body.project_id)
     lock_acquired = False
+    segment_director_attempt_key: str | None = None
     try:
         project = orchestrator.get_project(db, body.project_id)
         recover_stale_processing_status_if_possible(db, project)
@@ -533,6 +539,12 @@ async def generate_segments(body: GenerateSegmentsRequest, db: Session = Depends
                         body.project_id,
                         fb_reason,
                     )
+                    segment_director_attempt_key = f"director_{int(time.time() * 1000)}"
+                    credit_db = SessionLocal()
+                    try:
+                        require_segment_script_generation_credits(credit_db, body.project_id)
+                    finally:
+                        credit_db.close()
                     try:
                         segments = segment_director_service.generate(body.project_id, blueprint, assets, project_config)
                         source = "segment_director_provider"
@@ -731,6 +743,20 @@ async def generate_segments(body: GenerateSegmentsRequest, db: Session = Depends
         update_last_active_step(project, STEP_4)
         orchestrator.advance_on_success(db, project, WorkflowStep.GENERATE_SEGMENTS)
         db.commit()
+        if segment_director_attempt_key:
+            try:
+                charge_segment_script_generation(
+                    db,
+                    body.project_id,
+                    attempt_key=segment_director_attempt_key,
+                )
+                db.commit()
+            except Exception:
+                logger.exception(
+                    "[CREDIT_CHARGE_SEGMENT_GENERATE_FAILED] project_id=%s attempt_key=%s",
+                    body.project_id,
+                    segment_director_attempt_key,
+                )
         final_status = project.status
         post_db = SessionLocal()
         try:

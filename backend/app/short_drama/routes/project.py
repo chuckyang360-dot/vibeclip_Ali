@@ -475,8 +475,17 @@ async def save_product_input(project_id: int, body: ProductInput, db: Session = 
 
 @router.post("/{project_id}/creative-brief/generate", response_model=CreativeBriefGenerateResponse)
 async def generate_creative_brief(project_id: int, db: Session = Depends(get_db)):
+    import time
+
+    from ..utils.credit_guards import charge_text_understanding, require_text_understanding_credits
+
+    attempt_key = f"brief_{int(time.time() * 1000)}"
     try:
-        return creative_brief_service.generate_for_project(db, project_id)
+        require_text_understanding_credits(db, project_id)
+        result = creative_brief_service.generate_for_project(db, project_id)
+        charge_text_understanding(db, project_id, attempt_key=attempt_key)
+        db.commit()
+        return result
     except HTTPException as e:
         project = db.query(ShortDramaProject).filter(ShortDramaProject.id == project_id).first()
         if project:

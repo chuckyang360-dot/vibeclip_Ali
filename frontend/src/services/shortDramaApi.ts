@@ -55,6 +55,11 @@ export class ShortDramaApiError extends Error {
     this.detail = detail;
     this.response = response;
   }
+
+  get isInsufficientCredits(): boolean {
+    if (this.status !== 402 || !this.detail || typeof this.detail !== 'object') return false;
+    return (this.detail as { code?: string }).code === 'INSUFFICIENT_CREDITS';
+  }
 }
 
 function joinUrl(path: string): string {
@@ -64,6 +69,10 @@ function joinUrl(path: string): string {
 }
 
 function formatShortDramaDetailObject(d: Record<string, unknown>): string {
+  if (d.code === 'INSUFFICIENT_CREDITS') {
+    const msg = typeof d.message === 'string' ? d.message : '您的积分不足，请充值';
+    return msg;
+  }
   const userMsg = typeof d.user_message === 'string' ? d.user_message : '';
   if (userMsg.trim()) return userMsg.trim();
   const msg = typeof d.message === 'string' ? d.message : '';

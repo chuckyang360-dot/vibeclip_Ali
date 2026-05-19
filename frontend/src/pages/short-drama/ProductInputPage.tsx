@@ -14,6 +14,7 @@ import { ri, sdColors, sdFontHeading } from './utils/shortDramaHelpers';
 import { withProjectQuery } from './utils/shortDramaRoutes';
 import { touchProjectNameFromPipeline } from './utils/shortDramaStorage';
 import { workflowNavProjectName } from './utils/workflowProjectName';
+import { handleApiInsufficientCredits } from '@/utils/insufficientCredits';
 
 type BriefStatus = 'idle' | 'loading' | 'ready' | 'error';
 
@@ -258,6 +259,10 @@ export function ShortDramaProductInputPage() {
       setBriefStatus('ready');
     } catch (e) {
       setBriefStatus('error');
+      if (e instanceof ShortDramaApiError && e.isInsufficientCredits) {
+        handleApiInsufficientCredits(e.status, e.detail, navigate);
+        return;
+      }
       setError(e instanceof ShortDramaApiError ? e.message : e instanceof Error ? e.message : 'AI 创作理解生成失败');
     }
   };

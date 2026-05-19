@@ -32,3 +32,21 @@ export function billingPeriodToZh(period: string): string {
 export function subscriptionGrantTitle(plan: string, period: string): string {
   return `${planCodeToZh(plan)}${billingPeriodToZh(period)}积分发放`;
 }
+
+const CONSUME_TYPE_ZH: Record<string, string> = {
+  free_monthly_grant: '免费版每月积分',
+  text_understanding_consume: '文本/链接理解',
+  image_understanding_consume: '图片理解',
+  script_generation_consume: '脚本生成与解析',
+  image_asset_generation_consume: '图片资产生成',
+  segment_video_generation_consume: '视频片段生成',
+  hd_export_consume: '高清导出',
+  refund: '积分退回',
+  subscription_grant: '订阅积分发放',
+  admin_grant: '管理员发放',
+  admin_deduct: '管理员扣减',
+};
+
+export function creditTransactionTypeLabel(transactionType: string): string {
+  return CONSUME_TYPE_ZH[transactionType] || transactionType;
+}

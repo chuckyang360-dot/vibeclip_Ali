@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { SDWorkflowNav } from './components/SDWorkflowNav';
 import { useEffectiveShortDramaProjectId } from './hooks/useEffectiveShortDramaProjectId';
 import {
@@ -13,6 +14,7 @@ import {
   updateShortDramaAssetLibrary,
 } from '@/services/shortDramaApi';
 import type { AssetLibraryItemDto } from '@/types/shortDramaApi';
+import { tryHandleInsufficientCreditsFromApiError } from '@/utils/insufficientCredits';
 
 type Tab = 'character' | 'scene' | 'product';
 
@@ -32,6 +34,7 @@ function toDataUrl(file: File): Promise<string> {
 }
 
 export function ShortDramaAssetsLibraryPage() {
+  const navigate = useNavigate();
   const { effectiveProjectId, projectName } = useEffectiveShortDramaProjectId();
   const [activeTab, setActiveTab] = useState<Tab>('character');
   const [listMap, setListMap] = useState<Record<Tab, AssetLibraryItemDto[]>>({ character: [], scene: [], product: [] });
@@ -144,10 +147,11 @@ export function ShortDramaAssetsLibraryPage() {
       await reload();
       await openDetail(detail.id);
     } catch (e) {
+      if (tryHandleInsufficientCreditsFromApiError(e, navigate)) return;
       const msg = e instanceof ShortDramaApiError ? e.message : e instanceof Error ? e.message : '补图失败';
       window.alert(msg);
     }
-  }, [detail, effectiveProjectId, openDetail, regenCount, regenVariant, reload]);
+  }, [detail, effectiveProjectId, navigate, openDetail, regenCount, regenVariant, reload]);
 
   return (
     <div className="min-h-screen bg-white">

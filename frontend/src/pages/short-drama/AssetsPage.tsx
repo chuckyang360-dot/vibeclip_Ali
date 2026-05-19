@@ -10,6 +10,7 @@ import { getAssetThumbnailUrl, normalizeAssetDisplayName, resolveAssetImageUrl }
 import { withProjectQuery } from './utils/shortDramaRoutes';
 import { buildRawStructureSnapshot, buildStructureSummary, resolveAssetRoleLabel, resolveAssetSourceLabel, resolveNarrativeFunctionLabel, resolveTypeFields, resolveVisualAnchorImageId } from './utils/assetSpecDisplay';
 import { getCachedShortDramaPipeline, setCachedShortDramaPipeline } from './utils/shortDramaPipelineCache';
+import { tryHandleInsufficientCreditsFromApiError } from '@/utils/insufficientCredits';
 
 type TabType = 'characters' | 'scenes' | 'assets';
 type Step3AutoPhase = 'idle' | 'checking' | 'generating_specs' | 'generating_images' | 'ready' | 'error';
@@ -933,6 +934,7 @@ export function ShortDramaAssetsPage() {
             setAutoPhase('ready');
             setAutoHint(null);
           } catch (e) {
+            if (tryHandleInsufficientCreditsFromApiError(e, navigate)) return;
             console.error('[S3_AUTO_ASSET_GENERATION_FAILED]', { project_id: projectId, error: e });
             setAutoPhase('error');
             setAutoHint('资产图片生成失败，请稍后重试');
@@ -960,6 +962,7 @@ export function ShortDramaAssetsPage() {
             setAutoPhase('ready');
             setAutoHint(null);
           } catch (e) {
+            if (tryHandleInsufficientCreditsFromApiError(e, navigate)) return;
             console.error('[S3_AUTO_MISSING_IMAGES_FAILED]', { project_id: projectId, error: e });
             setAutoPhase('error');
             setAutoHint('资产图片生成失败，请稍后重试');
@@ -1010,6 +1013,7 @@ export function ShortDramaAssetsPage() {
         }
         setAutoHint(null);
       } catch (e) {
+        if (tryHandleInsufficientCreditsFromApiError(e, navigate)) return;
         console.error('[S3_AUTO_FLOW_FAILED]', {
           project_id: projectId,
           error: e,
@@ -1026,7 +1030,7 @@ export function ShortDramaAssetsPage() {
       }
     };
     void run();
-  }, [effectiveProjectId, reload, applyPipelineSnapshot]);
+  }, [effectiveProjectId, reload, applyPipelineSnapshot, navigate]);
 
   const openDetail = useCallback(async (rawAssetId: unknown, cardRow?: AssetLibraryItemDto) => {
     const projectId = toPositiveInt(effectiveProjectId);
@@ -1164,7 +1168,8 @@ export function ShortDramaAssetsPage() {
       setIsDirty(true);
       await reload({ background: true });
       if (detail?.id === assetId) await openDetail(assetId);
-    } catch {
+    } catch (e) {
+      if (tryHandleInsufficientCreditsFromApiError(e, navigate)) return;
       window.alert('参考图分析失败，请重试。');
     } finally {
       setAnalyzingAssetIds((prev) => {
@@ -1173,7 +1178,7 @@ export function ShortDramaAssetsPage() {
         return next;
       });
     }
-  }, [detail?.id, effectiveProjectId, openDetail, reload]);
+  }, [detail?.id, effectiveProjectId, navigate, openDetail, reload]);
 
   const createLabel = activeTab === 'characters' ? '添加角色' : activeTab === 'scenes' ? '添加场景' : '添加产品';
   const currentRows = data[activeTab];
@@ -1425,13 +1430,14 @@ export function ShortDramaAssetsPage() {
         setAutoHint(null);
       }
     } catch (e) {
+      if (tryHandleInsufficientCreditsFromApiError(e, navigate)) return;
       const msg = toReadableErrorMessage(e, '资产生成失败，请稍后重试。');
       setAutoPhase('error');
       setAutoHint(msg);
       setError(msg);
       await reload({ background: true, reason: 'manual_generate_error' });
     }
-  }, [effectiveProjectId, workInProgress, applyPipelineSnapshot, reload]);
+  }, [effectiveProjectId, workInProgress, applyPipelineSnapshot, navigate, reload]);
 
   const handleGenerateAssetImage = useCallback(async (row: AssetLibraryItemDto) => {
     const projectId = toPositiveInt(effectiveProjectId);
@@ -1460,6 +1466,7 @@ export function ShortDramaAssetsPage() {
       await reload({ background: true, reason: 'single_asset_image_generated' });
       if (detail?.id === row.id) await openDetail(row.id);
     } catch (e) {
+      if (tryHandleInsufficientCreditsFromApiError(e, navigate)) return;
       console.error('[S3_SINGLE_ASSET_IMAGE_FAILED]', { asset_id: row.id, error: e });
       setImageGenerationFailedIds((prev) => new Set(prev).add(row.id));
       setError(toReadableErrorMessage(e, '资产图片生成失败，请稍后重试。'));
@@ -1470,7 +1477,7 @@ export function ShortDramaAssetsPage() {
         return next;
       });
     }
-  }, [detail?.id, effectiveProjectId, generatingImageAssetIds, openDetail, reload]);
+  }, [detail?.id, effectiveProjectId, generatingImageAssetIds, navigate, openDetail, reload]);
 
   const submitAdd = useCallback(async () => {
     if (!effectiveProjectId) return;
@@ -1524,6 +1531,7 @@ export function ShortDramaAssetsPage() {
             setIsDirty(true);
             await reload({ background: true });
           } catch (e) {
+            if (tryHandleInsufficientCreditsFromApiError(e, navigate)) return;
             setError(toReadableErrorMessage(e, '创建失败，请稍后重试。'));
           } finally {
             setAddPending(null);
@@ -1531,9 +1539,10 @@ export function ShortDramaAssetsPage() {
         })();
       }
     } catch (e) {
+      if (tryHandleInsufficientCreditsFromApiError(e, navigate)) return;
       setError(toReadableErrorMessage(e, '创建失败，请稍后重试。'));
     }
-  }, [effectiveProjectId, activeTab, addMode, draft, uploadFiles, createLabel, reload]);
+  }, [effectiveProjectId, activeTab, addMode, draft, uploadFiles, createLabel, navigate, reload]);
 
   return (
     <div className="min-h-screen" style={{ background: '#fff', fontFamily: "'Inter', sans-serif" }}>
@@ -1957,6 +1966,7 @@ export function ShortDramaAssetsPage() {
             await reload({ background: true });
             await openDetail(detail.id);
           } catch (e) {
+            if (tryHandleInsufficientCreditsFromApiError(e, navigate)) return;
             console.error('[S3_REGENERATE_FAILED]', {
               asset_id: detail.id,
               current_image_prompt: String(payload.currentImagePrompt || ''),

@@ -86,6 +86,10 @@ async def register_with_email(request: RegisterRequest, db: Session = Depends(ge
 
     try:
         db.add(new_user)
+        db.flush()
+        from ..services.credit_service import grant_free_starter_credits_if_needed
+
+        grant_free_starter_credits_if_needed(db, new_user.id)
         db.commit()
         db.refresh(new_user)
     except Exception as e:

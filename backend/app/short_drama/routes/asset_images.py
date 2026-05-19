@@ -26,6 +26,12 @@ from ..services.project_task_guard import (
     finalize_s3_images_task,
     recover_stale_processing_status_if_possible,
 )
+from ..utils.credit_guards import (
+    charge_batch_asset_images,
+    charge_image_asset_credit,
+    require_image_asset_credits,
+)
+from ...services.credit_service import count_assets_missing_images
 from ..utils.enums import ProjectStatus, WorkflowStep
 
 logger = logging.getLogger(__name__)
@@ -142,7 +148,20 @@ async def generate_all_asset_images(
         orchestrator.assert_step_allowed(db, proj, WorkflowStep.RENDER_ASSETS)
         acquire_project_task_lock(db, proj, stage="s3_images")
         lock_acquired = True
+        pending_images = count_assets_missing_images(db, pid)
+        require_image_asset_credits(db, pid, pending_images)
+        import time
+
+        batch_key = str(int(time.time() * 1000))
         batch_result = asset_image_service.generate_all_asset_images(db, pid)
+        charge_batch_asset_images(
+            db,
+            pid,
+            batch_key=batch_key,
+            characters_succeeded=batch_result.characters_succeeded,
+            scenes_succeeded=batch_result.scenes_succeeded,
+            products_succeeded=batch_result.products_succeeded,
+        )
         # Legacy image generation updates Character/Scene/ProductAsset.image_url;
         # sync them to unified asset library as Step3 data source.
         asset_library_service.sync_legacy_assets_for_project(db, pid)
@@ -248,7 +267,23 @@ async def generate_character_images_only(
     db: Session = Depends(get_db),
 ):
     try:
+        from ..services.read_models import list_asset_rows
+
+        chars, _, _ = list_asset_rows(db, body.project_id)
+        pending = sum(1 for c in chars if not str(c.image_url or "").strip())
+        require_image_asset_credits(db, body.project_id, pending)
+        import time
+
+        batch_key = str(int(time.time() * 1000))
         result = asset_image_service.generate_character_images(db, body.project_id)
+        charge_batch_asset_images(
+            db,
+            body.project_id,
+            batch_key=batch_key,
+            characters_succeeded=result.characters_succeeded,
+            scenes_succeeded=0,
+            products_succeeded=0,
+        )
         return _to_response(result)
     except (ShortDramaImageProviderError, ShortDramaImageSaveError) as e:
         raise_short_drama_http(e)
@@ -266,7 +301,22 @@ async def generate_scene_images_only(
     db: Session = Depends(get_db),
 ):
     try:
+        from ..services.read_models import list_asset_rows
+        import time
+
+        _, scenes, _ = list_asset_rows(db, body.project_id)
+        pending = sum(1 for s in scenes if not str(s.image_url or "").strip())
+        require_image_asset_credits(db, body.project_id, pending)
+        batch_key = str(int(time.time() * 1000))
         result = asset_image_service.generate_scene_images(db, body.project_id)
+        charge_batch_asset_images(
+            db,
+            body.project_id,
+            batch_key=batch_key,
+            characters_succeeded=0,
+            scenes_succeeded=result.scenes_succeeded,
+            products_succeeded=0,
+        )
         return _to_response(result)
     except (ShortDramaImageProviderError, ShortDramaImageSaveError) as e:
         raise_short_drama_http(e)
@@ -284,7 +334,22 @@ async def generate_product_images_only(
     db: Session = Depends(get_db),
 ):
     try:
+        from ..services.read_models import list_asset_rows
+        import time
+
+        _, _, products = list_asset_rows(db, body.project_id)
+        pending = sum(1 for p in products if not str(p.image_url or "").strip())
+        require_image_asset_credits(db, body.project_id, pending)
+        batch_key = str(int(time.time() * 1000))
         result = asset_image_service.generate_product_images(db, body.project_id)
+        charge_batch_asset_images(
+            db,
+            body.project_id,
+            batch_key=batch_key,
+            characters_succeeded=0,
+            scenes_succeeded=0,
+            products_succeeded=result.products_succeeded,
+        )
         return _to_response(result)
     except (ShortDramaImageProviderError, ShortDramaImageSaveError) as e:
         raise_short_drama_http(e)
@@ -302,11 +367,21 @@ async def regenerate_one_asset_image(
     db: Session = Depends(get_db),
 ):
     try:
+        import time
+
+        require_image_asset_credits(db, body.project_id, 1)
+        attempt_id = str(int(time.time() * 1000))
         image_url = asset_image_service.regenerate_one_asset_image(
             db,
             project_id=body.project_id,
             asset_type=body.asset_type,
             asset_id=body.asset_id,
+        )
+        charge_image_asset_credit(
+            db,
+            project_id=body.project_id,
+            asset_id=body.asset_id,
+            attempt_id=attempt_id,
         )
         project = db.query(ShortDramaProject).filter(ShortDramaProject.id == body.project_id).first()
         if project is None:

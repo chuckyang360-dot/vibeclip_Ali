@@ -34,6 +34,7 @@ from ..services.project_task_guard import (
     recover_stale_processing_status_if_possible,
 )
 from ..utils.enums import WorkflowStep
+from ..utils.credit_guards import charge_script_generation, require_script_generation_credits
 from ..utils.flow_logging import log_api_error, log_api_request, log_api_success
 from ..utils.language import build_language_policy, language_prompt_rules, resolve_project_language_policy
 
@@ -141,6 +142,8 @@ async def generate_story(body: GenerateStoryRequest, db: Session = Depends(get_d
 
         acquire_project_task_lock(db, project, stage="s2_story")
         lock_acquired = True
+        story_attempt_version = next_story_version(db, body.project_id)
+        require_script_generation_credits(db, body.project_id)
         had_existing_story = latest_story_blueprint(db, body.project_id) is not None
 
         product = ProductContextSchema.model_validate(product_context_from_creative_brief(creative_brief))
@@ -268,6 +271,7 @@ async def generate_story(body: GenerateStoryRequest, db: Session = Depends(get_d
         try:
             write_project = orchestrator.get_project(write_db, body.project_id)
             version = next_story_version(write_db, body.project_id)
+            charge_script_generation(write_db, body.project_id, attempt_key=f"v{version}")
             record = StoryBlueprintRecord(
                 project_id=body.project_id,
                 blueprint_json=blueprint.model_dump(),

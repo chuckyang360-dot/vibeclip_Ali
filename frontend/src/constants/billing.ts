@@ -17,7 +17,7 @@ export const SUBSCRIPTION_PLANS: Record<
   basic: {
     key: 'basic',
     name: '基础会员',
-    monthlyPrice: 79,
+    monthlyPrice: 99,
     creditsPerMonth: 1000,
     queueLabel: '普通生成队列',
     hdExport: '标准高清导出',
@@ -27,7 +27,7 @@ export const SUBSCRIPTION_PLANS: Record<
   standard: {
     key: 'standard',
     name: '标准会员',
-    monthlyPrice: 209,
+    monthlyPrice: 259,
     creditsPerMonth: 3000,
     queueLabel: '较高优先生成队列',
     hdExport: '高清导出',
@@ -37,7 +37,7 @@ export const SUBSCRIPTION_PLANS: Record<
   pro: {
     key: 'pro',
     name: '高级会员',
-    monthlyPrice: 529,
+    monthlyPrice: 599,
     creditsPerMonth: 8000,
     queueLabel: '最高优先生成队列',
     hdExport: '高清导出',
@@ -57,9 +57,9 @@ export const CREDIT_PACKS: { id: CreditPackId; price: number; points: number }[]
 
 /** 年付应付金额与 backend/app/routes/billing.py PLAN_PRICE yearly 一致（以后端为准）。 */
 const BACKEND_YEARLY_PAYABLE_BY_MONTHLY: Record<number, number> = {
-  79: 758,
-  209: 2006,
-  529: 5078,
+  99: 950,
+  259: 2486,
+  599: 5750,
 };
 
 export function yearlyTotals(monthlyPrice: number) {

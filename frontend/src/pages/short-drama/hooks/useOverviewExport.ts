@@ -1,4 +1,5 @@
 import { useCallback, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { fetchShortDramaExportZip, ShortDramaApiError } from '@/services/shortDramaApi';
 import type { PipelineSummaryDto } from '@/types/shortDramaApi';
 import {
@@ -7,6 +8,7 @@ import {
   safeProjectExportBaseName,
 } from '../utils/overviewExportMarkdown';
 import { buildMediaFetchUrl, downloadUrlAsFile, triggerBlobDownload } from '../utils/overviewExportDownload';
+import { handleApiInsufficientCredits } from '@/utils/insufficientCredits';
 import { resolveFinalVideoUrlFromPipeline } from '../utils/overviewAdapters';
 
 export type OverviewExportBusyKey = 'all' | 'video' | 'video_pack' | 'script' | 'storyboard' | null;
@@ -26,6 +28,7 @@ export function useOverviewExport(
   pipeline: PipelineSummaryDto | null,
   projectDisplayName: string,
 ) {
+  const navigate = useNavigate();
   const [busy, setBusy] = useState<OverviewExportBusyKey>(null);
 
   const downloadFinalVideo = useCallback(async () => {
@@ -129,7 +132,7 @@ export function useOverviewExport(
     } finally {
       setBusy(null);
     }
-  }, [pipeline, projectId, projectDisplayName]);
+  }, [pipeline, projectId, projectDisplayName, navigate]);
 
   const exportAll = useCallback(async () => {
     console.info('FRONT_OVERVIEW_EXPORT_ALL_START');
@@ -147,6 +150,10 @@ export function useOverviewExport(
       console.info('FRONT_OVERVIEW_EXPORT_ALL_SUCCESS');
     } catch (e) {
       console.info('FRONT_OVERVIEW_EXPORT_ALL_FAILED');
+      if (e instanceof ShortDramaApiError && e.isInsufficientCredits) {
+        handleApiInsufficientCredits(e.status, e.detail, navigate);
+        return;
+      }
       const msg =
         e instanceof ShortDramaApiError
           ? e.message.includes('尚未全部') || e.message.includes('全部生成')
@@ -159,7 +166,7 @@ export function useOverviewExport(
     } finally {
       setBusy(null);
     }
-  }, [pipeline, projectId, projectDisplayName]);
+  }, [pipeline, projectId, projectDisplayName, navigate]);
 
   return {
     busy,

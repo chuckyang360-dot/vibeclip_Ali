@@ -60,6 +60,12 @@ from ..services.project_task_guard import (
     recover_stale_processing_status_if_possible,
 )
 from ..utils.enums import WorkflowStep
+from ..utils.credit_guards import (
+    charge_image_asset_credit,
+    charge_image_understanding,
+    require_image_asset_credits,
+    require_image_understanding_credits,
+)
 from ..utils.flow_logging import log_api_error, log_api_request, log_api_success
 from ..utils.language import build_language_policy, language_prompt_rules, resolve_project_language_policy
 
@@ -346,6 +352,11 @@ async def update_one_asset(
 
 @router.post("/generate", response_model=GenerateAssetSpecsResponse)
 async def generate_asset_specs(body: GenerateAssetSpecsRequest, db: Session = Depends(get_db)):
+    """Generate asset specs (AI) then optionally batch-generate images.
+
+    Billing v1: spec-generation AI is not charged; only missing-image batch generation
+    below debits image_asset_generation (15 credits per succeeded image).
+    """
     log_api_request(logger, "POST /assets/specs/generate", project_id=body.project_id)
     lock_acquired = False
     try:
@@ -1227,9 +1238,27 @@ async def generate_asset_specs(body: GenerateAssetSpecsRequest, db: Session = De
             post_db.close()
         lock_acquired = False
 
+        # Billing: asset *spec* AI above is intentionally not charged in v1.
+        # Only the image batch below uses image_asset_generation (15 credits per succeeded image).
         image_generation: dict[str, object] | None = None
         try:
+            from ...services.credit_service import count_assets_missing_images
+            from ..utils.credit_guards import charge_batch_asset_images
+
+            pending_images = count_assets_missing_images(db, body.project_id)
+            require_image_asset_credits(db, body.project_id, pending_images)
+            import time
+
+            batch_key = str(int(time.time() * 1000))
             image_result = asset_image_service.generate_all_asset_images(db, body.project_id)
+            charge_batch_asset_images(
+                db,
+                body.project_id,
+                batch_key=batch_key,
+                characters_succeeded=image_result.characters_succeeded,
+                scenes_succeeded=image_result.scenes_succeeded,
+                products_succeeded=image_result.products_succeeded,
+            )
             asset_library_service.sync_legacy_assets_for_project(db, body.project_id)
             db.commit()
             image_generation = {
@@ -1499,7 +1528,19 @@ async def create_asset_library(body: CreateAssetRequest, db: Session = Depends(g
 @router.post("/library/regenerate", response_model=AssetDetailSchema)
 async def regenerate_asset_library(body: RegenerateAssetRequest, db: Session = Depends(get_db)):
     try:
+        import time
+
+        image_count = max(1, int(body.generate_count or 1))
+        require_image_asset_credits(db, body.project_id, image_count)
+        attempt_id = str(int(time.time() * 1000))
         row = asset_library_service.regenerate_asset_images(db, body)
+        for i in range(image_count):
+            charge_image_asset_credit(
+                db,
+                project_id=body.project_id,
+                asset_id=body.asset_id,
+                attempt_id=f"{attempt_id}:{i}",
+            )
         _mark_step3_and_stale_step4(db, body.project_id)
         db.commit()
         db.refresh(row)
@@ -1558,13 +1599,18 @@ async def analyze_reference_image_for_asset(
     db: Session = Depends(get_db),
 ):
     try:
+        import time
+
         validate_supported_image_data_url(body.image)
+        require_image_understanding_credits(db, body.project_id, image_count=1)
+        attempt_key = f"asset_{asset_id}_{int(time.time() * 1000)}"
         row, warning = asset_library_service.analyze_reference_image_and_update_asset(
             db,
             project_id=body.project_id,
             asset_id=asset_id,
             image_data_url=body.image,
         )
+        charge_image_understanding(db, body.project_id, attempt_key=attempt_key, image_count=1)
         _mark_step3_and_stale_step4(db, body.project_id)
         db.commit()
         db.refresh(row)
@@ -1579,13 +1625,23 @@ async def analyze_reference_image_for_asset(
 @router.post("/library/create-from-image", response_model=AssetDetailSchema)
 async def create_asset_library_from_image(body: CreateAssetFromImageRequest, db: Session = Depends(get_db)):
     try:
+        import time
+
         validate_supported_image_data_url(body.image)
+        require_image_asset_credits(db, body.project_id, 1)
+        attempt_id = str(int(time.time() * 1000))
         row = asset_library_service.create_asset_from_uploaded_image(
             db,
             project_id=body.project_id,
             asset_type=body.asset_type,
             image_data_url=body.image,
             optional_name=body.optional_name,
+        )
+        charge_image_asset_credit(
+            db,
+            project_id=body.project_id,
+            asset_id=row.id,
+            attempt_id=attempt_id,
         )
         _mark_step3_and_stale_step4(db, body.project_id)
         db.commit()

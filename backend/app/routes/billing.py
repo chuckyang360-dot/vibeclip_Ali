@@ -25,6 +25,7 @@ from ..services.billing_fulfillment import (
     apply_paid_subscription_to_user,
     verify_total_amount,
 )
+from ..services.credit_service import grant_free_starter_credits_if_needed
 from ..services.wechat_pay_client import (
     amount_yuan_to_fen,
     build_wechat_notify_url,
@@ -41,9 +42,9 @@ router = APIRouter()
 
 
 PLAN_PRICE: dict[str, dict[str, Decimal]] = {
-    "basic": {"monthly": Decimal("79.00"), "yearly": Decimal("758.00")},
-    "standard": {"monthly": Decimal("209.00"), "yearly": Decimal("2006.00")},
-    "pro": {"monthly": Decimal("529.00"), "yearly": Decimal("5078.00")},
+    "basic": {"monthly": Decimal("99.00"), "yearly": Decimal("950.00")},
+    "standard": {"monthly": Decimal("259.00"), "yearly": Decimal("2486.00")},
+    "pro": {"monthly": Decimal("599.00"), "yearly": Decimal("5750.00")},
 }
 
 
@@ -580,6 +581,8 @@ async def billing_me(
 ):
     logger.info("[BILLING_ME_LOADED] user_id=%s", current_user.id)
 
+    grant_free_starter_credits_if_needed(db, current_user.id)
+    db.commit()
     acc = db.query(UserCreditAccount).filter(UserCreditAccount.user_id == current_user.id).first()
     balance = int(acc.current_balance or 0) if acc else 0
 

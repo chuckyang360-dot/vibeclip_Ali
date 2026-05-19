@@ -32,8 +32,11 @@ from ..services.project_task_guard import (
     mark_project_stage_succeeded,
     recover_stale_processing_status_if_possible,
 )
+from ..services.read_models import list_segment_scripts
 from ..services.render_executor_service import render_executor_service
 from ..utils.enums import RenderTargetType, WorkflowStep
+from ..utils.credit_guards import require_segment_video_credits
+from ...services.credit_service import count_segments_pending_video
 from ..utils.flow_logging import log_api_error, log_api_request, log_api_success
 
 logger = logging.getLogger(__name__)
@@ -102,6 +105,10 @@ async def generate_all_segment_videos(body: VideoProjectRequest, db: Session = D
         orchestrator.assert_step_allowed(db, project, WorkflowStep.RENDER_VIDEO)
         acquire_project_task_lock(db, project, stage="s4_video")
         lock_acquired = True
+        segment_rows = list_segment_scripts(db, body.project_id)
+        pending_segments = count_segments_pending_video(db, body.project_id)
+        charge_segments = pending_segments if pending_segments > 0 else len(segment_rows)
+        require_segment_video_credits(db, body.project_id, max(charge_segments, 1))
         logger.info("[VIDEO_ROUTE_AFTER_LOCK] route=%s method=%s project_id=%s", "/videos/generate", "POST", body.project_id)
         update_last_active_step(project, STEP_4)
         db.add(project)
@@ -306,6 +313,7 @@ async def generate_one_segment_video(
         orchestrator.assert_step_allowed(db, project, WorkflowStep.RENDER_VIDEO)
         acquire_project_task_lock(db, project, stage="s4_video")
         lock_acquired = True
+        require_segment_video_credits(db, body.project_id, 1)
         logger.info(
             "[VIDEO_ROUTE_AFTER_LOCK] route=%s method=%s project_id=%s segment_id=%s",
             "/videos/generate/{segment_id}",

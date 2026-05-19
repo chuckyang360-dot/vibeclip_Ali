@@ -42,6 +42,7 @@ from ..utils.xai_reference_image import (
     local_path_from_xai_ready_public_url,
     resolve_xai_reference_public_url,
 )
+from ..utils.credit_guards import charge_segment_video_credit
 from .read_models import all_segment_scripts_have_video, list_asset_rows, list_segment_scripts
 from .workflow_orchestrator import orchestrator
 from .project_task_guard import current_stage, is_processing
@@ -732,6 +733,20 @@ class RenderExecutorService:
                     job.id,
                     url,
                 )
+                try:
+                    charge_segment_video_credit(
+                        db,
+                        project_id=project_id,
+                        segment_id=segment_id,
+                        render_job_id=int(job.id),
+                    )
+                except Exception:
+                    logger.exception(
+                        "[CREDIT_CHARGE_SEGMENT_VIDEO_FAILED] project_id=%s segment_id=%s render_job_id=%s",
+                        project_id,
+                        segment_id,
+                        job.id,
+                    )
             except Exception as e:
                 logger.error(
                     "[SEGMENT_VIDEO_WRITEBACK_FAIL] project_id=%s segment_id=%s video_url=%s exception_class=%s err=%s",
