@@ -7,13 +7,13 @@ import {
   safeProjectExportBaseName,
 } from '../utils/overviewExportMarkdown';
 import { buildMediaFetchUrl, downloadUrlAsFile, triggerBlobDownload } from '../utils/overviewExportDownload';
-import { resolvePublicMediaUrl } from '../utils/shortDramaMedia';
+import { resolveFinalVideoUrlFromPipeline } from '../utils/overviewAdapters';
 
 export type OverviewExportBusyKey = 'all' | 'video' | 'video_pack' | 'script' | 'storyboard' | null;
 
 function canExportVideoZip(pipeline: PipelineSummaryDto | null): boolean {
   if (!pipeline) return false;
-  const finalOk = !!(pipeline.has_final_video && resolvePublicMediaUrl(pipeline.final_video_url));
+  const finalOk = !!(pipeline.has_final_video && resolveFinalVideoUrlFromPipeline(pipeline));
   return !!(pipeline.has_all_segment_videos && finalOk);
 }
 
@@ -29,7 +29,7 @@ export function useOverviewExport(
   const [busy, setBusy] = useState<OverviewExportBusyKey>(null);
 
   const downloadFinalVideo = useCallback(async () => {
-    const url = resolvePublicMediaUrl(pipeline?.final_video_url);
+    const url = resolveFinalVideoUrlFromPipeline(pipeline);
     if (!url) {
       console.info('FRONT_OVERVIEW_DOWNLOAD_FINAL_VIDEO_BLOCKED');
       window.alert('完整视频尚未生成');
@@ -45,7 +45,7 @@ export function useOverviewExport(
     } finally {
       setBusy(null);
     }
-  }, [pipeline?.final_video_url, projectDisplayName]);
+  }, [pipeline, projectDisplayName]);
 
   const exportScript = useCallback(async () => {
     console.info('FRONT_OVERVIEW_EXPORT_SCRIPT_START');

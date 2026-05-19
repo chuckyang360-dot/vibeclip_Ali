@@ -88,6 +88,42 @@ export function assetsToOverviewStrip(
   return { characters, scenes, products };
 }
 
+/** Resolve final merged video URL from pipeline (field-compat for historical responses). */
+export function resolveFinalVideoUrlFromPipeline(pipeline: PipelineSummaryDto | null): string | null {
+  if (!pipeline) return null;
+  const p = pipeline as PipelineSummaryDto & {
+    output_url?: string | null;
+    result_url?: string | null;
+    merged_video_url?: string | null;
+    final_video?: { video_url?: string | null; final_video_url?: string | null; output_url?: string | null } | null;
+  };
+  const nested = p.final_video;
+  const raw =
+    pipeline.final_video_url ||
+    nested?.video_url ||
+    nested?.final_video_url ||
+    nested?.output_url ||
+    p.output_url ||
+    p.result_url ||
+    p.merged_video_url ||
+    null;
+  return resolvePublicMediaUrl(raw);
+}
+
+function truncateDisplayUrl(url: string, max = 56): string {
+  if (url.length <= max) return url;
+  return `${url.slice(0, max - 1)}…`;
+}
+
+export function formatFinalVideoAddressDisplay(
+  finalVideoUrl: string | null,
+  isMockTestPatternVideo: boolean,
+): string {
+  if (isMockTestPatternVideo) return '测试视频（ffmpeg 测试条拼接）';
+  if (!finalVideoUrl) return EM_DASH;
+  return truncateDisplayUrl(finalVideoUrl);
+}
+
 export function segmentsToOverviewPreview(pipeline: PipelineSummaryDto | null): OverviewSegmentCardVm[] {
   const rowsRaw = pipeline?.segment_scripts;
   const rows: SegmentScriptPipelineRowDto[] = Array.isArray(rowsRaw)
@@ -125,7 +161,7 @@ export function pipelineToOverviewViewModel(pipeline: PipelineSummaryDto | null)
   const segments = segmentsToOverviewPreview(pipeline);
 
   const proj = pipeline?.project;
-  const finalAbs = resolvePublicMediaUrl(pipeline?.final_video_url);
+  const finalAbs = resolveFinalVideoUrlFromPipeline(pipeline);
 
   const duration = proj?.duration?.trim() || EM_DASH;
   const format = formatZhLabel(proj?.format);

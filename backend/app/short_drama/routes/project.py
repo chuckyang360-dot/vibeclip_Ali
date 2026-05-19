@@ -51,6 +51,7 @@ from ..services.pipeline_video_state import (
 )
 from ..services.read_models import (
     all_segment_scripts_have_video,
+    latest_final_render_job,
     latest_final_video_url,
     list_asset_rows,
     list_pipeline_asset_rows,
@@ -67,7 +68,7 @@ from ..services.project_task_guard import (
     error_type,
     failed_stage,
 )
-from ..utils.enums import ProjectStatus
+from ..utils.enums import ProjectStatus, RenderJobStatus
 from ..utils.flow_logging import log_api_error, log_api_request, log_api_success
 from ..utils.language import build_language_policy, normalize_target_market
 from ..utils.public_static_url import build_public_static_url
@@ -114,6 +115,12 @@ def _public_media_url(u: str | None) -> str | None:
     if not s:
         return None
     return build_public_static_url(s)
+
+
+def _public_video_url(u: str | None) -> str | None:
+    from ..utils.video_storage import resolve_short_drama_video_public_url
+
+    return resolve_short_drama_video_public_url(u)
 
 
 def _script_with_public_video_url(script: dict, video_url_public: str | None) -> dict:
@@ -215,7 +222,7 @@ def _project_to_response(
         error_message=error_message(p) or None,
         error_type=error_type(p) or None,
         can_retry=can_retry(p),
-        final_video_url=_public_media_url(final_video),
+        final_video_url=_public_video_url(final_video),
         has_final_video=has_final_video,
         has_all_segment_videos=has_all_segment_videos,
         segment_video_count=segment_video_count,
@@ -270,7 +277,7 @@ def _project_to_lightweight_response(
         error_message=error_message(p) or None,
         error_type=error_type(p) or None,
         can_retry=can_retry(p),
-        final_video_url=_public_media_url(final_video),
+        final_video_url=_public_video_url(final_video),
         has_final_video=has_final_video,
         has_all_segment_videos=has_all_segment_videos,
         segment_video_count=segment_video_count,
@@ -645,7 +652,7 @@ async def get_pipeline(project_id: int, lightweight: bool = Query(default=False)
             script = normalize_segment_script_dict_for_read(script)
             vr = script.get("video_render") or {}
             vu = vr.get("video_url")
-            vu_pub = _public_media_url(str(vu) if vu else None)
+            vu_pub = _public_video_url(str(vu) if vu else None)
             script_out = _script_with_public_video_url(script, vu_pub)
             vr_out = script_out.get("video_render") or {}
             row_extras = segment_row_video_fields(
@@ -668,7 +675,32 @@ async def get_pipeline(project_id: int, lightweight: bool = Query(default=False)
                 }
             )
 
-        final_u = _public_media_url(latest_final_video_url(db, project_id))
+        final_raw = latest_final_video_url(db, project_id)
+        final_u = _public_video_url(final_raw)
+        final_job = latest_final_render_job(db, project_id)
+        if not lightweight:
+            logger.info(
+                "[S5_FINAL_VIDEO_PIPELINE_MAPPED] project_id=%s job_id=%s status=%s "
+                "video_url_present=%s source_field=output_url final_video_url=%s",
+                project_id,
+                final_job.id if final_job else None,
+                (final_job.status if final_job else None) or "",
+                bool(final_u),
+                (final_u or "")[:500],
+            )
+            if final_job and (final_job.status or "").lower() == RenderJobStatus.COMPLETED.value and not final_u:
+                logger.error(
+                    "[S5_FINAL_VIDEO_RESULT_MISSING_URL] project_id=%s job_id=%s status=%s video_url_present=false",
+                    project_id,
+                    final_job.id,
+                    final_job.status,
+                )
+            elif final_u:
+                logger.info(
+                    "[S5_FINAL_VIDEO_RESULT_SAVED] project_id=%s job_id=%s video_url_present=true",
+                    project_id,
+                    final_job.id if final_job else None,
+                )
         segment_video_map = {
             str(item.get("segment_id")): str(item.get("video_url") or "")
             for item in seg_payload

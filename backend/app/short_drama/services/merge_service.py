@@ -241,6 +241,12 @@ class MergeService:
                 project_id,
                 final_url,
             )
+            logger.info(
+                "[S5_FINAL_VIDEO_RESULT_SAVED] project_id=%s job_id=%s status=completed "
+                "video_url_present=true source_field=output_url",
+                project_id,
+                job.id,
+            )
             logger.info("[FINAL_RENDER_COMPLETED] project_id=%s job_id=%s final_video_url=%s", project_id, job.id, final_url)
             final_video_url = final_url
             final_merge_ok = True

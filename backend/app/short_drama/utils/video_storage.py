@@ -131,6 +131,55 @@ def is_short_drama_video_url(public_url: str) -> bool:
     return is_short_drama_static_video_url(public_url) or is_short_drama_r2_video_url(public_url)
 
 
+def _rewrite_misconfigured_api_r2_video_url(url: str) -> str:
+    """R2_PUBLIC_BASE_URL mistakenly set to API host: rewrite to real R2 public base."""
+    if not url.startswith("http://") and not url.startswith("https://"):
+        return url
+    parsed = urlparse(url)
+    path = parsed.path or ""
+    if _SHORT_DRAMA_R2_VIDEO_PATH_MARKER not in path:
+        return url
+    r2_base = (os.getenv("R2_PUBLIC_BASE_URL") or "").strip().rstrip("/")
+    if not r2_base:
+        return url
+    api_base = (os.getenv("SHORT_DRAMA_PUBLIC_BASE_URL") or os.getenv("API_PUBLIC_BASE_URL") or "").strip().rstrip("/")
+    host = (parsed.netloc or "").lower()
+    if api_base:
+        api_host = urlparse(api_base if "://" in api_base else f"https://{api_base}").netloc.lower()
+        if api_host and host == api_host and r2_base:
+            r2_host = urlparse(r2_base if "://" in r2_base else f"https://{r2_base}").netloc.lower()
+            if r2_host and r2_host != host:
+                return f"{r2_base.rstrip('/')}{path}"
+    return url
+
+
+def resolve_short_drama_video_public_url(url: str | None) -> str | None:
+    """
+    Normalize segment/final video URLs for pipeline + browser playback.
+    - https?://... (R2, CDN, static host) → passthrough unchanged
+    - /static/short-drama-videos/... → SHORT_DRAMA_PUBLIC_BASE_URL mount
+    - short-drama/videos/... object key → R2_PUBLIC_BASE_URL (not API host)
+    """
+    if url is None:
+        return None
+    s = str(url).strip()
+    if not s:
+        return None
+    if s.startswith("http://") or s.startswith("https://"):
+        return _rewrite_misconfigured_api_r2_video_url(s)
+    if s.startswith(_SHORT_DRAMA_STATIC_VIDEO_PREFIX):
+        return build_public_static_url(s)
+    if s.startswith("short-drama/videos/"):
+        base = (os.getenv("R2_PUBLIC_BASE_URL") or "").strip().rstrip("/")
+        if base:
+            return f"{base}/{s.lstrip('/')}"
+        logger.warning(
+            "[SHORT_DRAMA_VIDEO_URL] R2 object key without R2_PUBLIC_BASE_URL key=%s",
+            s[:240],
+        )
+    return build_public_static_url(s if s.startswith("/") else f"/{s}")
+
+
 def download_public_video_to_temp_mp4(public_url: str) -> Path:
     timeout = httpx.Timeout(connect=15.0, read=180.0, write=30.0, pool=10.0)
     fd, tmp_name = tempfile.mkstemp(suffix=".mp4")

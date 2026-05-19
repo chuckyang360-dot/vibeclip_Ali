@@ -3,6 +3,7 @@ import { useOverviewExport } from './hooks/useOverviewExport';
 import { useOverviewPage } from './hooks/useOverviewPage';
 import { VibeClipLogo } from './components/VibeClipLogo';
 import { SHORT_DRAMA_UI } from './utils/shortDramaUiCopy';
+import { formatFinalVideoAddressDisplay } from './utils/overviewAdapters';
 import { withProjectQuery } from './utils/shortDramaRoutes';
 
 export function ShortDramaOverviewPage() {
@@ -415,7 +416,7 @@ export function ShortDramaOverviewPage() {
                         {[
                           {
                             label: '成片地址',
-                            value: isMockTestPatternVideo ? '测试视频（ffmpeg 测试条拼接）' : '已生成（见预览）',
+                            value: formatFinalVideoAddressDisplay(finalVideoUrl, isMockTestPatternVideo),
                           },
                           { label: '比例', value: PROJECT.ratio },
                           { label: '形式', value: PROJECT.format },

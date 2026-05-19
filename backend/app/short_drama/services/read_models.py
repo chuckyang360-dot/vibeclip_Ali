@@ -459,32 +459,40 @@ def list_pipeline_asset_rows(
 
 
 def latest_final_video_url(db: Session, project_id: int) -> str | None:
-    # Use the latest final job attempt only, so old completed rows
-    # cannot pollute current pipeline state after retries.
+    """Latest completed final/merged render job with a non-empty output_url."""
     row = (
         db.query(RenderJob)
         .filter(
             RenderJob.project_id == project_id,
-            RenderJob.target_type == RenderTargetType.FINAL.value,
+            RenderJob.target_type.in_(
+                (
+                    RenderTargetType.FINAL.value,
+                    RenderTargetType.MERGED_VIDEO.value,
+                )
+            ),
+            RenderJob.status == RenderJobStatus.COMPLETED.value,
         )
         .order_by(RenderJob.id.desc())
         .first()
     )
     if not row:
         return None
-    if (row.status or "").lower() != RenderJobStatus.COMPLETED.value:
-        return None
     output_url = (row.output_url or "").strip()
     return output_url or None
 
 
 def latest_final_render_job(db: Session, project_id: int) -> RenderJob | None:
-    """Most recent final merge attempt (any status)."""
+    """Most recent final/merged render attempt (any status)."""
     return (
         db.query(RenderJob)
         .filter(
             RenderJob.project_id == project_id,
-            RenderJob.target_type == RenderTargetType.FINAL.value,
+            RenderJob.target_type.in_(
+                (
+                    RenderTargetType.FINAL.value,
+                    RenderTargetType.MERGED_VIDEO.value,
+                )
+            ),
         )
         .order_by(RenderJob.id.desc())
         .first()
