@@ -243,7 +243,7 @@ def _spoken_voiceover_subtitle_for_ref(blueprint: StoryBlueprintSchema, dref: st
     spk = str(it.speaker or "").strip()
     if mode == "silent":
         return "", "", "", ""
-    if mode == "subtitle_only":
+    if mode in ("subtitle_only", "subtitle", "caption", "onscreen_text", "on_screen_text", "screen_text"):
         body = line or plain
         return "", "", "", body
     if mode == "dialogue":

@@ -211,7 +211,29 @@ class VideoGenerationSpecSchema(BaseModel):
             return 0.0
 
 
-DialogueModeLiteral = Literal["dialogue", "voiceover", "subtitle_only", "silent"]
+DialogueModeLiteral = Literal[
+    "dialogue",
+    "voiceover",
+    "narration",
+    "subtitle",
+    "subtitle_only",
+    "silent",
+]
+
+
+def normalize_dialogue_or_voiceover_mode(value: Any) -> str:
+    """Map AI aliases to canonical mode before Literal validation."""
+    if value is None or value == "":
+        return "voiceover"
+    raw = str(value).strip().lower().replace("-", "_")
+    aliases = {
+        "caption": "subtitle",
+        "onscreen_text": "subtitle",
+        "on_screen_text": "subtitle",
+        "screen_text": "subtitle",
+        "screen_copy": "subtitle",
+    }
+    return aliases.get(raw, raw)
 
 
 class DialogueOrVoiceoverItemSchema(BaseModel):
@@ -225,6 +247,11 @@ class DialogueOrVoiceoverItemSchema(BaseModel):
     text: str = ""
     language: str = ""
     timing_notes: str = ""
+
+    @field_validator("mode", mode="before")
+    @classmethod
+    def _coerce_dialogue_mode(cls, v: Any) -> str:
+        return normalize_dialogue_or_voiceover_mode(v)
 
 
 class SubtitleStrategySchema(BaseModel):

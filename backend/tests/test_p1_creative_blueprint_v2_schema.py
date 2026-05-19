@@ -7,10 +7,12 @@ import pytest
 from app.short_drama.exceptions import ShortDramaInvalidModelOutputError
 from app.short_drama.schemas.product import ProductContextSchema
 from app.short_drama.schemas.story import (
+    DialogueOrVoiceoverItemSchema,
     StoryBlueprintSchema,
     default_creative_blueprint_v2_attachment,
     parse_story_blueprint_json,
 )
+from app.short_drama.services.segment_director_service import _spoken_voiceover_subtitle_for_ref
 from app.short_drama.services.story_planner_service import (
     XAIStoryPlannerProvider,
     _normalize_blueprint_for_execution,
@@ -1043,3 +1045,104 @@ def test_v2_validate_failure_logs_ai_blueprint_validate_failed(caplog):
     with pytest.raises(ShortDramaInvalidModelOutputError):
         _validate_creative_blueprint_v2(bp, project_id=123)
     assert any("[AI_BLUEPRINT_VALIDATE_FAILED]" in r.message for r in caplog.records)
+
+
+def test_dialogue_or_voiceover_mode_subtitle_passes_schema_and_normalize():
+    raw = _v2_normalize_shell(
+        segment_plan=[
+            {
+                "segment_id": "seg_1",
+                "segment_title": "Hook",
+                "segment_goal": "Attention",
+                "summary": "Street style beat.",
+                "duration_seconds": 8.0,
+                "required_assets": ["char_ref"],
+            }
+        ]
+    )
+    raw["dialogue_or_voiceover"] = [
+        {
+            "ref_id": "dov_sub_1",
+            "segment_id": "seg_1",
+            "shot_id": None,
+            "mode": "subtitle",
+            "speaker": "",
+            "text": "潮流字幕一",
+            "language": "zh-CN",
+        },
+        {
+            "ref_id": "dov_sub_2",
+            "segment_id": "seg_1",
+            "shot_id": None,
+            "mode": "subtitle",
+            "speaker": "",
+            "text": "潮流字幕二",
+            "language": "zh-CN",
+        },
+    ]
+    specs = list(raw["video_generation_specs"])
+    specs[0] = {**specs[0], "dialogue_or_voiceover_ref": "dov_sub_1"}
+    raw["video_generation_specs"] = specs
+    bp = parse_story_blueprint_json(raw)
+    assert bp.dialogue_or_voiceover[0].mode == "subtitle"
+    assert bp.dialogue_or_voiceover[1].mode == "subtitle"
+    assert bp.video_generation_specs[0].dialogue_or_voiceover_ref == "dov_sub_1"
+    out = _normalize_blueprint_for_execution(bp, _product(), _project_config())
+    assert out.dialogue_or_voiceover[0].text == "潮流字幕一"
+
+
+def test_dialogue_or_voiceover_mode_aliases_normalize_to_subtitle():
+    cap = DialogueOrVoiceoverItemSchema.model_validate(
+        {"ref_id": "dov_c", "mode": "caption", "text": "屏幕字", "language": "zh-CN"}
+    )
+    on = DialogueOrVoiceoverItemSchema.model_validate(
+        {"ref_id": "dov_o", "mode": "onscreen_text", "text": "叠字", "language": "zh-CN"}
+    )
+    assert cap.mode == "subtitle"
+    assert on.mode == "subtitle"
+
+
+def test_dialogue_or_voiceover_dialogue_and_voiceover_modes_still_valid():
+    dlg = DialogueOrVoiceoverItemSchema.model_validate(
+        {"ref_id": "dov_d", "mode": "dialogue", "speaker": "A", "text": "对白", "language": "zh-CN"}
+    )
+    vo = DialogueOrVoiceoverItemSchema.model_validate(
+        {"ref_id": "dov_v", "mode": "voiceover", "speaker": "narrator", "text": "旁白", "language": "zh-CN"}
+    )
+    assert dlg.mode == "dialogue"
+    assert vo.mode == "voiceover"
+
+
+def test_subtitle_ref_resolves_for_video_materialize():
+    raw = _v2_normalize_shell(
+        segment_plan=[
+            {
+                "segment_id": "seg_1",
+                "segment_title": "Hook",
+                "segment_goal": "g",
+                "summary": "s",
+                "duration_seconds": 8.0,
+                "required_assets": ["char_ref"],
+            }
+        ]
+    )
+    sub_text = "屏幕中文字幕"
+    raw["dialogue_or_voiceover"] = [
+        {
+            "ref_id": "dov_sub",
+            "segment_id": "seg_1",
+            "mode": "subtitle",
+            "speaker": "",
+            "text": sub_text,
+            "language": "zh-CN",
+        }
+    ]
+    specs = list(raw["video_generation_specs"])
+    specs[0] = {**specs[0], "dialogue_or_voiceover_ref": "dov_sub"}
+    raw["video_generation_specs"] = specs
+    bp = parse_story_blueprint_json(raw)
+    spoken, dialogue, voiceover, subtitle = _spoken_voiceover_subtitle_for_ref(bp, "dov_sub")
+    assert spoken == ""
+    assert dialogue == ""
+    assert voiceover == ""
+    assert subtitle == sub_text
