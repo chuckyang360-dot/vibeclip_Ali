@@ -23,8 +23,7 @@ from ..services.workflow_orchestrator import ASSET_IMAGE_RENDER_ALLOWED_STATUSES
 from ..services.project_task_guard import (
     acquire_project_task_lock,
     current_stage,
-    mark_project_stage_failed,
-    mark_project_stage_succeeded,
+    finalize_s3_images_task,
     recover_stale_processing_status_if_possible,
 )
 from ..utils.enums import ProjectStatus, WorkflowStep
@@ -114,6 +113,8 @@ async def generate_all_asset_images(
     pid = body.project_id
     proj, meta = _asset_image_generate_preflight(db, pid)
     lock_acquired = False
+    batch_result = None
+    batch_finalize_error: tuple[str, str] | None = None
     if proj is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Project not found")
     if proj.status == ProjectStatus.FAILED.value:
@@ -141,52 +142,18 @@ async def generate_all_asset_images(
         orchestrator.assert_step_allowed(db, proj, WorkflowStep.RENDER_ASSETS)
         acquire_project_task_lock(db, proj, stage="s3_images")
         lock_acquired = True
-        result = asset_image_service.generate_all_asset_images(db, pid)
+        batch_result = asset_image_service.generate_all_asset_images(db, pid)
         # Legacy image generation updates Character/Scene/ProductAsset.image_url;
         # sync them to unified asset library as Step3 data source.
         asset_library_service.sync_legacy_assets_for_project(db, pid)
         db.commit()
-        total_attempts = result.characters_attempted + result.scenes_attempted + result.products_attempted
-        total_succeeded = result.characters_succeeded + result.scenes_succeeded + result.products_succeeded
-        post_db = SessionLocal()
-        try:
-            if total_attempts > 0 and total_succeeded == 0:
-                mark_project_stage_failed(
-                    post_db,
-                    pid,
-                    stage="s3_images",
-                    error_type_value="image_generation_failed",
-                    message="Image generation failed for all assets. Please retry.",
-                )
-            else:
-                latest = post_db.query(ShortDramaProject).filter(ShortDramaProject.id == pid).first()
-                mark_project_stage_succeeded(
-                    post_db,
-                    pid,
-                    stage="s3_images",
-                    status_after=(latest.status if latest else proj.status),
-                )
-        finally:
-            post_db.close()
-        return _to_response(result)
+        return _to_response(batch_result)
     except HTTPException as he:
         if lock_acquired:
-            fail_db = SessionLocal()
-            try:
-                et = "storage_or_db_error" if he.status_code >= 500 else "request_conflict"
-                if isinstance(he.detail, dict):
-                    et = str(he.detail.get("error_type") or et)
-                mark_project_stage_failed(
-                    fail_db,
-                    pid,
-                    stage="s3_images",
-                    error_type_value=et,
-                    message=str(he.detail),
-                )
-            except Exception:
-                pass
-            finally:
-                fail_db.close()
+            et = "storage_or_db_error" if he.status_code >= 500 else "request_conflict"
+            if isinstance(he.detail, dict):
+                et = str(he.detail.get("error_type") or et)
+            batch_finalize_error = (et, str(he.detail))
         if he.status_code == status.HTTP_409_CONFLICT:
             detail_s = _detail_to_str(he.detail)
             prev_status = str(runtime_now.get("previous_status") or "")
@@ -224,37 +191,55 @@ async def generate_all_asset_images(
         raise
     except (ShortDramaImageProviderError, ShortDramaImageSaveError) as e:
         if lock_acquired:
-            fail_db = SessionLocal()
-            try:
-                et = "storage_or_db_error" if isinstance(e, ShortDramaImageSaveError) else "image_generation_failed"
-                mark_project_stage_failed(
-                    fail_db,
-                    pid,
-                    stage="s3_images",
-                    error_type_value=et,
-                    message=str(e),
-                )
-            finally:
-                fail_db.close()
+            et = "storage_or_db_error" if isinstance(e, ShortDramaImageSaveError) else "image_generation_failed"
+            batch_finalize_error = (et, str(e))
         raise_short_drama_http(e)
     except Exception:
         logger.exception("Asset image generation unexpected error project_id=%s", pid)
         if lock_acquired:
-            fail_db = SessionLocal()
-            try:
-                mark_project_stage_failed(
-                    fail_db,
-                    pid,
-                    stage="s3_images",
-                    error_type_value="asset_image_generation_failed",
-                    message="资产图片生成失败，请稍后重试。",
-                )
-            finally:
-                fail_db.close()
+            batch_finalize_error = (
+                "asset_image_generation_failed",
+                "资产图片生成失败，请稍后重试。",
+            )
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail={"error": "asset_image_generation_failed", "message": "资产图片生成失败，请稍后重试。"},
         )
+    finally:
+        if lock_acquired:
+            fin_db = SessionLocal()
+            try:
+                if batch_finalize_error is not None:
+                    finalize_s3_images_task(
+                        fin_db,
+                        pid,
+                        error_type_value=batch_finalize_error[0],
+                        message=batch_finalize_error[1],
+                    )
+                elif batch_result is not None:
+                    total_attempts = (
+                        batch_result.characters_attempted
+                        + batch_result.scenes_attempted
+                        + batch_result.products_attempted
+                    )
+                    total_succeeded = (
+                        batch_result.characters_succeeded
+                        + batch_result.scenes_succeeded
+                        + batch_result.products_succeeded
+                    )
+                    finalize_s3_images_task(
+                        fin_db,
+                        pid,
+                        total_attempts=total_attempts,
+                        total_succeeded=total_succeeded,
+                    )
+            except Exception:
+                logger.exception(
+                    "finalize_s3_images_task failed project_id=%s",
+                    pid,
+                )
+            finally:
+                fin_db.close()
 
 
 @router.post("/generate/characters", response_model=AssetImageBatchResponse)

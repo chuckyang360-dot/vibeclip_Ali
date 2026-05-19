@@ -13,3 +13,5 @@ class GeneratedImage:
     provider: str
     model: str
     meta: dict[str, Any] = field(default_factory=dict)
+    #: When set (e.g. Railway proxy r2_url), caller stores this URL directly — no local/R2 upload from ECS.
+    remote_url: str | None = None

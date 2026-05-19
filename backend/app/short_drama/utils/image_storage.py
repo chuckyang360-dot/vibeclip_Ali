@@ -7,6 +7,7 @@ from pathlib import Path
 
 from ...utils.r2_storage import upload_file
 from ..exceptions import ShortDramaImageSaveError
+from ..providers.generated_image import GeneratedImage
 
 logger = logging.getLogger(__name__)
 
@@ -27,6 +28,27 @@ def ensure_project_dir(project_id: int) -> Path:
 def public_url_path(project_id: int, filename: str) -> str:
     """Path served via StaticFiles mount /static/short-drama-assets."""
     return f"/static/short-drama-assets/{project_id}/{filename}"
+
+
+def persist_generated_image_url(
+    gen: GeneratedImage,
+    *,
+    project_id: int,
+    asset_type: str,
+    asset_id: int,
+) -> str:
+    """Return remote URL from provider when present; otherwise write bytes to storage."""
+    remote = str(gen.remote_url or "").strip()
+    if remote:
+        return remote
+    ext = mime_to_ext(gen.mime_type)
+    return save_image_bytes(
+        project_id=project_id,
+        asset_type=asset_type,
+        asset_id=asset_id,
+        data=gen.data,
+        ext=ext,
+    )
 
 
 def save_image_bytes(

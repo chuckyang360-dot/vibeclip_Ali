@@ -63,7 +63,7 @@ class RailwayImageProvider:
 
         logger.info(
             "[IMAGE_RENDER_STARTED] provider=%s model=%s project_id=%s target_type=%s target_id=%s "
-            "image_proxy_base_url=%s timeout_seconds=%s response_format=b64_json direct=false",
+            "image_proxy_base_url=%s timeout_seconds=%s response_format=r2_url direct=false",
             _PROVIDER_ID,
             model,
             project_id,
@@ -72,22 +72,28 @@ class RailwayImageProvider:
             proxy_base,
             timeout_sec,
         )
-        image_source = "b64_json"
+        image_source = "r2_url"
         try:
-            url, _b64, raw_opt = railway_create_image_from_text(
+            proxy_result = railway_create_image_from_text(
                 project_id=project_id,
                 target_type=asset_type,
                 target_id=asset_id,
                 prompt=prompt,
                 model=model,
-                response_format="b64_json",
+                response_format="r2_url",
                 aspect_ratio=(settings.SHORT_DRAMA_IMAGE_ASPECT_RATIO or "").strip() or None,
                 resolution=(settings.SHORT_DRAMA_IMAGE_RESOLUTION or "").strip() or None,
             )
-            if raw_opt is not None:
-                raw = raw_opt
-                mime = "image/png"
-            elif url:
+            if proxy_result.response_format == "r2_url" and proxy_result.remote_url:
+                mime = proxy_result.mime_type or "image/jpeg"
+                raw = b""
+                remote_url = proxy_result.remote_url
+            elif proxy_result.raw_bytes is not None:
+                image_source = "b64_json"
+                raw = proxy_result.raw_bytes
+                mime = proxy_result.mime_type or "image/png"
+                remote_url = None
+            elif proxy_result.remote_url:
                 image_source = "url_fallback"
                 logger.warning(
                     "[RAILWAY_PROXY_IMAGE_URL_FALLBACK_DOWNLOAD] provider=%s project_id=%s target_type=%s "
@@ -96,12 +102,13 @@ class RailwayImageProvider:
                     project_id,
                     asset_type,
                     asset_id,
-                    url[:240],
+                    proxy_result.remote_url[:240],
                 )
-                raw, mime = self._download_client.download_url(url)
+                raw, mime = self._download_client.download_url(proxy_result.remote_url)
+                remote_url = None
             else:
                 raise ShortDramaImageProviderError(
-                    "railway image response invalid: neither url nor image bytes",
+                    "railway image response invalid: no r2 url, bytes, or fallback url",
                     category="xai_response_invalid",
                 )
         except ShortDramaImageProviderError:
@@ -134,9 +141,10 @@ class RailwayImageProvider:
             "prompt_hash": prompt_hash,
             "generation_seed": meta_in.get("generation_seed"),
             "style_tags": meta_in.get("style_tags") or ["commercial_short_drama", "clean_composition"],
-            "response_format": "b64_json",
+            "response_format": "r2_url",
             "via_railway_proxy": True,
             "image_source": image_source,
+            "storage": proxy_result.storage,
         }
         logger.info(
             "[IMAGE_RENDER_SUCCESS] provider=%s model=%s project_id=%s target_type=%s target_id=%s "
@@ -154,4 +162,5 @@ class RailwayImageProvider:
             provider=_PROVIDER_ID,
             model=model,
             meta=out_meta,
+            remote_url=remote_url,
         )

@@ -23,7 +23,7 @@ from ..models import (
 from ..providers.image_provider_factory import build_short_drama_image_provider
 from .image_understanding_service import asset_image_understanding_service, validate_supported_image_data_url
 from ..utils.image_prompts import prepare_image_prompt
-from ..utils.image_storage import mime_to_ext, save_image_bytes
+from ..utils.image_storage import mime_to_ext, persist_generated_image_url, save_image_bytes
 
 MAX_ASSET_IMAGES = 6
 logger = logging.getLogger(__name__)
@@ -184,13 +184,11 @@ class AssetLibraryService:
             asset_id=asset.id,
             metadata={"variant_label": variant_label},
         )
-        ext = mime_to_ext(gen.mime_type)
-        url = save_image_bytes(
+        url = persist_generated_image_url(
+            gen,
             project_id=project_id,
             asset_type=f"{asset.asset_type}-library",
             asset_id=asset.id,
-            data=gen.data,
-            ext=ext,
         )
         provider = "unknown"
         try:

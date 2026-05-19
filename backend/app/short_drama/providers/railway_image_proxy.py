@@ -5,6 +5,7 @@ from __future__ import annotations
 import base64
 import json
 import logging
+from dataclasses import dataclass
 from typing import Any
 
 import httpx
@@ -14,6 +15,17 @@ from ..exceptions import ShortDramaImageProviderError
 from .railway_s1_vision import _effective_proxy_base_url, _proxy_detail_upstream_error
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass
+class RailwayProxyImageResult:
+    """Parsed Railway /images/generations response."""
+
+    response_format: str
+    remote_url: str | None = None
+    mime_type: str = "image/jpeg"
+    storage: str | None = None
+    raw_bytes: bytes | None = None
 
 
 def _trunc_log_message(message: str, max_len: int = 500) -> str:
@@ -58,6 +70,20 @@ def image_provider_wants_railway_proxy() -> bool:
     return False
 
 
+def _extract_url_from_proxy_payload(data: dict[str, Any]) -> str | None:
+    items = data.get("data")
+    if isinstance(items, list) and items:
+        first = items[0]
+        if isinstance(first, dict):
+            u = first.get("url")
+            if isinstance(u, str) and u.strip():
+                return u.strip()
+    u = data.get("url")
+    if isinstance(u, str) and u.strip():
+        return u.strip()
+    return None
+
+
 def railway_create_image_from_text(
     *,
     project_id: int,
@@ -68,11 +94,8 @@ def railway_create_image_from_text(
     response_format: str,
     aspect_ratio: str | None,
     resolution: str | None,
-) -> tuple[str | None, str | None, bytes | None]:
-    """
-    POST Railway /images/generations.
-    Returns (image_url_or_none, b64_json_or_none, raw_bytes_or_none) — same contract as XaiImageClient.
-    """
+) -> RailwayProxyImageResult:
+    """POST Railway /images/generations. Default response_format=r2_url (proxy uploads to R2)."""
     base = effective_railway_image_proxy_base_url()
     token = (settings.AI_PROXY_TOKEN or "").strip()
     timeout_sec = effective_railway_image_proxy_timeout_seconds()
@@ -91,8 +114,7 @@ def railway_create_image_from_text(
             category="auth",
         )
 
-    # Railway path always prefers b64_json so ECS/阿里云 never downloads xAI CDN URLs directly.
-    fmt = (response_format or "b64_json").strip().lower()
+    fmt = (response_format or "r2_url").strip().lower()
     logger.info(
         "[RAILWAY_PROXY_IMAGE_REQUEST] provider=railway_proxy image_proxy_base_url=%s project_id=%s "
         "target_type=%s target_id=%s model=%s timeout_seconds=%s response_format=%s direct=false",
@@ -214,16 +236,45 @@ def railway_create_image_from_text(
             )
         logger.info(
             "[RAILWAY_PROXY_IMAGE_RESPONSE] provider=railway_proxy project_id=%s target_type=%s target_id=%s "
-            "success=true format=b64_json bytes_len=%s",
+            "success=true format=b64_json bytes_len=%s storage= url_present=false",
             project_id,
             target_type,
             target_id,
             len(raw),
         )
-        return None, b64.strip(), raw
+        return RailwayProxyImageResult(
+            response_format="b64_json",
+            raw_bytes=raw,
+            mime_type=str(data.get("mime_type") or "image/png"),
+        )
 
-    u = data.get("url")
-    if not isinstance(u, str) or not u.strip():
+    if fmt == "r2_url":
+        remote = _extract_url_from_proxy_payload(data)
+        if not remote:
+            _image_proxy_error(project_id, "missing_r2_url", "data[0].url missing or empty")
+            raise ShortDramaImageProviderError(
+                "railway_ai_proxy_image_missing_r2_url",
+                category="xai_response_invalid",
+            )
+        mime = str(data.get("mime_type") or "image/jpeg")
+        storage = str(data.get("storage") or "r2")
+        logger.info(
+            "[RAILWAY_PROXY_IMAGE_RESPONSE] provider=railway_proxy project_id=%s target_type=%s target_id=%s "
+            "success=true format=r2_url storage=%s url_present=true",
+            project_id,
+            target_type,
+            target_id,
+            storage,
+        )
+        return RailwayProxyImageResult(
+            response_format="r2_url",
+            remote_url=remote,
+            mime_type=mime,
+            storage=storage,
+        )
+
+    remote = _extract_url_from_proxy_payload(data)
+    if not remote:
         _image_proxy_error(project_id, "missing_url", "url missing or empty in proxy response")
         raise ShortDramaImageProviderError(
             "railway_ai_proxy_image_missing_url",
@@ -232,9 +283,15 @@ def railway_create_image_from_text(
 
     logger.info(
         "[RAILWAY_PROXY_IMAGE_RESPONSE] provider=railway_proxy project_id=%s target_type=%s target_id=%s "
-        "success=true format=url",
+        "success=true format=url storage=%s url_present=true",
         project_id,
         target_type,
         target_id,
+        data.get("storage") or "",
     )
-    return u.strip(), None, None
+    return RailwayProxyImageResult(
+        response_format=fmt,
+        remote_url=remote,
+        mime_type=str(data.get("mime_type") or "image/png"),
+        storage=str(data.get("storage") or "") or None,
+    )

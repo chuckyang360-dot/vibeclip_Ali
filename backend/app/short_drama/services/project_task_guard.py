@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session
 
 from ..models import ShortDramaProject
 from ..models.render_job import RenderJob
-from ..utils.enums import RenderTargetType
+from ..utils.enums import ProjectStatus, RenderTargetType
 from .read_models import (
     all_segment_scripts_have_video,
     latest_final_video_url,
@@ -495,6 +495,22 @@ def mark_project_stage_succeeded(
     )
 
 
+def _resolve_failed_status(
+    *,
+    stage: str,
+    recoverable_status: str,
+    failed_status: str | None,
+) -> str:
+    explicit = (failed_status or "").strip()
+    if explicit:
+        return explicit
+    if stage == "s2_story" and recoverable_status:
+        return recoverable_status
+    if stage == "s3_images":
+        return recoverable_status or ProjectStatus.ASSET_SPECS_GENERATED.value
+    return ProjectStatus.FAILED.value
+
+
 def mark_project_stage_failed(
     db: Session,
     project_id: int,
@@ -502,6 +518,7 @@ def mark_project_stage_failed(
     stage: str,
     error_type_value: str,
     message: str,
+    failed_status: str | None = None,
 ) -> None:
     project = db.query(ShortDramaProject).filter(ShortDramaProject.id == project_id).first()
     if project is None:
@@ -509,7 +526,11 @@ def mark_project_stage_failed(
     previous_status = project.status
     rt = _runtime(project)
     recoverable_status = str(rt.get("previous_status") or "").strip()
-    next_status = recoverable_status if stage == "s2_story" and recoverable_status else "failed"
+    next_status = _resolve_failed_status(
+        stage=stage,
+        recoverable_status=recoverable_status,
+        failed_status=failed_status,
+    )
     rt.update(
         {
             "task_running": False,
@@ -526,7 +547,8 @@ def mark_project_stage_failed(
     db.add(project)
     db.commit()
     logger.error(
-        "[PROJECT_STAGE_FAILED] project_id=%s stage=%s error_type=%s previous_status=%s failed_status=%s can_retry=%s error_message=%s",
+        "[PROJECT_STAGE_FAILED] project_id=%s stage=%s error_type=%s previous_status=%s failed_status=%s "
+        "can_retry=%s runtime_cleared=true error_message=%s",
         project_id,
         stage,
         error_type_value,
@@ -534,4 +556,48 @@ def mark_project_stage_failed(
         project.status,
         True,
         (message or "")[:240],
+    )
+
+
+def finalize_s3_images_task(
+    db: Session,
+    project_id: int,
+    *,
+    total_attempts: int = 0,
+    total_succeeded: int = 0,
+    error_type_value: str | None = None,
+    message: str | None = None,
+) -> None:
+    """Release s3_images task lock and set project status after batch image generation ends."""
+    if error_type_value:
+        mark_project_stage_failed(
+            db,
+            project_id,
+            stage="s3_images",
+            error_type_value=error_type_value,
+            message=message or "S3 image generation failed.",
+            failed_status=ProjectStatus.ASSET_SPECS_GENERATED.value,
+        )
+        return
+    if total_attempts > 0 and total_succeeded == 0:
+        mark_project_stage_failed(
+            db,
+            project_id,
+            stage="s3_images",
+            error_type_value="image_generation_failed",
+            message=message or "Image generation failed for all assets. Please retry.",
+            failed_status=ProjectStatus.ASSET_SPECS_GENERATED.value,
+        )
+        return
+    latest = db.query(ShortDramaProject).filter(ShortDramaProject.id == project_id).first()
+    success_status = ProjectStatus.ASSETS_READY.value
+    if latest is not None and str(latest.status or "").strip():
+        st = str(latest.status).strip()
+        if st not in ("processing", ProjectStatus.ASSETS_RENDERING.value):
+            success_status = st
+    mark_project_stage_succeeded(
+        db,
+        project_id,
+        stage="s3_images",
+        success_status=success_status,
     )

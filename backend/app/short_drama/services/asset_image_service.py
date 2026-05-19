@@ -15,7 +15,7 @@ from ..models import CharacterAsset, ProductAsset, SceneAsset, ShortDramaProject
 from ..providers.generated_image import GeneratedImage
 from ..providers.image_provider_factory import build_short_drama_image_provider
 from ..utils.image_prompts import prepare_image_prompt, prepare_image_prompt_v2_asset_spec_pass_through
-from ..utils.image_storage import mime_to_ext, save_image_bytes
+from ..utils.image_storage import persist_generated_image_url
 from .workflow_orchestrator import orchestrator
 from .project_task_guard import current_stage
 
@@ -185,13 +185,11 @@ class AssetImageService:
                         "style_tags": meta.get("style_tags"),
                     },
                 )
-                ext = mime_to_ext(gen.mime_type)
-                url = save_image_bytes(
+                url = persist_generated_image_url(
+                    gen,
                     project_id=project_id,
                     asset_type="character",
                     asset_id=row.id,
-                    data=gen.data,
-                    ext=ext,
                 )
                 return row.id, url, gen, None
             except Exception as e:
@@ -259,13 +257,11 @@ class AssetImageService:
                     asset_id=row.id,
                     metadata={"generation_seed": seed, "style_tags": meta.get("style_tags")},
                 )
-                ext = mime_to_ext(gen.mime_type)
-                url = save_image_bytes(
+                url = persist_generated_image_url(
+                    gen,
                     project_id=project_id,
                     asset_type="scene",
                     asset_id=row.id,
-                    data=gen.data,
-                    ext=ext,
                 )
                 return row.id, url, gen, None
             except Exception as e:
@@ -312,13 +308,11 @@ class AssetImageService:
                     asset_id=row.id,
                     metadata={"generation_seed": seed, "style_tags": meta.get("style_tags")},
                 )
-                ext = mime_to_ext(gen.mime_type)
-                url = save_image_bytes(
+                url = persist_generated_image_url(
+                    gen,
                     project_id=project_id,
                     asset_type="product",
                     asset_id=row.id,
-                    data=gen.data,
-                    ext=ext,
                 )
                 return row.id, url, gen, None
             except Exception as e:
@@ -433,13 +427,11 @@ class AssetImageService:
                         "style_tags": meta.get("style_tags"),
                     },
                 )
-                ext = mime_to_ext(gen.mime_type)
-                url = save_image_bytes(
+                url = persist_generated_image_url(
+                    gen,
                     project_id=project_id,
                     asset_type="scene",
                     asset_id=row.id,
-                    data=gen.data,
-                    ext=ext,
                 )
                 return row.id, url, gen, None
             except Exception as e:
@@ -524,13 +516,11 @@ class AssetImageService:
                         "style_tags": meta.get("style_tags"),
                     },
                 )
-                ext = mime_to_ext(gen.mime_type)
-                url = save_image_bytes(
+                url = persist_generated_image_url(
+                    gen,
                     project_id=project_id,
                     asset_type="product",
                     asset_id=row.id,
-                    data=gen.data,
-                    ext=ext,
                 )
                 return row.id, url, gen, None
             except Exception as e:
@@ -573,14 +563,21 @@ class AssetImageService:
 
     def _recover_after_image_batch_crash(self, db: Session, project_id: int) -> None:
         """Rollback uncommitted work and leave project retryable (not terminal failed)."""
-        db.rollback()
-        p = orchestrator.get_project(db, project_id)
-        orchestrator.revert_to_asset_specs_after_image_batch_failure(
-            db,
-            p,
-            reason="asset_image_batch_uncaught_exception",
-        )
-        db.commit()
+        try:
+            db.rollback()
+        except Exception:
+            pass
+        recover_db = SessionLocal()
+        try:
+            p = orchestrator.get_project(recover_db, project_id)
+            orchestrator.revert_to_asset_specs_after_image_batch_failure(
+                recover_db,
+                p,
+                reason="asset_image_batch_uncaught_exception",
+            )
+            recover_db.commit()
+        finally:
+            recover_db.close()
 
     def regenerate_one_asset_image(
         self,
@@ -753,7 +750,7 @@ class AssetImageService:
             )
             products = [row for row in products if not str(row.image_url or "").strip()]
             logger.info("[S3_DB_RELEASE_BEFORE_EXTERNAL_CALL] project_id=%s", project_id)
-            db.close()
+            db.commit()
 
             try:
                 prov_id = self._provider.capabilities().get("provider_id", "unknown")

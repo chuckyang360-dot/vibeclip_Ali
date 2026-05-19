@@ -54,6 +54,7 @@ from ..services.workflow_orchestrator import orchestrator
 from ..services.image_understanding_service import validate_supported_image_data_url
 from ..services.project_task_guard import (
     acquire_project_task_lock,
+    finalize_s3_images_task,
     mark_project_stage_failed,
     mark_project_stage_succeeded,
     recover_stale_processing_status_if_possible,
@@ -1245,10 +1246,9 @@ async def generate_asset_specs(body: GenerateAssetSpecsRequest, db: Session = De
             logger.exception("Asset image generation failed project_id=%s", body.project_id)
             fail_db = SessionLocal()
             try:
-                mark_project_stage_failed(
+                finalize_s3_images_task(
                     fail_db,
                     body.project_id,
-                    stage="s3_images",
                     error_type_value="asset_image_generation_failed",
                     message="资产图片生成失败，请稍后重试。",
                 )
@@ -1272,11 +1272,11 @@ async def generate_asset_specs(body: GenerateAssetSpecsRequest, db: Session = De
             if total_attempts > 0 and total_succeeded == 0:
                 fail_db = SessionLocal()
                 try:
-                    mark_project_stage_failed(
+                    finalize_s3_images_task(
                         fail_db,
                         body.project_id,
-                        stage="s3_images",
-                        error_type_value="image_generation_failed",
+                        total_attempts=total_attempts,
+                        total_succeeded=0,
                         message="Image generation failed for all assets. Please retry.",
                     )
                 finally:
