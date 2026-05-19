@@ -25,7 +25,8 @@ from ...database import SessionLocal
 from ...utils.r2_storage import upload_file
 from ..exceptions import ShortDramaInvalidSegmentVideoError, ShortDramaVideoInputError
 from ..models import AssetEntity, AssetImage, RenderJob, SegmentScriptRecord, ShortDramaProject
-from ..providers.xai_video_client import effective_xai_video_model
+from ..providers.railway_xai_video_proxy import RailwayXAIVideoProxyProvider
+from ..providers.video_provider_config import effective_video_model_for_provider
 from ..providers.seedance_video_provider import SeedanceVideoProvider
 from ..providers.segment_video_types import SegmentVideoProvider
 from ..providers.xai_video_provider import MockXAIVideoProvider, build_xai_video_provider
@@ -286,7 +287,12 @@ class RenderExecutorService:
             return "mock"
         if isinstance(self._provider, SeedanceVideoProvider):
             return "seedance"
+        if isinstance(self._provider, RailwayXAIVideoProxyProvider):
+            return "railway_xai_proxy"
         return "xai"
+
+    def _video_model_name(self) -> str:
+        return effective_video_model_for_provider(self._provider_label())
 
     def _utc_now_iso(self) -> str:
         return datetime.now(timezone.utc).isoformat()
@@ -418,7 +424,7 @@ class RenderExecutorService:
                 if not job:
                     raise ShortDramaVideoInputError(f"Render job {existing_job_id} not found")
                 job.provider = self._provider_label()
-                job.model = effective_xai_video_model()
+                job.model = self._video_model_name()
                 self._set_job_status(
                     db,
                     job,
@@ -502,7 +508,7 @@ class RenderExecutorService:
                     target_type=RenderTargetType.SEGMENT.value,
                     target_id=segment_id,
                     provider=self._provider_label(),
-                    model=effective_xai_video_model(),
+                    model=self._video_model_name(),
                     status=RenderJobStatus.QUEUED.value,
                     input_payload_json=payload,
                 )
@@ -510,7 +516,7 @@ class RenderExecutorService:
                 db.commit()
                 db.refresh(job)
 
-            model_name = effective_xai_video_model()
+            model_name = self._video_model_name()
             final_prompt = plan.segment_video_prompt or ""
             final_prompt_len = len(final_prompt)
             logger.info("[VIDEO_PROMPT] %s", final_prompt)
@@ -557,7 +563,7 @@ class RenderExecutorService:
                     bool(voiceover_text and voiceover_text in final_prompt),
                     voiceover_text[:40],
                     final_prompt_len,
-                    "xai_video",
+                    self._provider_label(),
                     model_name,
                 )
 
@@ -756,7 +762,7 @@ class RenderExecutorService:
                 segment_id,
                 jid,
                 self._provider_label(),
-                effective_xai_video_model(),
+                self._video_model_name(),
                 getattr(job, "provider_request_id", None) if job else None,
                 err_msg,
             )
@@ -819,7 +825,7 @@ class RenderExecutorService:
             target_type=RenderTargetType.SEGMENT.value,
             target_id=segment_id,
             provider=self._provider_label(),
-            model=effective_xai_video_model(),
+            model=self._video_model_name(),
             status=RenderJobStatus.QUEUED.value,
             input_payload_json={"project_id": project_id, "segment_id": segment_id},
             meta_json={"progress": 0, "status": RenderJobStatus.QUEUED.value, "created_at": self._utc_now_iso()},

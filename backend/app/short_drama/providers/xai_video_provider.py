@@ -435,6 +435,30 @@ def build_xai_video_provider() -> SegmentVideoProvider:
         logger.warning("[VIDEO_PROVIDER] MOCK provider ENABLED")
         return MockXAIVideoProvider()
 
+    if provider_env == "railway_xai_proxy":
+        from .railway_xai_video_proxy import RailwayXAIVideoProxyProvider
+
+        base = (
+            (settings.RAILWAY_XAI_VIDEO_PROXY_BASE_URL or "").strip()
+            or (settings.AI_PROXY_BASE_URL or "").strip()
+        )
+        token = (
+            (settings.RAILWAY_XAI_VIDEO_PROXY_TOKEN or "").strip()
+            or (settings.AI_PROXY_TOKEN or "").strip()
+        )
+        if not base:
+            raise ShortDramaVideoProviderError(
+                "RAILWAY_XAI_VIDEO_PROXY_BASE_URL is required when VIDEO_PROVIDER=railway_xai_proxy "
+                "(or set AI_PROXY_BASE_URL)"
+            )
+        if not token:
+            raise ShortDramaVideoProviderError(
+                "RAILWAY_XAI_VIDEO_PROXY_TOKEN is required when VIDEO_PROVIDER=railway_xai_proxy "
+                "(or set AI_PROXY_TOKEN)"
+            )
+        logger.info("[VIDEO_PROVIDER] RAILWAY_XAI_PROXY video provider ENABLED")
+        return RailwayXAIVideoProxyProvider()
+
     if provider_env == "seedance":
         from .seedance_video_provider import SeedanceVideoProvider
 

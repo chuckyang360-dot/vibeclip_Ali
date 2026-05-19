@@ -165,6 +165,24 @@ class Settings(BaseSettings):
     SHORT_DRAMA_USE_MOCK_VIDEO_PROVIDER: bool = Field(default=True, env="SHORT_DRAMA_USE_MOCK_VIDEO_PROVIDER")
     SHORT_DRAMA_VIDEO_MAX_CONCURRENT: int = Field(default=1, env="SHORT_DRAMA_VIDEO_MAX_CONCURRENT")
 
+    # S5 video via Railway → xAI (VIDEO_PROVIDER=railway_xai_proxy); Aliyun backend does not call api.x.ai
+    RAILWAY_XAI_VIDEO_PROXY_BASE_URL: Optional[str] = Field(
+        default=None,
+        env="RAILWAY_XAI_VIDEO_PROXY_BASE_URL",
+    )
+    RAILWAY_XAI_VIDEO_PROXY_TOKEN: Optional[str] = Field(
+        default=None,
+        env="RAILWAY_XAI_VIDEO_PROXY_TOKEN",
+    )
+    RAILWAY_XAI_VIDEO_PROXY_TIMEOUT_SECONDS: float = Field(
+        default=600.0,
+        env="RAILWAY_XAI_VIDEO_PROXY_TIMEOUT_SECONDS",
+    )
+    RAILWAY_XAI_VIDEO_PROXY_POLL_INTERVAL_SECONDS: float = Field(
+        default=3.0,
+        env="RAILWAY_XAI_VIDEO_PROXY_POLL_INTERVAL_SECONDS",
+    )
+
     # Volcano Ark / Seedance 2.0 video (VIDEO_PROVIDER=seedance)
     ARK_API_KEY: Optional[str] = Field(default=None, env="ARK_API_KEY")
     SEEDANCE_API_BASE: str = Field(
