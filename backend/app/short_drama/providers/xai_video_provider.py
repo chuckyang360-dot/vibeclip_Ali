@@ -8,13 +8,13 @@ import subprocess
 import tempfile
 import time
 from pathlib import Path
-from dataclasses import dataclass
-from typing import Any, Protocol
+from typing import Any
 import shutil
 
 from ...config import settings
 from ..exceptions import ShortDramaVideoProviderError
 from ..utils.flow_logging import log_ai_error, log_ai_request, log_ai_response
+from .segment_video_types import SegmentVideoProvider, SegmentVideoResult
 from .xai_video_client import XAIVideoClient, effective_xai_video_model
 
 logger = logging.getLogger(__name__)
@@ -41,64 +41,6 @@ def _is_production_env() -> bool:
         if val in {"prod", "production"}:
             return True
     return False
-
-
-@dataclass
-class SegmentVideoResult:
-    video_bytes: bytes
-    provider_video_url: str | None
-    provider_metadata: dict[str, Any]
-
-
-class SegmentVideoProvider(Protocol):
-    def submit_reference_segment_video(
-        self,
-        *,
-        prompt: str,
-        reference_image_urls: list[str],
-        duration_seconds: int,
-        aspect_ratio: str,
-        resolution: str | None,
-        project_id: int,
-        segment_id: str,
-    ) -> str: ...
-
-    def complete_segment_video(
-        self,
-        *,
-        request_id: str,
-        project_id: int,
-        segment_id: str,
-        duration_seconds: int = 6,
-    ) -> SegmentVideoResult: ...
-
-    def generate_segment_video(
-        self,
-        *,
-        prompt: str,
-        reference_image_urls: list[str],
-        duration_seconds: int,
-        aspect_ratio: str,
-        resolution: str | None,
-        project_id: int,
-        segment_id: str,
-    ) -> SegmentVideoResult:
-        """Convenience: submit + complete (used when RenderJob logging is not interleaved)."""
-        rid = self.submit_reference_segment_video(
-            prompt=prompt,
-            reference_image_urls=reference_image_urls,
-            duration_seconds=duration_seconds,
-            aspect_ratio=aspect_ratio,
-            resolution=resolution,
-            project_id=project_id,
-            segment_id=segment_id,
-        )
-        return self.complete_segment_video(
-            request_id=rid,
-            project_id=project_id,
-            segment_id=segment_id,
-            duration_seconds=duration_seconds,
-        )
 
 
 class XAIVideoProvider:
@@ -492,6 +434,15 @@ def build_xai_video_provider() -> SegmentVideoProvider:
     if use_mock:
         logger.warning("[VIDEO_PROVIDER] MOCK provider ENABLED")
         return MockXAIVideoProvider()
+
+    if provider_env == "seedance":
+        from .seedance_video_provider import SeedanceVideoProvider
+
+        ark_key = (settings.ARK_API_KEY or "").strip()
+        if not ark_key:
+            raise ShortDramaVideoProviderError("ARK_API_KEY is required when VIDEO_PROVIDER=seedance")
+        logger.info("[VIDEO_PROVIDER] SEEDANCE provider ENABLED")
+        return SeedanceVideoProvider()
 
     if is_prod and not (settings.XAI_API_KEY or "").strip():
         raise ShortDramaVideoProviderError(_PRODUCTION_VIDEO_PROVIDER_ERROR)

@@ -164,6 +164,28 @@ class Settings(BaseSettings):
     XAI_VIDEO_MAX_RETRIES: int = Field(default=2, env="XAI_VIDEO_MAX_RETRIES")
     SHORT_DRAMA_USE_MOCK_VIDEO_PROVIDER: bool = Field(default=True, env="SHORT_DRAMA_USE_MOCK_VIDEO_PROVIDER")
     SHORT_DRAMA_VIDEO_MAX_CONCURRENT: int = Field(default=1, env="SHORT_DRAMA_VIDEO_MAX_CONCURRENT")
+
+    # Volcano Ark / Seedance 2.0 video (VIDEO_PROVIDER=seedance)
+    ARK_API_KEY: Optional[str] = Field(default=None, env="ARK_API_KEY")
+    SEEDANCE_API_BASE: str = Field(
+        default="https://ark.cn-beijing.volces.com/api/v3",
+        env="SEEDANCE_API_BASE",
+    )
+    SEEDANCE_VIDEO_MODEL: str = Field(
+        default="doubao-seedance-2-0-260128",
+        env="SEEDANCE_VIDEO_MODEL",
+    )
+    SEEDANCE_GENERATE_AUDIO: bool = Field(default=True, env="SEEDANCE_GENERATE_AUDIO")
+    SEEDANCE_WATERMARK: bool = Field(default=False, env="SEEDANCE_WATERMARK")
+    SEEDANCE_DEFAULT_RATIO: str = Field(default="9:16", env="SEEDANCE_DEFAULT_RATIO")
+    SEEDANCE_TASK_POLL_INTERVAL_SECONDS: float = Field(
+        default=3.0,
+        env="SEEDANCE_TASK_POLL_INTERVAL_SECONDS",
+    )
+    SEEDANCE_TASK_TIMEOUT_SECONDS: float = Field(
+        default=600.0,
+        env="SEEDANCE_TASK_TIMEOUT_SECONDS",
+    )
     # Public origin for Short Drama /static URLs (API + xAI reference images). Priority: SHORT_DRAMA_PUBLIC_BASE_URL → PUBLIC_BASE_URL → legacy SHORT_DRAMA_PUBLIC_MEDIA_BASE_URL → localhost (dev).
     SHORT_DRAMA_PUBLIC_BASE_URL: Optional[str] = Field(default=None, env="SHORT_DRAMA_PUBLIC_BASE_URL")
     PUBLIC_BASE_URL: Optional[str] = Field(default=None, env="PUBLIC_BASE_URL")

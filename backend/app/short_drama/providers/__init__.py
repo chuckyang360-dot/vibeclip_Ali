@@ -7,6 +7,7 @@ from .xai_image_client import XaiImageClient, effective_xai_image_model
 from .xai_image_provider import XaiImageProvider
 from .xai_text_provider import XAITextProvider, get_xai_text_provider
 from .xai_video_client import XAIVideoClient, effective_xai_video_model
+from .seedance_video_provider import SeedanceVideoProvider
 from .xai_video_provider import MockXAIVideoProvider, XAIVideoProvider, build_xai_video_provider
 
 __all__ = [
@@ -25,6 +26,7 @@ __all__ = [
     "XAIVideoClient",
     "XAIVideoProvider",
     "MockXAIVideoProvider",
+    "SeedanceVideoProvider",
     "build_xai_video_provider",
     "effective_xai_video_model",
 ]
