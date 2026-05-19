@@ -19,7 +19,7 @@ class Settings(BaseSettings):
     API_BASE_URL: Optional[str] = Field(default=None, env="API_BASE_URL")
     #: r2 = Cloudflare R2 (current default, boto3 client unchanged); oss = reserved for Aliyun OSS
     STORAGE_PROVIDER: str = Field(default="r2", env="STORAGE_PROVIDER")
-    #: direct_xai = backend calls xAI; gateway = reserved outbound gateway; railway_proxy = outbound AI via Railway AI Proxy (AI_PROXY_*); currently S1 vision uses this switch.
+    #: direct_xai = backend calls xAI; gateway = reserved outbound gateway; railway_proxy = structured text + S1 vision via Railway (AI_PROXY_*), no direct xAI from ECS when set
     AI_PROVIDER: str = Field(default="direct_xai", env="AI_PROVIDER")
     #: When AI_PROVIDER=gateway is wired, use these; empty has no effect on direct_xai
     AI_GATEWAY_BASE_URL: Optional[str] = Field(default=None, env="AI_GATEWAY_BASE_URL")

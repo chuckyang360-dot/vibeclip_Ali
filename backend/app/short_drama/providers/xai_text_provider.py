@@ -3,12 +3,16 @@ from __future__ import annotations
 import json
 import logging
 import time
+import uuid
 from typing import Any
 
+from ...config import settings
 from ..exceptions import ShortDramaInvalidModelOutputError, ShortDramaProviderError
-from ..utils.flow_logging import log_ai_error, log_ai_response
+from ..utils.flow_logging import ai_log_extra_from_context, log_ai_error, log_ai_request, log_ai_response
 from ..utils.json_parser import try_parse_json_object
 from ..utils.prompts import JSON_REPAIR_SYSTEM_PROMPT
+from .railway_s1_vision import ai_provider_wants_railway_proxy
+from .railway_text_proxy import railway_chat_completion_raw_text
 from .xai_client import (
     XAIClient,
     effective_xai_text_model,
@@ -105,23 +109,62 @@ class XAITextProvider:
         user_payload_chars = len(user_text)
 
         t0 = time.perf_counter()
+        use_railway_proxy = ai_provider_wants_railway_proxy()
+        log_provider = "railway_proxy" if use_railway_proxy else "grok"
         try:
-            raw, request_id, _latency = self._client.post_responses(
-                model=model,
-                system_prompt=system_prompt,
-                user_content=user_content,
-                store=False,
-                max_output_tokens=max_output_tokens,
-                log_context={
-                    "project_id": project_id,
-                    "service_name": service_name,
-                    "stage": stage,
-                    "provider": "grok",
-                    "model": model,
-                },
-            )
-            text = extract_assistant_text(raw)
-            model_returned = extract_responses_api_model(raw)
+            if use_railway_proxy:
+                extra_ctx = ai_log_extra_from_context(
+                    {
+                        "project_id": project_id,
+                        "service_name": service_name,
+                        "stage": stage,
+                    }
+                )
+                client_rid = f"railway-{uuid.uuid4().hex[:12]}"
+                log_ai_request(
+                    logger,
+                    "railway_proxy",
+                    model,
+                    timeout_seconds=settings.AI_PROXY_TIMEOUT_SECONDS,
+                    system_prompt_len=len(system_prompt),
+                    user_content_kind="text_chat_proxy",
+                    user_content_len=len(user_text),
+                    max_output_tokens=max_output_tokens,
+                    proxy_base_url=(settings.AI_PROXY_BASE_URL or "").rstrip("/"),
+                    client_request_id=client_rid,
+                    note="upstream_chat_completions_on_proxy",
+                    **extra_ctx,
+                )
+                urls = [str(u).strip() for u in (image_urls or []) if str(u or "").strip()]
+                text = railway_chat_completion_raw_text(
+                    project_id=project_id,
+                    service_name=service_name,
+                    stage=stage,
+                    system_prompt=system_prompt,
+                    user_text=user_text,
+                    image_urls=urls or None,
+                    max_output_tokens=max_output_tokens,
+                )
+                request_id = client_rid
+                raw: dict[str, Any] = {}
+                model_returned = ""
+            else:
+                raw, request_id, _latency = self._client.post_responses(
+                    model=model,
+                    system_prompt=system_prompt,
+                    user_content=user_content,
+                    store=False,
+                    max_output_tokens=max_output_tokens,
+                    log_context={
+                        "project_id": project_id,
+                        "service_name": service_name,
+                        "stage": stage,
+                        "provider": "grok",
+                        "model": model,
+                    },
+                )
+                text = extract_assistant_text(raw)
+                model_returned = extract_responses_api_model(raw)
             if stage == "STORY_GENERATION":
                 _trace(
                     "S2_RAW_RESPONSE",
@@ -131,16 +174,17 @@ class XAITextProvider:
                         "request_id": request_id,
                         "model_requested": model,
                         "model_returned": model_returned,
-                        "response_status": raw.get("status"),
-                        "incomplete_details": raw.get("incomplete_details"),
+                        "response_status": raw.get("status") if raw else None,
+                        "incomplete_details": raw.get("incomplete_details") if raw else None,
                         "assistant_text_len": len(text or ""),
                         "assistant_text_preview": _preview(text, max_len=240),
+                        "via_railway_proxy": use_railway_proxy,
                     },
                 )
             extracted_text_len = len(text or "")
-            response_status = raw.get("status")
-            response_incomplete_details = raw.get("incomplete_details")
-            output_content_types = summarize_output_message_content_types(raw)
+            response_status = raw.get("status") if raw else None
+            response_incomplete_details = raw.get("incomplete_details") if raw else None
+            output_content_types = summarize_output_message_content_types(raw) if raw else []
             logger.info(
                 "[STRUCTURED_OUTPUT_EXTRACTED] project_id=%s service_name=%s stage=%s extracted_text_len=%s extracted_text_preview=%s response_status=%s response_incomplete_details=%s output_message_content_types=%s",
                 project_id,
@@ -183,7 +227,7 @@ class XAITextProvider:
                         max_output_tokens=max_output_tokens,
                         assistant_text_len=extracted_text_len,
                         incomplete_details=response_incomplete_details,
-                        finish_reason=raw.get("finish_reason") or raw.get("stop_reason"),
+                        finish_reason=(raw.get("finish_reason") or raw.get("stop_reason")) if raw else None,
                         repair_attempts=0,
                         error_stage="empty_or_too_short",
                         assistant_text_preview=_preview(text, max_len=400),
@@ -214,7 +258,7 @@ class XAITextProvider:
             )
             log_ai_response(
                 logger,
-                "grok",
+                log_provider,
                 model,
                 project_id=project_id,
                 stage=stage,
@@ -231,7 +275,7 @@ class XAITextProvider:
             duration_ms = int((time.perf_counter() - t0) * 1000)
             log_ai_error(
                 logger,
-                "grok",
+                log_provider,
                 model,
                 str(e),
                 project_id=project_id,
@@ -331,24 +375,59 @@ class XAITextProvider:
                     },
                 )
             repair_content = [{"type": "input_text", "text": repair_user}]
-            raw2, req2, _ = self._client.post_responses(
-                model=model,
-                system_prompt=JSON_REPAIR_SYSTEM_PROMPT,
-                user_content=repair_content,
-                store=False,
-                max_output_tokens=repair_tokens,
-                log_context={
-                    "project_id": project_id,
-                    "service_name": service_name,
-                    "stage": f"{stage}_json_repair_{repair_attempt}",
-                    "provider": "grok",
-                    "model": model,
-                    "repair_attempt": repair_attempt,
-                    "schema_name": expected_schema_name,
-                },
-            )
-            text2 = extract_assistant_text(raw2)
-            model_ret2 = extract_responses_api_model(raw2)
+            if ai_provider_wants_railway_proxy():
+                rctx = ai_log_extra_from_context(
+                    {
+                        "project_id": project_id,
+                        "service_name": service_name,
+                        "stage": f"{stage}_json_repair_{repair_attempt}",
+                        "repair_attempt": repair_attempt,
+                        "schema_name": expected_schema_name,
+                    }
+                )
+                log_ai_request(
+                    logger,
+                    "railway_proxy",
+                    model,
+                    timeout_seconds=settings.AI_PROXY_TIMEOUT_SECONDS,
+                    system_prompt_len=len(JSON_REPAIR_SYSTEM_PROMPT),
+                    user_content_kind="json_repair_proxy",
+                    user_content_len=len(repair_user),
+                    max_output_tokens=repair_tokens,
+                    proxy_base_url=(settings.AI_PROXY_BASE_URL or "").rstrip("/"),
+                    **rctx,
+                )
+                text2 = railway_chat_completion_raw_text(
+                    project_id=project_id,
+                    service_name=service_name,
+                    stage=f"{stage}_json_repair_{repair_attempt}",
+                    system_prompt=JSON_REPAIR_SYSTEM_PROMPT,
+                    user_text=repair_user,
+                    image_urls=None,
+                    max_output_tokens=repair_tokens,
+                )
+                raw2: dict[str, Any] = {}
+                req2 = f"railway-repair-{repair_attempt}"
+                model_ret2 = model
+            else:
+                raw2, req2, _ = self._client.post_responses(
+                    model=model,
+                    system_prompt=JSON_REPAIR_SYSTEM_PROMPT,
+                    user_content=repair_content,
+                    store=False,
+                    max_output_tokens=repair_tokens,
+                    log_context={
+                        "project_id": project_id,
+                        "service_name": service_name,
+                        "stage": f"{stage}_json_repair_{repair_attempt}",
+                        "provider": "grok",
+                        "model": model,
+                        "repair_attempt": repair_attempt,
+                        "schema_name": expected_schema_name,
+                    },
+                )
+                text2 = extract_assistant_text(raw2)
+                model_ret2 = extract_responses_api_model(raw2)
             if stage == "STORY_GENERATION":
                 _trace(
                     "S2_JSON_REPAIR_RESPONSE",
