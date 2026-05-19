@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 import threading
 from typing import Any
+from urllib.parse import urlparse
 
 import httpx
 
@@ -65,6 +66,41 @@ def build_railway_xai_video_proxy_payload(
     if resolution:
         body["resolution"] = resolution
     return body
+
+
+def _video_url_host(url: str) -> str:
+    try:
+        return (urlparse((url or "").strip()).hostname or "").lower()
+    except Exception:
+        return ""
+
+
+def _ensure_not_vidgen_video_url(
+    video_url: str,
+    *,
+    project_id: int,
+    segment_id: str,
+    request_id: str,
+) -> None:
+    host = _video_url_host(video_url)
+    if host == "vidgen.x.ai" or host.endswith(".vidgen.x.ai"):
+        logger.error(
+            "[RAILWAY_XAI_VIDEO_PROXY_FAILED] project_id=%s segment_id=%s status_code=%s "
+            "error_code=%s error_message=%s request_id=%s",
+            project_id,
+            segment_id,
+            200,
+            "RAW_XAI_VIDEO_URL",
+            "Railway returned raw xAI video URL; expected R2 URL.",
+            request_id,
+        )
+        raise ShortDramaVideoProviderError("Railway returned raw xAI video URL; expected R2 URL.")
+
+
+def _is_r2_proxy_result(data: dict[str, Any]) -> bool:
+    storage = str(data.get("storage") or "").strip().lower()
+    video_url = (data.get("video_url") or "").strip() if isinstance(data.get("video_url"), str) else ""
+    return storage == "r2" and bool(video_url)
 
 
 def _safe_body_prefix(text: str, *, limit: int = 1000) -> str:
@@ -196,9 +232,15 @@ def request_railway_xai_video_generation(
     ok = bool(data.get("ok"))
     request_id = str(data.get("request_id") or "")
     video_url = (data.get("video_url") or "").strip() if isinstance(data.get("video_url"), str) else ""
+    storage = str(data.get("storage") or "").strip()
+    r2_key = str(data.get("r2_key") or "").strip()
+    xai_video_url_raw = data.get("xai_video_url")
+    has_xai_video_url = bool(
+        isinstance(xai_video_url_raw, str) and (xai_video_url_raw or "").strip()
+    )
     logger.info(
         "[RAILWAY_XAI_VIDEO_PROXY_RESPONSE] project_id=%s segment_id=%s ok=%s provider=%s model=%s "
-        "request_id=%s has_video_url=%s",
+        "request_id=%s has_video_url=%s storage=%s r2_key=%s has_xai_video_url=%s",
         project_id,
         segment_id,
         ok,
@@ -206,6 +248,9 @@ def request_railway_xai_video_generation(
         data.get("model"),
         request_id,
         bool(video_url),
+        storage,
+        r2_key,
+        has_xai_video_url,
     )
 
     if not ok:
@@ -231,6 +276,13 @@ def request_railway_xai_video_generation(
             f"Railway xAI video proxy ok=true but video_url missing "
             f"(project_id={project_id}, segment_id={segment_id}, request_id={request_id})"
         )
+
+    _ensure_not_vidgen_video_url(
+        video_url,
+        project_id=project_id,
+        segment_id=segment_id,
+        request_id=request_id,
+    )
 
     return data
 
@@ -274,7 +326,7 @@ def download_remote_video_bytes(
 
 
 class RailwayXAIVideoProxyProvider:
-    """Calls Railway proxy once on submit; complete downloads MP4 from returned video_url."""
+    """Calls Railway proxy once on submit; complete uses R2 URL directly or downloads legacy responses."""
 
     def submit_reference_segment_video(
         self,
@@ -326,6 +378,58 @@ class RailwayXAIVideoProxyProvider:
             )
         video_url = str(data.get("video_url") or "").strip()
         model = str(data.get("model") or effective_xai_video_model())
+        _ensure_not_vidgen_video_url(
+            video_url,
+            project_id=project_id,
+            segment_id=segment_id,
+            request_id=request_id,
+        )
+
+        storage = str(data.get("storage") or "").strip()
+        r2_key = str(data.get("r2_key") or "").strip()
+        xai_video_url = (
+            str(data.get("xai_video_url") or "").strip()
+            if isinstance(data.get("xai_video_url"), str)
+            else ""
+        )
+        if xai_video_url:
+            logger.info(
+                "[RAILWAY_XAI_VIDEO_PROXY_XAI_URL] project_id=%s segment_id=%s request_id=%s "
+                "xai_video_url=%s (diagnostic only, not downloaded)",
+                project_id,
+                segment_id,
+                request_id,
+                xai_video_url,
+            )
+
+        meta: dict[str, Any] = {
+            "provider": "railway_xai_proxy",
+            "model": model,
+            "request_id": request_id,
+            "upstream_provider": data.get("provider"),
+            "duration_seconds": data.get("duration_seconds"),
+            "storage": storage,
+            "r2_key": r2_key,
+        }
+        if xai_video_url:
+            meta["xai_video_url"] = xai_video_url
+
+        if _is_r2_proxy_result(data):
+            logger.info(
+                "[RAILWAY_XAI_VIDEO_R2_RESULT_ACCEPTED] project_id=%s segment_id=%s request_id=%s "
+                "video_url=%s r2_key=%s",
+                project_id,
+                segment_id,
+                request_id,
+                video_url,
+                r2_key,
+            )
+            return SegmentVideoResult(
+                video_bytes=b"",
+                provider_video_url=video_url,
+                provider_metadata=meta,
+            )
+
         try:
             video_bytes = download_remote_video_bytes(
                 video_url=video_url,
@@ -338,13 +442,6 @@ class RailwayXAIVideoProxyProvider:
         except Exception as e:
             raise ShortDramaVideoProviderError(f"Railway xAI video download failed: {e}") from e
 
-        meta: dict[str, Any] = {
-            "provider": "railway_xai_proxy",
-            "model": model,
-            "request_id": request_id,
-            "upstream_provider": data.get("provider"),
-            "duration_seconds": data.get("duration_seconds"),
-        }
         return SegmentVideoResult(
             video_bytes=video_bytes,
             provider_video_url=video_url,

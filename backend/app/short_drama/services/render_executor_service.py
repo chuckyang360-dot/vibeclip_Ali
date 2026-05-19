@@ -618,49 +618,71 @@ class RenderExecutorService:
                 duration_seconds=plan.duration_seconds,
             )
             trace["poll_completed"] = True
-            trace["download_ok"] = True
             self._set_job_status(db, job, status=RenderJobStatus.RUNNING.value, progress=70)
             provider_video_url = (result.provider_video_url or "").strip()
-            if provider_video_url:
-                disk_path = download_video(provider_video_url, project_id=project_id, segment_id=segment_id)
-            else:
-                fd, tmp_name = tempfile.mkstemp(suffix=".mp4")
-                os.close(fd)
-                disk_path = Path(tmp_name)
-                disk_path.write_bytes(result.video_bytes)
+            meta = dict(result.provider_metadata or {})
+            storage = str(meta.get("storage") or "").strip().lower()
+            use_proxy_r2_url = storage == "r2" and bool(provider_video_url)
+
+            if use_proxy_r2_url:
+                url = provider_video_url
+                trace["download_ok"] = True
+                trace["save_ok"] = True
+                trace["final_video_url"] = url
+                self._set_job_status(db, job, status=RenderJobStatus.RUNNING.value, progress=90)
                 logger.info(
-                    "[SEGMENT_VIDEO_DOWNLOAD_SUCCESS] project_id=%s segment_id=%s source_video_url=%s local_path=%s bytes=%s",
+                    "[SEGMENT_VIDEO_SAVED] project_id=%s segment_id=%s absolute_file_path=%s public_video_url=%s "
+                    "file_exists=%s file_size=%s storage=r2 skip_download=true skip_r2_upload=true",
                     project_id,
                     segment_id,
                     "",
-                    str(disk_path.resolve()),
-                    disk_path.stat().st_size,
+                    url,
+                    False,
+                    0,
                 )
-            ts = int(time.time() * 1000)
-            safe_seg = "".join(c if c.isalnum() or c in "-_" else "_" for c in segment_id)[:120]
-            r2_key = f"short-drama/videos/{project_id}/segment_{safe_seg}_{ts}.mp4"
-            url = upload_file(str(disk_path.resolve()), r2_key)
-            trace["save_ok"] = True
-            trace["final_video_url"] = url
-            self._set_job_status(db, job, status=RenderJobStatus.RUNNING.value, progress=90)
-            logger.info(
-                "[SEGMENT_VIDEO_SAVED] project_id=%s segment_id=%s absolute_file_path=%s public_video_url=%s file_exists=%s file_size=%s",
-                project_id,
-                segment_id,
-                str(disk_path.resolve()),
-                url,
-                disk_path.is_file(),
-                disk_path.stat().st_size if disk_path.is_file() else 0,
-            )
-            try:
-                validate_segment_mp4_path(disk_path, segment_id=segment_id)
-            except ShortDramaInvalidSegmentVideoError:
+            else:
+                trace["download_ok"] = True
+                if provider_video_url:
+                    disk_path = download_video(
+                        provider_video_url, project_id=project_id, segment_id=segment_id
+                    )
+                else:
+                    fd, tmp_name = tempfile.mkstemp(suffix=".mp4")
+                    os.close(fd)
+                    disk_path = Path(tmp_name)
+                    disk_path.write_bytes(result.video_bytes)
+                    logger.info(
+                        "[SEGMENT_VIDEO_DOWNLOAD_SUCCESS] project_id=%s segment_id=%s source_video_url=%s local_path=%s bytes=%s",
+                        project_id,
+                        segment_id,
+                        "",
+                        str(disk_path.resolve()),
+                        disk_path.stat().st_size,
+                    )
+                ts = int(time.time() * 1000)
+                safe_seg = "".join(c if c.isalnum() or c in "-_" else "_" for c in segment_id)[:120]
+                r2_key = f"short-drama/videos/{project_id}/segment_{safe_seg}_{ts}.mp4"
+                url = upload_file(str(disk_path.resolve()), r2_key)
+                trace["save_ok"] = True
+                trace["final_video_url"] = url
+                self._set_job_status(db, job, status=RenderJobStatus.RUNNING.value, progress=90)
+                logger.info(
+                    "[SEGMENT_VIDEO_SAVED] project_id=%s segment_id=%s absolute_file_path=%s public_video_url=%s file_exists=%s file_size=%s",
+                    project_id,
+                    segment_id,
+                    str(disk_path.resolve()),
+                    url,
+                    disk_path.is_file(),
+                    disk_path.stat().st_size if disk_path.is_file() else 0,
+                )
                 try:
-                    disk_path.unlink(missing_ok=True)
-                except OSError:
-                    pass
-                raise
-            meta = dict(result.provider_metadata or {})
+                    validate_segment_mp4_path(disk_path, segment_id=segment_id)
+                except ShortDramaInvalidSegmentVideoError:
+                    try:
+                        disk_path.unlink(missing_ok=True)
+                    except OSError:
+                        pass
+                    raise
             job_meta = self._job_meta(job)
             job_meta.update(meta)
             job.meta_json = job_meta
@@ -676,14 +698,19 @@ class RenderExecutorService:
                 "provider_request_id": rid,
                 "meta": meta,
             }
+            abs_path = ""
+            file_exists = False
+            if "disk_path" in locals():
+                abs_path = str(disk_path.resolve())
+                file_exists = disk_path.is_file()
             logger.info(
                 "[SEGMENT_VIDEO_WRITEBACK] project_id=%s segment_id=%s video_url=%s absolute_file_path=%s "
                 "file_exists=%s",
                 project_id,
                 segment_id,
                 url,
-                str(disk_path.resolve()),
-                disk_path.is_file(),
+                abs_path,
+                file_exists,
             )
             try:
                 rec.script_json = base

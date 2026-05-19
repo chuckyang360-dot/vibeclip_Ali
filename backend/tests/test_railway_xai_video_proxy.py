@@ -110,7 +110,54 @@ def test_request_proxy_ok_false_raises(monkeypatch: pytest.MonkeyPatch) -> None:
             )
 
 
-def test_provider_submit_and_complete(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_provider_r2_result_skips_download(monkeypatch: pytest.MonkeyPatch) -> None:
+    proxy_json = {
+        "ok": True,
+        "provider": "xai",
+        "model": "grok-imagine-video",
+        "request_id": "xai-req-r2",
+        "storage": "r2",
+        "video_url": "https://cdn.vibeclip.cn/short-drama/videos/2/seg.mp4",
+        "r2_key": "short-drama/videos/2/seg.mp4",
+        "xai_video_url": "https://vidgen.x.ai/some/path.mp4",
+        "duration_seconds": 8,
+    }
+    monkeypatch.setattr(
+        "app.short_drama.providers.railway_xai_video_proxy.request_railway_xai_video_generation",
+        lambda **kwargs: dict(proxy_json),
+    )
+
+    def _must_not_download(**kwargs: object) -> bytes:
+        raise AssertionError("download_remote_video_bytes must not be called for storage=r2")
+
+    monkeypatch.setattr(
+        "app.short_drama.providers.railway_xai_video_proxy.download_remote_video_bytes",
+        _must_not_download,
+    )
+
+    provider = RailwayXAIVideoProxyProvider()
+    rid = provider.submit_reference_segment_video(
+        prompt="p",
+        reference_image_urls=["https://img.example/r.jpg"],
+        duration_seconds=8,
+        aspect_ratio="9:16",
+        resolution="720p",
+        project_id=2,
+        segment_id="seg_1",
+    )
+    result = provider.complete_segment_video(
+        request_id=rid,
+        project_id=2,
+        segment_id="seg_1",
+        duration_seconds=8,
+    )
+    assert result.video_bytes == b""
+    assert result.provider_video_url == proxy_json["video_url"]
+    assert result.provider_metadata["storage"] == "r2"
+    assert result.provider_metadata["r2_key"] == proxy_json["r2_key"]
+
+
+def test_provider_legacy_result_still_downloads(monkeypatch: pytest.MonkeyPatch) -> None:
     proxy_json = {
         "ok": True,
         "provider": "xai",
@@ -138,7 +185,6 @@ def test_provider_submit_and_complete(monkeypatch: pytest.MonkeyPatch) -> None:
         project_id=2,
         segment_id="seg_1",
     )
-    assert rid == "xai-req-1"
     result = provider.complete_segment_video(
         request_id=rid,
         project_id=2,
@@ -147,7 +193,18 @@ def test_provider_submit_and_complete(monkeypatch: pytest.MonkeyPatch) -> None:
     )
     assert result.video_bytes == b"mp4data"
     assert result.provider_video_url == "https://cdn.example.com/v.mp4"
-    assert result.provider_metadata["provider"] == "railway_xai_proxy"
+
+
+def test_vidgen_video_url_raises(monkeypatch: pytest.MonkeyPatch) -> None:
+    from app.short_drama.providers.railway_xai_video_proxy import _ensure_not_vidgen_video_url
+
+    with pytest.raises(ShortDramaVideoProviderError, match="expected R2 URL"):
+        _ensure_not_vidgen_video_url(
+            "https://vidgen.x.ai/generated/abc.mp4",
+            project_id=1,
+            segment_id="s1",
+            request_id="r1",
+        )
 
 
 def test_request_proxy_http_500_raises(monkeypatch: pytest.MonkeyPatch) -> None:
