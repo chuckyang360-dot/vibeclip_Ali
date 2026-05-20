@@ -4,6 +4,7 @@ import type {
   StoryBlueprintDto,
 } from '@/types/shortDramaApi';
 import { resolveBlueprintStructureTypeDisplay } from './shortDramaAdapters';
+import { storyStyleZhLabel, targetMarketZhLabel, visualStyleZhLabel } from './projectLocales';
 import type {
   StoryBlueprintAnalysisSection,
   StoryBlueprintGlobalField,
@@ -57,6 +58,46 @@ function readableBriefValue(value: unknown): string {
   return '';
 }
 
+function nonEmptyDisplayValue(value: unknown): string {
+  const v = typeof value === 'string' ? value.trim() : '';
+  if (!v || v === '—') return '';
+  if (v.toLowerCase() === 'unspecified') return '';
+  return v;
+}
+
+function labeledOrEmpty(labeler: (v: unknown) => string, value: unknown): string {
+  const raw = nonEmptyDisplayValue(value);
+  if (!raw) return '';
+  const labeled = labeler(raw);
+  return labeled === '—' ? '' : labeled;
+}
+
+/** 仅 S0 用户在项目上选择的市场（不回退 S1 product_context / AI）。 */
+function resolveUserOriginalMarketFromPipeline(pipeline: PipelineSummaryDto | null | undefined): string {
+  const rawMarket = nonEmptyDisplayValue(pipeline?.project?.target_market);
+  if (!rawMarket) return '';
+  const labeled = targetMarketZhLabel(rawMarket);
+  return labeled && labeled !== '—' ? labeled : '';
+}
+
+/**
+ * 仅 S0 用户原始风格字段（creative_intent_input / project），不含 creative_brief 与 AI 摘要。
+ */
+function resolveUserOriginalStyleFromPipeline(
+  pipeline: PipelineSummaryDto | null | undefined,
+  creativeIntentInput: Record<string, unknown> | null,
+): string {
+  const project = pipeline?.project;
+  const intent = creativeIntentInput ?? null;
+  const parts = [
+    labeledOrEmpty(visualStyleZhLabel, intent?.visual_style),
+    labeledOrEmpty(storyStyleZhLabel, intent?.style),
+    labeledOrEmpty(visualStyleZhLabel, project?.visual_style),
+    labeledOrEmpty(storyStyleZhLabel, project?.style),
+  ].filter(Boolean);
+  return [...new Set(parts)].join(' · ');
+}
+
 /**
  * 左侧：S0 创作提示 + 可选 AI 创作理解摘要。
  */
@@ -78,24 +119,25 @@ export function buildStoryBlueprintLeftRailsFromPipeline(
   const creativeIntentInput = pipeline?.creative_intent_input ?? pipeline?.project?.creative_intent_input ?? null;
   const creativeBrief = pipeline?.creative_brief ?? pipeline?.project?.creative_brief_structured ?? null;
   const project = pipeline?.project;
+  const intentRecord = asRecord(creativeIntentInput);
   const platforms = Array.isArray(creativeIntentInput?.platform_hints)
     ? creativeIntentInput.platform_hints.map(String).filter(Boolean).join('、')
     : '';
+  const duration =
+    nonEmptyDisplayValue(creativeIntentInput?.duration_hint) || nonEmptyDisplayValue(project?.duration);
+  const aspectRatio =
+    nonEmptyDisplayValue(creativeIntentInput?.aspect_ratio_hint) || nonEmptyDisplayValue(project?.aspect_ratio);
   const settings: StoryBlueprintSettingRow[] = [
-    { label: '参考平台', value: platforms || '—' },
-    { label: '大概时长', value: creativeIntentInput?.duration_hint?.trim() || '—' },
-    { label: '画面比例', value: creativeIntentInput?.aspect_ratio_hint?.trim() || '—' },
-  ];
-  const intentExtra = asRecord(creativeIntentInput);
-  const styleParts = [
-    project?.visual_style?.trim(),
-    String(intentExtra?.content_form || '').trim(),
-    String(intentExtra?.narrative_style || '').trim(),
-  ].filter(Boolean);
+    platforms ? { label: '参考平台', value: platforms } : null,
+    duration ? { label: '大概时长', value: duration } : null,
+    aspectRatio ? { label: '画面比例', value: aspectRatio } : null,
+  ].filter((row): row is StoryBlueprintSettingRow => row !== null);
+  const styleValue = resolveUserOriginalStyleFromPipeline(pipeline, intentRecord);
+  const marketValue = resolveUserOriginalMarketFromPipeline(pipeline);
   const metaRows: StoryBlueprintSettingRow[] = [
-    { label: '风格', value: styleParts.join(' · ') || '—' },
-    { label: '市场', value: project?.target_market?.trim() || '—' },
-  ];
+    styleValue ? { label: '风格', value: styleValue } : null,
+    marketValue ? { label: '市场', value: marketValue } : null,
+  ].filter((row): row is StoryBlueprintSettingRow => row !== null);
   const briefProduct = asRecord(creativeBrief?.product_understanding);
   const briefIntent = asRecord(creativeBrief?.creative_intent);
   const briefInterpretation = asRecord(creativeBrief?.ai_interpretation);

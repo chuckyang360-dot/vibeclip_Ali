@@ -14,6 +14,29 @@ from .railway_s1_vision import _effective_proxy_base_url, _proxy_detail_upstream
 
 logger = logging.getLogger(__name__)
 
+_STORY_LONG_TIMEOUT_STAGES = frozenset({"STORY_GENERATION", "STORY_GENERATION_REPAIR"})
+_STORY_LONG_TIMEOUT_SERVICES = frozenset({"story_planner", "story_planner_repair"})
+
+
+def effective_railway_text_proxy_timeout_seconds(
+    *,
+    service_name: str = "",
+    stage: str = "",
+) -> int:
+    """Per-stage Railway text proxy read timeout; story generation uses a longer budget."""
+    stage_key = (stage or "").strip().upper()
+    svc_key = (service_name or "").strip().lower()
+    if (
+        stage_key in _STORY_LONG_TIMEOUT_STAGES
+        or stage_key.startswith("STORY_GENERATION")
+        or svc_key in _STORY_LONG_TIMEOUT_SERVICES
+    ):
+        raw = settings.STORY_GENERATION_PROXY_TIMEOUT_SECONDS
+        if raw is not None and int(raw) > 0:
+            return max(5, int(raw))
+        return max(5, int(settings.SHORT_DRAMA_XAI_TEXT_TIMEOUT_SECONDS or 180))
+    return max(5, int(settings.AI_PROXY_TIMEOUT_SECONDS or 120))
+
 
 def _trunc_log_message(message: str, max_len: int = 500) -> str:
     t = (message or "").strip().replace("\n", " ")
@@ -22,12 +45,24 @@ def _trunc_log_message(message: str, max_len: int = 500) -> str:
     return t[: max_len - 3] + "..."
 
 
-def _text_proxy_error(project_id: int, error_type: str, message: str) -> None:
+def _text_proxy_error(
+    project_id: int,
+    error_type: str,
+    message: str,
+    *,
+    timeout_seconds: int | None = None,
+    service_name: str = "",
+    stage: str = "",
+) -> None:
     logger.error(
-        "[RAILWAY_PROXY_TEXT_ERROR] project_id=%s error_type=%s message=%s",
+        "[RAILWAY_PROXY_TEXT_ERROR] project_id=%s error_type=%s message=%s "
+        "timeout_seconds=%s service_name=%s stage=%s",
         project_id,
         error_type,
         _trunc_log_message(message),
+        timeout_seconds if timeout_seconds is not None else "",
+        service_name or "",
+        stage or "",
     )
 
 
@@ -43,23 +78,41 @@ def railway_chat_completion_raw_text(
 ) -> str:
     base = _effective_proxy_base_url()
     token = (settings.AI_PROXY_TOKEN or "").strip()
-    timeout_sec = max(5, int(settings.AI_PROXY_TIMEOUT_SECONDS or 120))
+    timeout_sec = effective_railway_text_proxy_timeout_seconds(
+        service_name=service_name,
+        stage=stage,
+    )
 
     if not base:
-        _text_proxy_error(project_id, "missing_proxy_base_url", "AI_PROXY_BASE_URL is not set")
+        _text_proxy_error(
+            project_id,
+            "missing_proxy_base_url",
+            "AI_PROXY_BASE_URL is not set",
+            timeout_seconds=timeout_sec,
+            service_name=service_name,
+            stage=stage,
+        )
         raise ShortDramaProviderError(
             "AI_PROXY_BASE_URL is not configured (AI_PROVIDER=railway_proxy requires AI_PROXY_BASE_URL)"
         )
 
     if not token:
-        _text_proxy_error(project_id, "missing_proxy_token", "AI_PROXY_TOKEN is not set")
+        _text_proxy_error(
+            project_id,
+            "missing_proxy_token",
+            "AI_PROXY_TOKEN is not set",
+            timeout_seconds=timeout_sec,
+            service_name=service_name,
+            stage=stage,
+        )
         raise ShortDramaProviderError(
             "AI_PROXY_TOKEN is not configured (AI_PROVIDER=railway_proxy requires AI_PROXY_TOKEN)"
         )
 
     urls = [str(u).strip() for u in (image_urls or []) if str(u or "").strip()]
     logger.info(
-        "[RAILWAY_PROXY_TEXT_REQUEST] project_id=%s service_name=%s stage=%s image_count=%s user_text_chars=%s proxy_base_url=%s max_output_tokens=%s",
+        "[RAILWAY_PROXY_TEXT_REQUEST] project_id=%s service_name=%s stage=%s image_count=%s "
+        "user_text_chars=%s proxy_base_url=%s max_output_tokens=%s timeout_seconds=%s",
         project_id,
         service_name,
         stage,
@@ -67,6 +120,7 @@ def railway_chat_completion_raw_text(
         len(user_text or ""),
         base,
         max_output_tokens,
+        timeout_sec,
     )
 
     url = f"{base}/text/completions"
@@ -88,13 +142,34 @@ def railway_chat_completion_raw_text(
         with httpx.Client(timeout=timeout) as client:
             resp = client.post(url, headers=headers, json=body)
     except httpx.TimeoutException as e:
-        _text_proxy_error(project_id, "timeout", str(e))
+        _text_proxy_error(
+            project_id,
+            "timeout",
+            str(e),
+            timeout_seconds=timeout_sec,
+            service_name=service_name,
+            stage=stage,
+        )
         raise ShortDramaProviderError(f"railway_ai_proxy_text_timeout: {e}") from e
     except httpx.ConnectError as e:
-        _text_proxy_error(project_id, "network_error", str(e))
+        _text_proxy_error(
+            project_id,
+            "network_error",
+            str(e),
+            timeout_seconds=timeout_sec,
+            service_name=service_name,
+            stage=stage,
+        )
         raise ShortDramaProviderError(f"railway_ai_proxy_text_network_error: {e}") from e
     except httpx.HTTPError as e:
-        _text_proxy_error(project_id, "network_error", str(e))
+        _text_proxy_error(
+            project_id,
+            "network_error",
+            str(e),
+            timeout_seconds=timeout_sec,
+            service_name=service_name,
+            stage=stage,
+        )
         raise ShortDramaProviderError(f"railway_ai_proxy_text_network_error: {e}") from e
 
     snippet = _trunc_log_message((resp.text or ""), 1500)
@@ -106,7 +181,14 @@ def railway_chat_completion_raw_text(
         )
 
     if resp.status_code == 504:
-        _text_proxy_error(project_id, "timeout", f"HTTP 504: {snippet}")
+        _text_proxy_error(
+            project_id,
+            "timeout",
+            f"HTTP 504: {snippet}",
+            timeout_seconds=timeout_sec,
+            service_name=service_name,
+            stage=stage,
+        )
         raise ShortDramaProviderError(f"railway_ai_proxy_text_timeout: {snippet or resp.reason_phrase}")
 
     if resp.status_code == 502:

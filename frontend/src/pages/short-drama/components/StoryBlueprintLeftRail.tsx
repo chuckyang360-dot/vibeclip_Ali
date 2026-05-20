@@ -69,7 +69,7 @@ export function StoryBlueprintLeftRail({
         <div className="mb-4 flex flex-wrap gap-2">
           {settings.map((item, idx) => {
             const rawIcon = chipIcons[idx] ?? 'ri-information-line';
-            const display = item.value === '—' ? item.label : item.value;
+            const display = item.value;
             return (
               <div
                 key={item.label}

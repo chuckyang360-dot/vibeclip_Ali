@@ -1,12 +1,10 @@
 import type { StoryBlueprintAnalysisSection } from '@/types/shortDrama';
 import type { StoryBlueprintLayerCompleteness } from '../utils/storyBlueprintDerived';
-import { scrollToBlueprintSection } from './storyBlueprintDisplay';
 import { ri } from '../utils/shortDramaHelpers';
 
 type Props = {
   sections: StoryBlueprintAnalysisSection[];
   overallEval?: { ready: boolean; message: string; layers: StoryBlueprintLayerCompleteness };
-  onNext?: () => void;
   className?: string;
 };
 
@@ -72,34 +70,8 @@ function CheckRow({ label, value, status }: { label: string; value: string; stat
   );
 }
 
-function AnchorLink({ layer, id, icon, label }: { layer: string; id: string; icon: string; label: string }) {
-  return (
-    <button
-      type="button"
-      onClick={() => scrollToBlueprintSection(id)}
-      className="flex w-full cursor-pointer items-center gap-2 rounded-lg px-2.5 py-2 text-[12px] transition-colors"
-      style={{ color: '#444444' }}
-      onMouseEnter={(e) => {
-        e.currentTarget.style.background = '#F5F5F7';
-      }}
-      onMouseLeave={(e) => {
-        e.currentTarget.style.background = 'transparent';
-      }}
-    >
-      <div className="flex h-4 w-4 shrink-0 items-center justify-center">
-        <i className={ri(`${icon} text-[10px] text-[#8E8E93]`)} aria-hidden />
-      </div>
-      <span className="flex-1 text-left">{label}</span>
-      <span className="text-[9px] font-bold" style={{ color: '#C7C7CC' }}>
-        {layer}
-      </span>
-      <i className={ri('ri-arrow-right-up-line text-[10px] text-[#C7C7CC]')} aria-hidden />
-    </button>
-  );
-}
-
-/** Framer RightPanel：蓝图检查 + 页面导航 + 进入资产管理（数据来自 pipeline 派生）。 */
-export function StoryBlueprintRightRail({ sections, overallEval, onNext, className = '' }: Props) {
+/** Framer RightPanel：蓝图检查（数据来自 pipeline 派生）。 */
+export function StoryBlueprintRightRail({ sections, overallEval, className = '' }: Props) {
   const layers = overallEval?.layers;
   const overallReady = layers?.readyCount === 3;
 
@@ -113,15 +85,6 @@ export function StoryBlueprintRightRail({ sections, overallEval, onNext, classNa
       <p className="mb-3 text-[10px] font-bold uppercase tracking-widest" style={{ color: '#AEAEB2' }}>
         蓝图检查
       </p>
-
-      <div className="mb-4 rounded-xl p-2" style={{ background: '#ffffff', border: '1px solid #EAEAEA' }}>
-        <p className="px-2.5 pb-1.5 pt-1 text-[10px] font-bold uppercase tracking-wider" style={{ color: '#AEAEB2' }}>
-          页面导航
-        </p>
-        <AnchorLink layer="第1层" id="layer-1" icon="ri-book-open-line" label="故事理解" />
-        <AnchorLink layer="第2层" id="layer-2" icon="ri-scissors-cut-line" label="执行分段" />
-        <AnchorLink layer="第3层" id="layer-3" icon="ri-settings-4-line" label="生产准备" />
-      </div>
 
       {displaySections.map((section) => {
         const headerIcon = SECTION_HEADER_ICON[section.key] ?? section.icon;
@@ -178,24 +141,6 @@ export function StoryBlueprintRightRail({ sections, overallEval, onNext, classNa
             ))}
           </div>
         </div>
-      ) : null}
-
-      {onNext ? (
-        <button
-          type="button"
-          onClick={onNext}
-          className="flex w-full cursor-pointer items-center justify-center gap-2 whitespace-nowrap rounded-xl px-4 py-3 text-[13px] font-semibold text-white transition-colors"
-          style={{ background: '#1D1D1F' }}
-          onMouseEnter={(e) => {
-            e.currentTarget.style.background = '#374151';
-          }}
-          onMouseLeave={(e) => {
-            e.currentTarget.style.background = '#1D1D1F';
-          }}
-        >
-          进入资产管理
-          <i className={ri('ri-arrow-right-line text-[12px]')} aria-hidden />
-        </button>
       ) : null}
     </aside>
   );

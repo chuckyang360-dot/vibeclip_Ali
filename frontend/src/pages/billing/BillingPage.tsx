@@ -2,8 +2,9 @@ import { useCallback, useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { fetchBillingMe } from '../../api/billingApi';
 import type { BillingMeResponse, CreditRecordDto, PaymentOrderListItemDto } from '../../api/billingApi';
-import { SUBSCRIPTION_PLANS } from '../../constants/billing';
 import { getToken } from '../../services/api';
+import { useAuth } from '../../contexts/AuthContext';
+import { subscriptionPlanDisplayName } from '../../utils/userAccount';
 import {
   creditTransactionTypeLabel,
   parseSubscriptionGrantNote,
@@ -17,12 +18,6 @@ function formatDate(iso: string | null | undefined): string {
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return '--';
   return d.toLocaleDateString('zh-CN', { year: 'numeric', month: '2-digit', day: '2-digit' });
-}
-
-function planDisplayName(plan: string): string {
-  if (plan === 'free') return '免费版';
-  const p = SUBSCRIPTION_PLANS[plan as keyof typeof SUBSCRIPTION_PLANS];
-  return p?.name ?? plan;
 }
 
 function subscriptionStatusLabel(status: string): string {
@@ -77,6 +72,7 @@ function creditRecordSecondaryLine(row: CreditRecordDto): string | null {
 
 export function BillingPage() {
   const navigate = useNavigate();
+  const { refreshUser } = useAuth();
   const [data, setData] = useState<BillingMeResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -91,12 +87,13 @@ export function BillingPage() {
     try {
       const me = await fetchBillingMe();
       setData(me);
+      await refreshUser().catch(() => {});
     } catch (e) {
       setError(e instanceof Error ? e.message : '加载失败');
     } finally {
       setLoading(false);
     }
-  }, [navigate]);
+  }, [navigate, refreshUser]);
 
   useEffect(() => {
     void load();
@@ -108,7 +105,7 @@ export function BillingPage() {
   const subtitle =
     planKey === 'free' || !isPaid
       ? '每月 100 积分 · 基础视频生成（免费版额度）'
-      : `每月 ${sub?.monthly_credits?.toLocaleString() ?? '--'} 积分 · ${planDisplayName(sub.plan)}`;
+      : `每月 ${sub?.monthly_credits?.toLocaleString() ?? '--'} 积分 · ${subscriptionPlanDisplayName(sub.plan)}`;
 
   return (
     <ShortDramaLayout headerMode="landing">
@@ -146,7 +143,7 @@ export function BillingPage() {
                       <i className="ri-vip-crown-line text-[20px] text-[#7C3AED]" />
                     </div>
                     <div>
-                      <p className="text-[15px] font-bold text-[#1D1D1F]">{planDisplayName(sub?.plan ?? 'free')}</p>
+                      <p className="text-[15px] font-bold text-[#1D1D1F]">{subscriptionPlanDisplayName(sub?.plan ?? 'free')}</p>
                       <p className="text-[12.5px] text-[#8E8E93]">{subtitle}</p>
                     </div>
                   </div>
@@ -252,7 +249,7 @@ export function BillingPage() {
                           <td className="py-2.5 pr-3 whitespace-nowrap">{paymentMethodLabel(o.payment_provider)}</td>
                           <td className="py-2.5 pr-3 font-mono text-[12px]">{o.out_trade_no}</td>
                           <td className="py-2.5 pr-3 font-mono text-[12px]">{providerTxnDisplay(o)}</td>
-                          <td className="py-2.5 pr-3">{planDisplayName(o.plan_code)}</td>
+                          <td className="py-2.5 pr-3">{subscriptionPlanDisplayName(o.plan_code)}</td>
                           <td className="py-2.5 pr-3">{o.period === 'yearly' ? '年付' : '月付'}</td>
                           <td className="py-2.5 pr-3">¥{o.amount}</td>
                           <td className="py-2.5 pr-3">{orderStatusLabel(o.status)}</td>

@@ -12,7 +12,7 @@ from ..utils.flow_logging import ai_log_extra_from_context, log_ai_error, log_ai
 from ..utils.json_parser import try_parse_json_object
 from ..utils.prompts import JSON_REPAIR_SYSTEM_PROMPT
 from .railway_s1_vision import ai_provider_wants_railway_proxy
-from .railway_text_proxy import railway_chat_completion_raw_text
+from .railway_text_proxy import effective_railway_text_proxy_timeout_seconds, railway_chat_completion_raw_text
 from .xai_client import (
     XAIClient,
     effective_xai_text_model,
@@ -121,11 +121,15 @@ class XAITextProvider:
                     }
                 )
                 client_rid = f"railway-{uuid.uuid4().hex[:12]}"
+                proxy_timeout = effective_railway_text_proxy_timeout_seconds(
+                    service_name=service_name,
+                    stage=stage,
+                )
                 log_ai_request(
                     logger,
                     "railway_proxy",
                     model,
-                    timeout_seconds=settings.AI_PROXY_TIMEOUT_SECONDS,
+                    timeout_seconds=proxy_timeout,
                     system_prompt_len=len(system_prompt),
                     user_content_kind="text_chat_proxy",
                     user_content_len=len(user_text),
@@ -385,11 +389,16 @@ class XAITextProvider:
                         "schema_name": expected_schema_name,
                     }
                 )
+                repair_stage = f"{stage}_json_repair_{repair_attempt}"
+                repair_timeout = effective_railway_text_proxy_timeout_seconds(
+                    service_name=service_name,
+                    stage=repair_stage,
+                )
                 log_ai_request(
                     logger,
                     "railway_proxy",
                     model,
-                    timeout_seconds=settings.AI_PROXY_TIMEOUT_SECONDS,
+                    timeout_seconds=repair_timeout,
                     system_prompt_len=len(JSON_REPAIR_SYSTEM_PROMPT),
                     user_content_kind="json_repair_proxy",
                     user_content_len=len(repair_user),
@@ -400,7 +409,7 @@ class XAITextProvider:
                 text2 = railway_chat_completion_raw_text(
                     project_id=project_id,
                     service_name=service_name,
-                    stage=f"{stage}_json_repair_{repair_attempt}",
+                    stage=repair_stage,
                     system_prompt=JSON_REPAIR_SYSTEM_PROMPT,
                     user_text=repair_user,
                     image_urls=None,

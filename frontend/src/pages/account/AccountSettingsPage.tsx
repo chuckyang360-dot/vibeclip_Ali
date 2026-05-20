@@ -1,7 +1,7 @@
 import { useNavigate } from 'react-router-dom';
 import { useState } from 'react';
 import { useAuth } from '../../contexts/AuthContext';
-import type { AuthUser } from '../../services/api';
+import { getUserDisplayName, membershipLabelFromUser } from '../../utils/userAccount';
 import { ShortDramaLayout } from '../short-drama/components/ShortDramaLayout';
 
 function noopMsg() {
@@ -12,15 +12,14 @@ export function AccountSettingsPage() {
   const navigate = useNavigate();
   const { user, isAuthenticated, logout } = useAuth();
   const [activeTab, setActiveTab] = useState<'profile' | 'preference' | 'security'>('profile');
-  const u = user as AuthUser | null;
-
-  const username = u?.username?.trim() || u?.name?.trim() || (u?.id ? `用户 ${u.id}` : '未设置');
-  const email = u?.email || '-';
-  const userId = u?.id ?? '-';
+  const username = getUserDisplayName(user) || '未设置';
+  const email = user?.email || '-';
+  const userId = user?.id ?? '-';
   const registered =
-    u?.created_at && !Number.isNaN(Date.parse(u.created_at))
-      ? new Date(u.created_at).toLocaleString('zh-CN', { dateStyle: 'medium' })
+    user?.created_at && !Number.isNaN(Date.parse(user.created_at))
+      ? new Date(user.created_at).toLocaleString('zh-CN', { dateStyle: 'medium' })
       : '暂未记录';
+  const accountType = membershipLabelFromUser(user);
 
   const handleLogout = () => {
     logout();
@@ -38,7 +37,7 @@ export function AccountSettingsPage() {
     { label: '邮箱', value: email, editable: true },
     { label: '用户 ID', value: userId, editable: false },
     { label: '当前登录状态', value: isAuthenticated ? '已登录' : '未登录', editable: false },
-    { label: '账号类型', value: '免费版用户', editable: false },
+    { label: '账号类型', value: accountType, editable: false },
     { label: '注册时间', value: registered, editable: false },
   ];
 

@@ -31,6 +31,11 @@ class Settings(BaseSettings):
     AI_PROXY_BASE_URL: Optional[str] = Field(default=None, env="AI_PROXY_BASE_URL")
     AI_PROXY_TOKEN: Optional[str] = Field(default=None, env="AI_PROXY_TOKEN")
     AI_PROXY_TIMEOUT_SECONDS: int = Field(default=120, env="AI_PROXY_TIMEOUT_SECONDS")
+    #: Railway text proxy read timeout for S2 story_planner (STORY_GENERATION / REPAIR)
+    STORY_GENERATION_PROXY_TIMEOUT_SECONDS: int = Field(
+        default=240,
+        env="STORY_GENERATION_PROXY_TIMEOUT_SECONDS",
+    )
     #: Optional override for S3 image proxy; empty → AI_PROXY_BASE_URL
     RAILWAY_IMAGE_PROXY_BASE_URL: Optional[str] = Field(default=None, env="RAILWAY_IMAGE_PROXY_BASE_URL")
     RAILWAY_IMAGE_PROXY_TIMEOUT_SECONDS: int = Field(default=300, env="RAILWAY_IMAGE_PROXY_TIMEOUT_SECONDS")

@@ -522,29 +522,13 @@ export function ShortDramaProductInputPage() {
                     )}
                   </div>
 
+                  {briefStatus !== 'ready' ? (
                   <div className="shrink-0 border-t border-[#F0F0F0] px-5 pb-5 pt-3">
                     {briefStatus === 'loading' ? (
                       <div className="flex w-full items-center justify-center gap-2 rounded-xl bg-[#F5F5F7] py-3 text-[13px] text-[#8E8E93]">
                         <i className={ri('ri-loader-4-line', 'animate-spin text-[14px]')} aria-hidden />
                         AI 正在分析中…
                       </div>
-                    ) : briefStatus === 'ready' ? (
-                      <button
-                        type="button"
-                        onClick={() => void saveAndContinue()}
-                        disabled={!canContinue}
-                        className="flex w-full cursor-pointer items-center justify-center gap-2 rounded-xl py-3 text-[13.5px] font-semibold text-white transition-all duration-200 disabled:cursor-not-allowed disabled:bg-[#EAEAEA] disabled:text-[#AEAEB2]"
-                        style={{ background: canContinue ? '#1D1D1F' : undefined }}
-                        onMouseEnter={(e) => {
-                          if (canContinue) e.currentTarget.style.background = '#374151';
-                        }}
-                        onMouseLeave={(e) => {
-                          if (canContinue) e.currentTarget.style.background = '#1D1D1F';
-                        }}
-                      >
-                        <i className={ri('ri-checkbox-circle-line', 'text-[14px]')} aria-hidden />
-                        理解没问题，进入剧本生成
-                      </button>
                     ) : (
                       <button
                         type="button"
@@ -564,6 +548,7 @@ export function ShortDramaProductInputPage() {
                       </button>
                     )}
                   </div>
+                  ) : null}
                 </div>
               </div>
             </aside>
@@ -574,25 +559,14 @@ export function ShortDramaProductInputPage() {
           ) : null}
 
           <div className="mt-8 flex items-center justify-between border-t border-[#E5E5EA] pt-6">
-            <div className="flex items-center gap-3">
-              <button
-                type="button"
-                onClick={() => navigate(withProjectQuery('/short-drama/create', projectId))}
-                className="flex cursor-pointer items-center gap-2 whitespace-nowrap rounded-xl border border-[#E5E5EA] bg-white px-5 py-2.5 text-[13px] font-medium text-[#6E6E73] transition-all duration-200 hover:bg-[#F5F5F7]"
-              >
-                <i className={ri('ri-arrow-left-line', 'text-[12px]')} aria-hidden />
-                返回创作意图
-              </button>
-              <button
-                type="button"
-                onClick={() => void persistProductInput()}
-                disabled={projectId == null || isSaving}
-                className="flex cursor-pointer items-center gap-2 whitespace-nowrap rounded-xl border border-[#E5E5EA] bg-white px-5 py-2.5 text-[13px] font-medium text-[#6E6E73] transition-all duration-200 hover:bg-[#F5F5F7] disabled:cursor-not-allowed disabled:text-[#AEAEB2]"
-              >
-                <i className={ri(isSaving ? 'ri-loader-4-line' : 'ri-save-line', isSaving ? 'animate-spin text-[12px]' : 'text-[12px]')} aria-hidden />
-                {isSaving ? '保存中…' : '保存草稿'}
-              </button>
-            </div>
+            <button
+              type="button"
+              onClick={() => navigate(withProjectQuery('/short-drama/create', projectId))}
+              className="flex cursor-pointer items-center gap-2 whitespace-nowrap rounded-xl border border-[#E5E5EA] bg-white px-5 py-2.5 text-[13px] font-medium text-[#6E6E73] transition-all duration-200 hover:bg-[#F5F5F7]"
+            >
+              <i className={ri('ri-arrow-left-line', 'text-[12px]')} aria-hidden />
+              返回创作意图
+            </button>
             {canContinue ? (
               <button
                 type="button"

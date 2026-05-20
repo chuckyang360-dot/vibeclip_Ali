@@ -15,6 +15,7 @@ from ..config import settings
 from .google_oauth import login_with_google
 from .jwt_handler import create_access_token, get_current_user
 from .user_payload import public_user_dict
+from .username import allocate_unique_username
 
 router = APIRouter()
 
@@ -66,20 +67,12 @@ async def register_with_email(request: RegisterRequest, db: Session = Depends(ge
             detail="Email already registered"
         )
 
-    # Generate unique username from email prefix
-    base_username = request.email.split("@")[0]
-    username = base_username
+    display_name = (request.name or "").strip()
+    username = allocate_unique_username(db, preferred=display_name, email=request.email)
 
-    # Check if username exists, add suffix if needed
-    counter = 1
-    while db.query(User).filter(User.username == username).first():
-        username = f"{base_username}_{counter}"
-        counter += 1
-
-    # Create new user
     new_user = User(
         username=username,
-        name=request.name,
+        name=display_name or username,
         email=request.email,
     )
     new_user.set_password(request.password)

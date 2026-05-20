@@ -28,6 +28,7 @@ import {
 import { SHORT_DRAMA_UI } from './utils/shortDramaUiCopy';
 import { workflowNavProjectName } from './utils/workflowProjectName';
 import { withProjectQuery } from './utils/shortDramaRoutes';
+import { workflowFooterNextButtonClass, workflowFooterPrevButtonClass } from './utils/workflowFooterNav';
 import { ri, sdColors, sdFontHeading } from './utils/shortDramaHelpers';
 import { touchShortDramaProjectStep } from '@/services/shortDramaApi';
 
@@ -670,34 +671,24 @@ export function ShortDramaStoryBlueprintPage() {
               <button
                 type="button"
                 onClick={() => navigate(withProjectQuery('/short-drama/product-input', projectId))}
-                className="flex cursor-pointer items-center gap-2 whitespace-nowrap rounded-xl px-5 py-2.5 text-[13px] transition-colors"
-                style={{ background: '#ffffff', color: '#444444', border: '1px solid #EAEAEA' }}
+                className={workflowFooterPrevButtonClass}
               >
                 <i className={ri('ri-arrow-left-line text-[13px]')} aria-hidden />
-                <span>
-                  <span style={{ color: '#AEAEB2' }}>上一步：</span>商品理解
-                </span>
+                <span>上一步：商品理解</span>
               </button>
               <button
                 type="button"
                 onClick={() => navigate(withProjectQuery('/short-drama/assets', projectId))}
-                className="flex cursor-pointer items-center gap-2 whitespace-nowrap rounded-xl px-7 py-2.5 text-[14px] font-semibold text-white transition-colors"
-                style={{ background: '#1D1D1F' }}
+                className={workflowFooterNextButtonClass}
               >
-                <span>
-                  <span style={{ color: 'rgba(255,255,255,0.5)' }}>下一步：</span>资产管理
-                </span>
+                <span>下一步：资产管理</span>
                 <i className={ri('ri-arrow-right-line text-[13px]')} aria-hidden />
               </button>
             </div>
           ) : null}
         </main>
 
-        <StoryBlueprintRightRail
-          sections={rightAnalysis.sections}
-          overallEval={overallEval}
-          onNext={() => navigate(withProjectQuery('/short-drama/assets', projectId))}
-        />
+        <StoryBlueprintRightRail sections={rightAnalysis.sections} overallEval={overallEval} />
       </div>
     </div>
   );

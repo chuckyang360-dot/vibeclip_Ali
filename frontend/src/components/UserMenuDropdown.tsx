@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
-import type { AuthUser } from '../services/api';
+import { getUserDisplayName, membershipLabelFromUser } from '../utils/userAccount';
 
 export function UserMenuDropdown() {
   const navigate = useNavigate();
@@ -9,13 +9,8 @@ export function UserMenuDropdown() {
   const { user, logout } = useAuth();
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
-  const u = user as AuthUser | null;
-  const displayName =
-    u?.username?.trim() ||
-    u?.name?.trim() ||
-    (u?.id ? `用户 ${u.id}` : '') ||
-    u?.email?.split('@')[0] ||
-    '用户';
+  const displayName = getUserDisplayName(user);
+  const membershipLabel = membershipLabelFromUser(user);
   const avatarChar = displayName.charAt(0).toUpperCase();
 
   useEffect(() => {
@@ -72,8 +67,8 @@ export function UserMenuDropdown() {
           if (!open) (e.currentTarget as HTMLElement).style.background = 'transparent';
         }}
       >
-        {u?.picture ? (
-          <img src={u.picture} alt="" className="w-7 h-7 rounded-full object-cover shrink-0" />
+        {user?.picture ? (
+          <img src={user.picture} alt="" className="w-7 h-7 rounded-full object-cover shrink-0" />
         ) : (
           <div className="w-7 h-7 flex items-center justify-center rounded-full shrink-0 bg-[#7C3AED]">
             <span className="text-white text-[12px] font-semibold">{avatarChar}</span>
@@ -94,7 +89,7 @@ export function UserMenuDropdown() {
             </div>
             <div className="min-w-0">
               <p className="text-[13px] font-semibold truncate text-[#1D1D1F]">{displayName}</p>
-              <p className="text-[11px] text-[#8E8E93]">免费版用户</p>
+              <p className="text-[11px] text-[#8E8E93]">{membershipLabel}</p>
             </div>
           </div>
           <div className="py-2">
