@@ -88,6 +88,72 @@ location /api/ {
 
 7. **HTTPS（可选）**：申请证书（如 Let’s Encrypt 或阿里云 SSL），挂载到 Nginx 容器，并取消 `nginx.conf` 末尾注释的 `listen 443 ssl` 两段 `server`，同时在 `docker-compose.yml` 的 `nginx` 服务上增加证书目录只读挂载。
 
+## GitHub 自动部署（推荐）
+
+本仓库已提供 GitHub Actions 工作流：
+
+- `.github/workflows/deploy-aliyun.yml`
+- `deploy/aliyun/deploy-from-github.sh`
+
+触发方式：
+
+- push 到 `main` 分支自动部署。
+- 在 GitHub Actions 页面手动点击 `workflow_dispatch` 也可部署。
+
+### ECS 首次准备
+
+在 ECS 上选择一个固定目录保存仓库，例如：
+
+```bash
+sudo mkdir -p /opt/vibeclip_ali
+sudo chown -R "$USER":"$USER" /opt/vibeclip_ali
+git clone https://github.com/chuckyang360-dot/vibeclip_Ali.git /opt/vibeclip_ali
+cd /opt/vibeclip_ali/deploy/aliyun
+cp .env.example .env
+```
+
+然后填写 `deploy/aliyun/.env` 中的生产环境变量。该文件只保存在 ECS，不提交到 GitHub。
+
+确认 ECS 上具备：
+
+- `git`
+- `node` / `npm`
+- Docker Engine
+- Docker Compose 插件，即 `docker compose`
+
+如果 GitHub 仓库是私有仓库，ECS 还需要具备拉取该仓库的权限。推荐在 GitHub 仓库中配置只读 Deploy Key，并把对应私钥放到 ECS 用户的 `~/.ssh/`，确认在 ECS 上执行 `git fetch origin main` 能成功。
+
+### GitHub Secrets
+
+在 GitHub 仓库 `Settings -> Secrets and variables -> Actions` 中添加：
+
+| Secret | 必填 | 说明 |
+|--------|------|------|
+| `ALIYUN_ECS_HOST` | 是 | ECS 公网 IP 或域名 |
+| `ALIYUN_ECS_USER` | 是 | SSH 用户，例如 `admin` |
+| `ALIYUN_ECS_SSH_KEY` | 是 | 可登录 ECS 的私钥内容 |
+| `ALIYUN_ECS_PORT` | 否 | SSH 端口，默认 `22` |
+| `ALIYUN_APP_DIR` | 否 | ECS 上仓库目录，默认 `/opt/vibeclip_ali` |
+| `ALIYUN_DEPLOY_BRANCH` | 否 | 部署分支，默认 `main` |
+| `ALIYUN_VITE_API_BASE_URL` | 否 | 前端构建时的 API 地址；为空则读取 ECS 上 `deploy/aliyun/.env` 的 `API_BASE_URL` |
+
+### 自动部署做什么
+
+GitHub Actions SSH 到 ECS 后，会执行：
+
+```bash
+cd /opt/vibeclip_ali
+git fetch origin main
+git reset --hard origin/main
+cd frontend
+npm ci
+VITE_API_BASE_URL=<API 地址> npm run build
+cd ../deploy/aliyun
+docker compose up -d --build
+```
+
+注意：`git reset --hard origin/main` 会让 ECS 上的仓库代码与 GitHub `main` 完全一致。生产密钥必须放在未跟踪的 `deploy/aliyun/.env` 中，不要直接改 tracked 文件当作线上配置。
+
 ## 前端构建说明
 
 - **来源**：宿主机执行 `npm run build`，生成 **`frontend/dist`**。
@@ -143,4 +209,5 @@ location /api/ {
 | `docker-compose.yml` | `backend` 构建 + `nginx` 反代与静态站点 |
 | `nginx.conf` | 模式 A：www 静态、api 反代、SPA fallback、`/health`、大上传与长超时 |
 | `.env.example` | 阿里云生产向变量模板（无真实密钥） |
+| `deploy-from-github.sh` | GitHub Actions SSH 到 ECS 后执行的自动部署脚本 |
 | `README.md` | 本说明 |
