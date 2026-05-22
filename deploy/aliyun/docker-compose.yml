@@ -12,6 +12,9 @@ services:
     build:
       context: ../../backend
       dockerfile: Dockerfile
+      args:
+        APT_MIRROR: https://mirrors.aliyun.com/debian
+        PIP_INDEX_URL: https://mirrors.aliyun.com/pypi/simple/
     env_file:
       - .env
     expose:
