@@ -60,12 +60,12 @@ export function Login() {
 
             <form onSubmit={handleSubmit} className="space-y-4">
               <div>
-                <label className="block text-[12.5px] font-semibold mb-1.5 text-[#1D1D1F]">邮箱 / 用户名</label>
+                <label className="block text-[12.5px] font-semibold mb-1.5 text-[#1D1D1F]">邮箱 / Email</label>
                 <input
                   type="text"
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
-                  placeholder="请输入邮箱或用户名"
+                  placeholder="请输入邮箱 / Enter your email"
                   className="w-full px-4 py-2.5 rounded-xl text-[13.5px] outline-none transition-all duration-200 border border-[#EAEAEA] bg-[#FAFAFA] focus:border-[#7C3AED] focus:bg-white"
                   disabled={loading}
                   required
@@ -73,12 +73,12 @@ export function Login() {
               </div>
 
               <div>
-                <label className="block text-[12.5px] font-semibold mb-1.5 text-[#1D1D1F]">密码</label>
+                <label className="block text-[12.5px] font-semibold mb-1.5 text-[#1D1D1F]">密码 / Password</label>
                 <input
                   type="password"
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
-                  placeholder="输入你的密码"
+                  placeholder="输入你的密码 / Enter your password"
                   className="w-full px-4 py-2.5 rounded-xl text-[13.5px] outline-none transition-all duration-200 border border-[#EAEAEA] bg-[#FAFAFA] focus:border-[#7C3AED] focus:bg-white"
                   disabled={loading}
                   required
