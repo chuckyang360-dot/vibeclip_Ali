@@ -25,6 +25,7 @@ from ...database import SessionLocal
 from ...utils.r2_storage import upload_file
 from ..exceptions import ShortDramaInvalidSegmentVideoError, ShortDramaVideoInputError
 from ..models import AssetEntity, AssetImage, RenderJob, SegmentScriptRecord, ShortDramaProject
+from ..providers.gemini_veo_video_provider import GeminiVeoVideoProvider
 from ..providers.railway_xai_video_proxy import RailwayXAIVideoProxyProvider
 from ..providers.video_provider_config import effective_video_model_for_provider
 from ..providers.seedance_video_provider import SeedanceVideoProvider
@@ -348,6 +349,8 @@ class RenderExecutorService:
             return "mock"
         if isinstance(self._provider, SeedanceVideoProvider):
             return "seedance"
+        if isinstance(self._provider, GeminiVeoVideoProvider):
+            return "gemini_veo"
         if isinstance(self._provider, RailwayXAIVideoProxyProvider):
             return "railway_xai_proxy"
         return "xai"

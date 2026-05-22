@@ -485,6 +485,15 @@ def build_xai_video_provider() -> SegmentVideoProvider:
         logger.info("[VIDEO_PROVIDER] SEEDANCE provider ENABLED")
         return SeedanceVideoProvider()
 
+    if provider_env == "gemini_veo":
+        from .gemini_veo_video_provider import GeminiVeoVideoProvider
+
+        gemini_key = (settings.GEMINI_API_KEY or "").strip()
+        if not gemini_key:
+            raise ShortDramaVideoProviderError("GEMINI_API_KEY is required when VIDEO_PROVIDER=gemini_veo")
+        logger.info("[VIDEO_PROVIDER] GEMINI_VEO provider ENABLED")
+        return GeminiVeoVideoProvider()
+
     if is_prod and not (settings.XAI_API_KEY or "").strip():
         raise ShortDramaVideoProviderError(_PRODUCTION_VIDEO_PROVIDER_ERROR)
 

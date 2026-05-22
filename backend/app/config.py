@@ -209,6 +209,26 @@ class Settings(BaseSettings):
         default=600.0,
         env="SEEDANCE_TASK_TIMEOUT_SECONDS",
     )
+
+    # Google Gemini / Veo video generation (VIDEO_PROVIDER=gemini_veo)
+    GEMINI_API_KEY: Optional[str] = Field(default=None, env="GEMINI_API_KEY")
+    GEMINI_VIDEO_BASE_URL: str = Field(
+        default="https://generativelanguage.googleapis.com/v1beta",
+        env="GEMINI_VIDEO_BASE_URL",
+    )
+    GEMINI_VIDEO_MODEL: str = Field(
+        default="veo-3.1-generate-preview",
+        env="GEMINI_VIDEO_MODEL",
+    )
+    GEMINI_VIDEO_POLL_INTERVAL_SECONDS: float = Field(
+        default=10.0,
+        env="GEMINI_VIDEO_POLL_INTERVAL_SECONDS",
+    )
+    GEMINI_VIDEO_TIMEOUT_SECONDS: float = Field(
+        default=600.0,
+        env="GEMINI_VIDEO_TIMEOUT_SECONDS",
+    )
+
     # Public origin for Short Drama /static URLs (API + xAI reference images). Priority: SHORT_DRAMA_PUBLIC_BASE_URL → PUBLIC_BASE_URL → legacy SHORT_DRAMA_PUBLIC_MEDIA_BASE_URL → localhost (dev).
     SHORT_DRAMA_PUBLIC_BASE_URL: Optional[str] = Field(default=None, env="SHORT_DRAMA_PUBLIC_BASE_URL")
     PUBLIC_BASE_URL: Optional[str] = Field(default=None, env="PUBLIC_BASE_URL")

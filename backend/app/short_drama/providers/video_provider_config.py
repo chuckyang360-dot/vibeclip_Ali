@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from ...config import settings
+from .gemini_veo_video_client import effective_gemini_video_model
 from .seedance_video_client import effective_seedance_video_model
 from .xai_video_client import effective_xai_video_model
 from ..utils.ai_runtime_config import STAGE_S4_VIDEO_GENERATION, get_ai_runtime_config
@@ -17,10 +18,14 @@ def effective_video_model_for_provider(provider_label: str) -> str:
         if configured_provider == "seedance" and configured_model:
             return configured_model
         return effective_seedance_video_model()
+    if label == "gemini_veo":
+        if configured_provider == "gemini" and configured_model:
+            return configured_model
+        return effective_gemini_video_model()
     if label == "mock":
         return "mock-ffmpeg"
     if label in {"xai", "railway_xai_proxy"}:
-        if configured_model and configured_provider in {"xai", "grok", "gemini"}:
+        if configured_model and configured_provider in {"xai", "grok"}:
             return configured_model
         return effective_xai_video_model()
     return settings.XAI_VIDEO_MODEL or effective_xai_video_model()
