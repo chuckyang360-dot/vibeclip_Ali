@@ -1,4 +1,4 @@
-import { createContext, useContext, useState, useEffect, ReactNode } from 'react';
+import { createContext, useCallback, useContext, useEffect, useMemo, useState, ReactNode } from 'react';
 import * as api from '../services/api';
 import type { AuthUser } from '../services/api';
 
@@ -20,7 +20,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [token, setToken] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
 
-  const refreshUser = async () => {
+  const refreshUser = useCallback(async () => {
     const t = api.getToken();
     if (!t) return;
     try {
@@ -33,7 +33,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       api.removeToken();
       api.removeUser();
     }
-  };
+  }, []);
 
   // Load auth state from localStorage on mount; refresh profile for role/status
   useEffect(() => {
@@ -66,29 +66,32 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     };
   }, []);
 
-  const login = (data: { user: AuthUser; access_token: string }) => {
+  const login = useCallback((data: { user: AuthUser; access_token: string }) => {
     setToken(data.access_token);
     setUser(data.user);
     api.setToken(data.access_token);
     api.setUser(data.user);
-  };
+  }, []);
 
-  const logout = () => {
+  const logout = useCallback(() => {
     setToken(null);
     setUser(null);
     api.removeToken();
     api.removeUser();
-  };
+  }, []);
 
-  const register = async (name: string, email: string, password: string): Promise<void> => {
+  const register = useCallback(async (name: string, email: string, password: string): Promise<void> => {
     const response = await api.register(name, email, password);
     login({ user: response.user, access_token: response.access_token });
-  };
+  }, [login]);
+
+  const contextValue = useMemo(
+    () => ({ user, token, isAuthenticated: !!token, loading, login, register, logout, refreshUser }),
+    [user, token, loading, login, register, logout, refreshUser],
+  );
 
   return (
-    <AuthContext.Provider
-      value={{ user, token, isAuthenticated: !!token, loading, login, register, logout, refreshUser }}
-    >
+    <AuthContext.Provider value={contextValue}>
       {children}
     </AuthContext.Provider>
   );
