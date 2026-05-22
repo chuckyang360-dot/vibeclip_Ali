@@ -54,6 +54,8 @@ def generate_product_image_understanding_via_railway_proxy(
     system_prompt: str,
     user_payload: dict[str, Any],
     image_urls: list[str],
+    provider: str | None = None,
+    model: str | None = None,
 ) -> dict[str, Any]:
     base = _effective_proxy_base_url()
     token = (settings.AI_PROXY_TOKEN or "").strip()
@@ -89,6 +91,10 @@ def generate_product_image_understanding_via_railway_proxy(
         "system_prompt": system_prompt,
         "user_payload": user_payload,
     }
+    if provider:
+        body["provider"] = str(provider).strip()
+    if model:
+        body["model"] = str(model).strip()
 
     timeout = httpx.Timeout(timeout_sec, connect=min(30.0, float(timeout_sec)))
     try:

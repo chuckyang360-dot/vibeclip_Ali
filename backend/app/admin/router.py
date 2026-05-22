@@ -10,6 +10,9 @@ from sqlalchemy.orm import Session
 from ..database import get_db
 from ..models import (
     AdminOperationLog,
+    AIModelCatalog,
+    AIPromptTemplate,
+    AIStageConfig,
     ApiCallLog,
     PaymentOrder,
     User,
@@ -20,7 +23,16 @@ from ..short_drama.models import AssetEntity, AssetImage, RenderJob, ShortDramaP
 from .credit_ops import admin_deduct_credits, admin_grant_credits
 from .dashboard_data import build_dashboard
 from .deps import require_admin_user
-from .schemas import CreditDeductRequest, CreditGrantRequest, ReasonRequest
+from .schemas import (
+    AIModelCreateRequest,
+    AIPromptDraftRequest,
+    AIPromptPublishRequest,
+    AIStageModelUpdateRequest,
+    AIStagePromptPublishExistingRequest,
+    CreditDeductRequest,
+    CreditGrantRequest,
+    ReasonRequest,
+)
 from .timeutil import TZ_ADMIN, day_range_utc_sh, last_n_days_dates_sh, today_range_utc_sh
 
 router = APIRouter()
@@ -90,12 +102,332 @@ def _asset_preview_url(db: Session, asset: AssetEntity) -> str | None:
     return img.image_url if img else None
 
 
+def _json_safe(value: Any) -> str:
+    return json.dumps(value, ensure_ascii=False, default=str)
+
+
+def _model_payload(row: AIModelCatalog | None) -> dict[str, Any] | None:
+    if row is None:
+        return None
+    return {
+        "id": row.id,
+        "provider": row.provider,
+        "model_id": row.model_id,
+        "display_name": row.display_name,
+        "capability": row.capability,
+        "enabled": bool(row.enabled),
+        "sort_order": int(row.sort_order or 0),
+        "config_schema": row.config_schema or {},
+        "default_config": row.default_config or {},
+        "metadata_json": row.metadata_json or {},
+        "created_at": row.created_at.isoformat() if row.created_at else None,
+        "updated_at": row.updated_at.isoformat() if row.updated_at else None,
+    }
+
+
+def _prompt_payload(row: AIPromptTemplate | None, *, include_body: bool = True) -> dict[str, Any] | None:
+    if row is None:
+        return None
+    payload: dict[str, Any] = {
+        "id": row.id,
+        "stage_key": row.stage_key,
+        "name": row.name,
+        "version": int(row.version or 1),
+        "status": row.status,
+        "variables_schema": row.variables_schema or {},
+        "metadata_json": row.metadata_json or {},
+        "created_by": row.created_by,
+        "updated_by": row.updated_by,
+        "created_at": row.created_at.isoformat() if row.created_at else None,
+        "updated_at": row.updated_at.isoformat() if row.updated_at else None,
+    }
+    if include_body:
+        payload["system_prompt"] = row.system_prompt or ""
+        payload["user_prompt_template"] = row.user_prompt_template or ""
+    return payload
+
+
+def _stage_config_payload(db: Session, row: AIStageConfig) -> dict[str, Any]:
+    active_model = db.query(AIModelCatalog).filter(AIModelCatalog.id == row.active_model_id).first() if row.active_model_id else None
+    fallback_model = db.query(AIModelCatalog).filter(AIModelCatalog.id == row.fallback_model_id).first() if row.fallback_model_id else None
+    active_prompt = (
+        db.query(AIPromptTemplate).filter(AIPromptTemplate.id == row.active_prompt_template_id).first()
+        if row.active_prompt_template_id
+        else None
+    )
+    capability = str((row.config_json or {}).get("capability") or (active_model.capability if active_model else "")).strip()
+    candidate_models = (
+        db.query(AIModelCatalog)
+        .filter(AIModelCatalog.capability == capability, AIModelCatalog.enabled.is_(True))
+        .order_by(AIModelCatalog.sort_order.asc(), AIModelCatalog.provider.asc(), AIModelCatalog.model_id.asc())
+        .all()
+        if capability
+        else []
+    )
+    prompt_versions = (
+        db.query(AIPromptTemplate)
+        .filter(AIPromptTemplate.stage_key == row.stage_key)
+        .order_by(AIPromptTemplate.version.desc(), AIPromptTemplate.id.desc())
+        .limit(20)
+        .all()
+    )
+    return {
+        "stage_key": row.stage_key,
+        "stage_name": row.stage_name,
+        "enabled": bool(row.enabled),
+        "capability": capability,
+        "active_model": _model_payload(active_model),
+        "fallback_model": _model_payload(fallback_model),
+        "active_prompt": _prompt_payload(active_prompt),
+        "candidate_models": [_model_payload(m) for m in candidate_models],
+        "prompt_versions": [_prompt_payload(p, include_body=False) for p in prompt_versions],
+        "config_json": row.config_json or {},
+        "updated_by": row.updated_by,
+        "created_at": row.created_at.isoformat() if row.created_at else None,
+        "updated_at": row.updated_at.isoformat() if row.updated_at else None,
+    }
+
+
 @router.get("/dashboard")
 async def admin_dashboard(
     db: Session = Depends(get_db),
     _: User = Depends(require_admin_user),
 ):
     return build_dashboard(db)
+
+
+@router.get("/ai-models/configs")
+async def list_ai_stage_configs(
+    db: Session = Depends(get_db),
+    _: User = Depends(require_admin_user),
+):
+    rows = db.query(AIStageConfig).order_by(AIStageConfig.id.asc()).all()
+    models = (
+        db.query(AIModelCatalog)
+        .order_by(AIModelCatalog.capability.asc(), AIModelCatalog.sort_order.asc(), AIModelCatalog.provider.asc())
+        .all()
+    )
+    return {
+        "items": [_stage_config_payload(db, r) for r in rows],
+        "models": [_model_payload(m) for m in models],
+    }
+
+
+@router.post("/ai-models/catalog")
+async def create_ai_model_catalog_item(
+    body: AIModelCreateRequest,
+    request: Request,
+    db: Session = Depends(get_db),
+    admin: User = Depends(require_admin_user),
+):
+    provider = body.provider.strip().lower()
+    model_id = body.model_id.strip()
+    capability = body.capability.strip().lower()
+    existing = (
+        db.query(AIModelCatalog)
+        .filter(
+            AIModelCatalog.provider == provider,
+            AIModelCatalog.model_id == model_id,
+            AIModelCatalog.capability == capability,
+        )
+        .first()
+    )
+    if existing is not None:
+        raise HTTPException(status_code=409, detail="AI model already exists for this provider/capability")
+    row = AIModelCatalog(
+        provider=provider,
+        model_id=model_id,
+        display_name=body.display_name.strip(),
+        capability=capability,
+        enabled=body.enabled,
+        sort_order=body.sort_order,
+        config_schema=body.config_schema,
+        default_config=body.default_config,
+        metadata_json=body.metadata_json,
+    )
+    db.add(row)
+    db.flush()
+    db.add(
+        AdminOperationLog(
+            operator_admin_id=admin.id,
+            operator_email=admin.email,
+            action="create_ai_model",
+            target_type="ai_model_catalog",
+            target_id=str(row.id),
+            before_data=None,
+            after_data=_json_safe(_model_payload(row)),
+            reason="create AI model catalog item",
+            ip_address=_client_ip(request),
+        )
+    )
+    db.commit()
+    db.refresh(row)
+    return {"success": True, "model": _model_payload(row)}
+
+
+@router.put("/ai-models/configs/{stage_key}/model")
+async def update_ai_stage_model(
+    stage_key: str,
+    body: AIStageModelUpdateRequest,
+    request: Request,
+    db: Session = Depends(get_db),
+    admin: User = Depends(require_admin_user),
+):
+    stage = db.query(AIStageConfig).filter(AIStageConfig.stage_key == stage_key).first()
+    if stage is None:
+        raise HTTPException(status_code=404, detail="AI stage config not found")
+    model = db.query(AIModelCatalog).filter(AIModelCatalog.id == body.model_catalog_id).first()
+    if model is None or not model.enabled:
+        raise HTTPException(status_code=400, detail="Selected AI model is not available")
+    capability = str((stage.config_json or {}).get("capability") or "").strip()
+    if capability and model.capability != capability:
+        raise HTTPException(status_code=400, detail=f"Model capability must be {capability}")
+    fallback = None
+    if body.fallback_model_catalog_id is not None:
+        fallback = db.query(AIModelCatalog).filter(AIModelCatalog.id == body.fallback_model_catalog_id).first()
+        if fallback is None or not fallback.enabled:
+            raise HTTPException(status_code=400, detail="Fallback AI model is not available")
+        if capability and fallback.capability != capability:
+            raise HTTPException(status_code=400, detail=f"Fallback capability must be {capability}")
+
+    before = _stage_config_payload(db, stage)
+    stage.active_model_id = model.id
+    if fallback is not None:
+        stage.fallback_model_id = fallback.id
+    stage.updated_by = admin.id
+    db.add(
+        AdminOperationLog(
+            operator_admin_id=admin.id,
+            operator_email=admin.email,
+            action="update_ai_stage_model",
+            target_type="ai_stage_config",
+            target_id=stage.stage_key,
+            before_data=_json_safe(before),
+            after_data=_json_safe({"active_model_id": model.id, "fallback_model_id": stage.fallback_model_id}),
+            reason=body.reason,
+            ip_address=_client_ip(request),
+        )
+    )
+    db.commit()
+    db.refresh(stage)
+    return {"success": True, "config": _stage_config_payload(db, stage)}
+
+
+@router.post("/ai-models/configs/{stage_key}/prompts/draft")
+async def save_ai_prompt_draft(
+    stage_key: str,
+    body: AIPromptDraftRequest,
+    request: Request,
+    db: Session = Depends(get_db),
+    admin: User = Depends(require_admin_user),
+):
+    stage = db.query(AIStageConfig).filter(AIStageConfig.stage_key == stage_key).first()
+    if stage is None:
+        raise HTTPException(status_code=404, detail="AI stage config not found")
+    latest_version = (
+        db.query(func.coalesce(func.max(AIPromptTemplate.version), 0))
+        .filter(AIPromptTemplate.stage_key == stage_key)
+        .scalar()
+        or 0
+    )
+    row = AIPromptTemplate(
+        stage_key=stage_key,
+        name=body.name.strip(),
+        version=int(latest_version) + 1,
+        status="draft",
+        system_prompt=body.system_prompt,
+        user_prompt_template=body.user_prompt_template,
+        variables_schema=body.variables_schema,
+        metadata_json=body.metadata_json,
+        created_by=admin.id,
+        updated_by=admin.id,
+    )
+    db.add(row)
+    db.flush()
+    db.add(
+        AdminOperationLog(
+            operator_admin_id=admin.id,
+            operator_email=admin.email,
+            action="save_ai_prompt_draft",
+            target_type="ai_prompt_template",
+            target_id=str(row.id),
+            before_data=None,
+            after_data=_json_safe(_prompt_payload(row)),
+            reason=body.reason or "save AI prompt draft",
+            ip_address=_client_ip(request),
+        )
+    )
+    db.commit()
+    db.refresh(row)
+    return {"success": True, "prompt": _prompt_payload(row)}
+
+
+@router.post("/ai-models/configs/{stage_key}/prompts/publish")
+async def publish_new_ai_prompt(
+    stage_key: str,
+    body: AIPromptPublishRequest,
+    request: Request,
+    db: Session = Depends(get_db),
+    admin: User = Depends(require_admin_user),
+):
+    draft_response = await save_ai_prompt_draft(stage_key, body, request, db, admin)
+    prompt_id = int(draft_response["prompt"]["id"])
+    return await publish_existing_ai_prompt(
+        stage_key,
+        AIStagePromptPublishExistingRequest(prompt_template_id=prompt_id, reason=body.reason),
+        request,
+        db,
+        admin,
+    )
+
+
+@router.put("/ai-models/configs/{stage_key}/prompts/active")
+async def publish_existing_ai_prompt(
+    stage_key: str,
+    body: AIStagePromptPublishExistingRequest,
+    request: Request,
+    db: Session = Depends(get_db),
+    admin: User = Depends(require_admin_user),
+):
+    stage = db.query(AIStageConfig).filter(AIStageConfig.stage_key == stage_key).first()
+    if stage is None:
+        raise HTTPException(status_code=404, detail="AI stage config not found")
+    prompt = (
+        db.query(AIPromptTemplate)
+        .filter(AIPromptTemplate.id == body.prompt_template_id, AIPromptTemplate.stage_key == stage_key)
+        .first()
+    )
+    if prompt is None:
+        raise HTTPException(status_code=404, detail="AI prompt template not found")
+    before = _stage_config_payload(db, stage)
+    previous_active = db.query(AIPromptTemplate).filter(
+        AIPromptTemplate.stage_key == stage_key,
+        AIPromptTemplate.status == "active",
+        AIPromptTemplate.id != prompt.id,
+    )
+    for old in previous_active.all():
+        old.status = "archived"
+        old.updated_by = admin.id
+    prompt.status = "active"
+    prompt.updated_by = admin.id
+    stage.active_prompt_template_id = prompt.id
+    stage.updated_by = admin.id
+    db.add(
+        AdminOperationLog(
+            operator_admin_id=admin.id,
+            operator_email=admin.email,
+            action="publish_ai_prompt",
+            target_type="ai_stage_config",
+            target_id=stage.stage_key,
+            before_data=_json_safe(before),
+            after_data=_json_safe({"active_prompt_template_id": prompt.id, "prompt_version": prompt.version}),
+            reason=body.reason,
+            ip_address=_client_ip(request),
+        )
+    )
+    db.commit()
+    db.refresh(stage)
+    return {"success": True, "config": _stage_config_payload(db, stage)}
 
 
 @router.get("/users")

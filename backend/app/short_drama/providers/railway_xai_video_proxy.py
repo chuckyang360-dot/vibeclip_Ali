@@ -14,6 +14,7 @@ from ..exceptions import ShortDramaVideoProviderError
 from .railway_s1_vision import _effective_proxy_base_url
 from .segment_video_types import SegmentVideoResult
 from .xai_video_client import effective_xai_video_model
+from ..utils.ai_runtime_config import STAGE_S4_VIDEO_GENERATION, get_ai_runtime_config
 
 logger = logging.getLogger(__name__)
 
@@ -49,6 +50,7 @@ def build_railway_xai_video_proxy_payload(
     aspect_ratio: str,
     resolution: str | None,
     model: str,
+    provider: str | None = None,
 ) -> dict[str, Any]:
     body: dict[str, Any] = {
         "project_id": project_id,
@@ -63,6 +65,8 @@ def build_railway_xai_video_proxy_payload(
             "stage": "S5_VIDEO_GENERATION",
         },
     }
+    if provider:
+        body["provider"] = str(provider).strip()
     if resolution:
         body["resolution"] = resolution
     return body
@@ -120,6 +124,7 @@ def request_railway_xai_video_generation(
     aspect_ratio: str,
     resolution: str | None,
     model: str,
+    provider: str | None = None,
 ) -> dict[str, Any]:
     """POST Railway /api/xai/videos/generations; returns parsed JSON body."""
     base = effective_railway_xai_video_proxy_base_url()
@@ -144,6 +149,7 @@ def request_railway_xai_video_generation(
         aspect_ratio=aspect_ratio,
         resolution=resolution,
         model=model,
+        provider=provider,
     )
     timeout_sec = effective_railway_xai_video_proxy_timeout_seconds()
     timeout = httpx.Timeout(connect=min(30.0, timeout_sec), read=timeout_sec, write=timeout_sec, pool=10.0)
@@ -339,7 +345,9 @@ class RailwayXAIVideoProxyProvider:
         project_id: int,
         segment_id: str,
     ) -> str:
-        model = effective_xai_video_model()
+        ai_cfg = get_ai_runtime_config(STAGE_S4_VIDEO_GENERATION)
+        model = (ai_cfg.model_id or "").strip() or effective_xai_video_model()
+        provider = (ai_cfg.provider or "").strip().lower() or None
         try:
             data = request_railway_xai_video_generation(
                 project_id=project_id,
@@ -350,6 +358,7 @@ class RailwayXAIVideoProxyProvider:
                 aspect_ratio=aspect_ratio,
                 resolution=resolution,
                 model=model,
+                provider=provider,
             )
         except ShortDramaVideoProviderError:
             raise

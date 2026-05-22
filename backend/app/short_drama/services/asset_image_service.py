@@ -14,6 +14,11 @@ from ...database import SessionLocal
 from ..models import CharacterAsset, ProductAsset, SceneAsset, ShortDramaProject
 from ..providers.generated_image import GeneratedImage
 from ..providers.image_provider_factory import build_short_drama_image_provider
+from ..utils.ai_runtime_config import (
+    STAGE_S3_ASSET_MANAGEMENT,
+    get_ai_runtime_config,
+    render_runtime_prompt_template,
+)
 from ..utils.image_prompts import prepare_image_prompt, prepare_image_prompt_v2_asset_spec_pass_through
 from ..utils.image_storage import persist_generated_image_url
 from .workflow_orchestrator import orchestrator
@@ -45,6 +50,48 @@ def _should_skip_prompt_mutations(meta: dict[str, Any]) -> bool:
     if isinstance(tf, dict) and tf.get("asset_spec_source") == "s2_asset_generation_specs":
         return True
     return False
+
+
+def _apply_s3_image_runtime_prompt(
+    *,
+    base_prompt: str,
+    project_id: int,
+    asset_type: str,
+    asset_id: int,
+    row_meta: dict[str, Any],
+    cfg: Any,
+) -> tuple[str, dict[str, Any]]:
+    if not getattr(cfg, "system_prompt", None) and not getattr(cfg, "user_prompt_template", None):
+        return base_prompt, {}
+    asset_payload = {
+        "project_id": project_id,
+        "asset_type": asset_type,
+        "asset_id": asset_id,
+        "base_image_prompt": base_prompt,
+        "asset_metadata": row_meta,
+    }
+    values = {
+        "asset_payload": asset_payload,
+        "base_image_prompt": base_prompt,
+        "asset_type": asset_type,
+        "asset_id": asset_id,
+        "project_id": project_id,
+    }
+    parts: list[str] = []
+    if getattr(cfg, "system_prompt", None):
+        parts.append(str(cfg.system_prompt).strip())
+    if getattr(cfg, "user_prompt_template", None):
+        parts.append(render_runtime_prompt_template(str(cfg.user_prompt_template), values).strip())
+    else:
+        parts.append(base_prompt)
+    final_prompt = "\n\n".join([p for p in parts if p])
+    return final_prompt, {
+        "ai_stage_key": STAGE_S3_ASSET_MANAGEMENT,
+        "prompt_template_id": getattr(cfg, "prompt_template_id", None),
+        "prompt_version": getattr(cfg, "prompt_version", None),
+        "configured_provider": getattr(cfg, "provider", None),
+        "configured_model": getattr(cfg, "model_id", None),
+    }
 
 
 def _enforce_character_prompt_constraints(prompt: str, *, project_id: int, asset_id: int) -> str:
@@ -126,6 +173,7 @@ class AssetImageService:
         by_id = {r.id: r for r in rows}
         errors: list[dict[str, Any]] = []
         ok = 0
+        ai_cfg = get_ai_runtime_config(STAGE_S3_ASSET_MANAGEMENT)
 
         def job(row: CharacterAsset) -> tuple[int, str | None, GeneratedImage | None, Exception | None]:
             try:
@@ -174,6 +222,24 @@ class AssetImageService:
                     },
                 )
                 meta = dict(row.meta_json or {})
+                prompt, runtime_prompt_meta = _apply_s3_image_runtime_prompt(
+                    base_prompt=prompt,
+                    project_id=project_id,
+                    asset_type="character",
+                    asset_id=row.id,
+                    row_meta=meta,
+                    cfg=ai_cfg,
+                )
+                if runtime_prompt_meta:
+                    _trace(
+                        "S3_IMAGE_RUNTIME_PROMPT",
+                        {
+                            "project_id": project_id,
+                            "asset_type": "character",
+                            "asset_id": row.id,
+                            "runtime_prompt_config": runtime_prompt_meta,
+                        },
+                    )
                 seed = meta.get("generation_seed")
                 gen = self._provider.generate_from_text(
                     prompt=prompt,
@@ -183,6 +249,7 @@ class AssetImageService:
                     metadata={
                         "generation_seed": seed,
                         "style_tags": meta.get("style_tags"),
+                        **runtime_prompt_meta,
                     },
                 )
                 url = persist_generated_image_url(
@@ -238,6 +305,7 @@ class AssetImageService:
         errors: list[dict[str, Any]] = []
         ok = 0
         results: dict[int, tuple[str, dict[str, Any]]] = {}
+        ai_cfg = get_ai_runtime_config(STAGE_S3_ASSET_MANAGEMENT)
 
         def job(row: SceneAsset) -> tuple[int, str | None, GeneratedImage | None, Exception | None]:
             try:
@@ -249,13 +317,21 @@ class AssetImageService:
                     else prepare_image_prompt(base_vp)
                 )
                 meta = dict(row.meta_json or {})
+                prompt, runtime_prompt_meta = _apply_s3_image_runtime_prompt(
+                    base_prompt=prompt,
+                    project_id=project_id,
+                    asset_type="scene",
+                    asset_id=row.id,
+                    row_meta=meta,
+                    cfg=ai_cfg,
+                )
                 seed = meta.get("generation_seed")
                 gen = self._provider.generate_from_text(
                     prompt=prompt,
                     asset_type="scene",
                     project_id=project_id,
                     asset_id=row.id,
-                    metadata={"generation_seed": seed, "style_tags": meta.get("style_tags")},
+                    metadata={"generation_seed": seed, "style_tags": meta.get("style_tags"), **runtime_prompt_meta},
                 )
                 url = persist_generated_image_url(
                     gen,
@@ -289,6 +365,7 @@ class AssetImageService:
         errors: list[dict[str, Any]] = []
         ok = 0
         results: dict[int, tuple[str, dict[str, Any]]] = {}
+        ai_cfg = get_ai_runtime_config(STAGE_S3_ASSET_MANAGEMENT)
 
         def job(row: ProductAsset) -> tuple[int, str | None, GeneratedImage | None, Exception | None]:
             try:
@@ -300,13 +377,21 @@ class AssetImageService:
                     else prepare_image_prompt(base_vp)
                 )
                 meta = dict(row.meta_json or {})
+                prompt, runtime_prompt_meta = _apply_s3_image_runtime_prompt(
+                    base_prompt=prompt,
+                    project_id=project_id,
+                    asset_type="product",
+                    asset_id=row.id,
+                    row_meta=meta,
+                    cfg=ai_cfg,
+                )
                 seed = meta.get("generation_seed")
                 gen = self._provider.generate_from_text(
                     prompt=prompt,
                     asset_type="product",
                     project_id=project_id,
                     asset_id=row.id,
-                    metadata={"generation_seed": seed, "style_tags": meta.get("style_tags")},
+                    metadata={"generation_seed": seed, "style_tags": meta.get("style_tags"), **runtime_prompt_meta},
                 )
                 url = persist_generated_image_url(
                     gen,
@@ -391,6 +476,7 @@ class AssetImageService:
     ) -> tuple[int, int, list[dict[str, Any]]]:
         if not rows:
             return 0, 0, []
+        ai_cfg = get_ai_runtime_config(STAGE_S3_ASSET_MANAGEMENT)
 
         def job(row: SceneAsset) -> tuple[int, str | None, GeneratedImage | None, Exception | None]:
             try:
@@ -416,6 +502,14 @@ class AssetImageService:
                 )
                 _trace("S3_IMAGE_PROMPT_AFTER_PREPARE", {"project_id": project_id, "asset_type": "scene", "asset_id": row.id, "before_prompt": row.visual_prompt, "after_prompt": prompt, "added_parts": [], "removed_parts": [], "source": "ai_visual_prompt"})
                 meta = dict(row.meta_json or {})
+                prompt, runtime_prompt_meta = _apply_s3_image_runtime_prompt(
+                    base_prompt=prompt,
+                    project_id=project_id,
+                    asset_type="scene",
+                    asset_id=row.id,
+                    row_meta=meta,
+                    cfg=ai_cfg,
+                )
                 seed = meta.get("generation_seed")
                 gen = self._provider.generate_from_text(
                     prompt=prompt,
@@ -425,6 +519,7 @@ class AssetImageService:
                     metadata={
                         "generation_seed": seed,
                         "style_tags": meta.get("style_tags"),
+                        **runtime_prompt_meta,
                     },
                 )
                 url = persist_generated_image_url(
@@ -480,6 +575,7 @@ class AssetImageService:
     ) -> tuple[int, int, list[dict[str, Any]]]:
         if not rows:
             return 0, 0, []
+        ai_cfg = get_ai_runtime_config(STAGE_S3_ASSET_MANAGEMENT)
 
         def job(row: ProductAsset) -> tuple[int, str | None, GeneratedImage | None, Exception | None]:
             try:
@@ -505,6 +601,14 @@ class AssetImageService:
                 )
                 _trace("S3_IMAGE_PROMPT_AFTER_PREPARE", {"project_id": project_id, "asset_type": "product", "asset_id": row.id, "before_prompt": row.visual_prompt, "after_prompt": prompt, "added_parts": [], "removed_parts": [], "source": "ai_visual_prompt"})
                 meta = dict(row.meta_json or {})
+                prompt, runtime_prompt_meta = _apply_s3_image_runtime_prompt(
+                    base_prompt=prompt,
+                    project_id=project_id,
+                    asset_type="product",
+                    asset_id=row.id,
+                    row_meta=meta,
+                    cfg=ai_cfg,
+                )
                 seed = meta.get("generation_seed")
                 gen = self._provider.generate_from_text(
                     prompt=prompt,
@@ -514,6 +618,7 @@ class AssetImageService:
                     metadata={
                         "generation_seed": seed,
                         "style_tags": meta.get("style_tags"),
+                        **runtime_prompt_meta,
                     },
                 )
                 url = persist_generated_image_url(

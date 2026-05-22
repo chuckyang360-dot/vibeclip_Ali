@@ -12,6 +12,11 @@ from ..providers.xai_text_provider import XAITextProvider, get_xai_text_provider
 from ..schemas.asset import AssetSpecsBundleSchema, CharacterAssetSchema, ProductAssetSchema, SceneAssetSchema
 from ..schemas.product import ProductContextSchema
 from ..schemas.story import StoryBlueprintSchema
+from ..utils.ai_runtime_config import (
+    STAGE_S3_ASSET_MANAGEMENT,
+    apply_runtime_user_prompt_template,
+    get_ai_runtime_config,
+)
 from ..utils.prompts import ASSET_SPEC_SYSTEM_PROMPT
 
 logger = logging.getLogger(__name__)
@@ -896,20 +901,42 @@ class XAIAssetSpecProvider:
                 "S3_SPEC_PROMPT",
                 {
                     "project_id": project_id,
-                    "system_prompt": ASSET_SPEC_SYSTEM_PROMPT,
-                    "user_payload": prompt_payload,
                     "provider": "xai_text_provider",
-                    "model": "effective_xai_text_model",
+                },
+            )
+            ai_cfg = get_ai_runtime_config(STAGE_S3_ASSET_MANAGEMENT)
+            effective_system_prompt = ai_cfg.system_prompt or ASSET_SPEC_SYSTEM_PROMPT
+            effective_payload = apply_runtime_user_prompt_template(
+                user_payload=prompt_payload,
+                template=ai_cfg.user_prompt_template,
+                payload_placeholder="asset_payload",
+                values={"project_id": project_id},
+            )
+            effective_model = (ai_cfg.model_id or "").strip() or None
+            effective_provider = (ai_cfg.provider or "").strip().lower() or None
+            _trace(
+                "S3_SPEC_RUNTIME_CONFIG",
+                {
+                    "project_id": project_id,
+                    "system_prompt": effective_system_prompt,
+                    "user_payload": effective_payload,
+                    "provider": "xai_text_provider",
+                    "model": effective_model or "effective_xai_text_model",
+                    "configured_provider": effective_provider,
+                    "prompt_template_id": ai_cfg.prompt_template_id,
+                    "prompt_version": ai_cfg.prompt_version,
                 },
             )
             data = self._text.generate_structured_json(
                 project_id=project_id,
                 service_name="asset_spec",
-                system_prompt=ASSET_SPEC_SYSTEM_PROMPT,
-                user_payload=prompt_payload,
+                system_prompt=effective_system_prompt,
+                user_payload=effective_payload,
                 image_urls=None,
                 expected_schema_name="AssetSpecsBundle",
                 stage="ASSET_SPEC_GENERATION",
+                model=effective_model,
+                provider=effective_provider,
             )
             _trace("S3_SPEC_RAW_RESPONSE", {"project_id": project_id, "response": data})
             constraints = _extract_market_constraints(blueprint, project_config, product)

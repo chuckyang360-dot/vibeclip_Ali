@@ -75,6 +75,8 @@ def railway_chat_completion_raw_text(
     user_text: str,
     image_urls: list[str] | None,
     max_output_tokens: int,
+    provider: str | None = None,
+    model: str | None = None,
 ) -> str:
     base = _effective_proxy_base_url()
     token = (settings.AI_PROXY_TOKEN or "").strip()
@@ -136,6 +138,10 @@ def railway_chat_completion_raw_text(
         "temperature": 0.2,
         "service_name": service_name,
     }
+    if provider:
+        body["provider"] = str(provider).strip()
+    if model:
+        body["model"] = str(model).strip()
 
     timeout = httpx.Timeout(timeout_sec, connect=min(30.0, float(timeout_sec)))
     try:

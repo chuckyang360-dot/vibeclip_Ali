@@ -16,6 +16,7 @@ from ..exceptions import ShortDramaVideoProviderError
 from ..utils.flow_logging import log_ai_error, log_ai_request, log_ai_response
 from .segment_video_types import SegmentVideoProvider, SegmentVideoResult
 from .xai_video_client import XAIVideoClient, effective_xai_video_model
+from ..utils.ai_runtime_config import STAGE_S4_VIDEO_GENERATION, get_ai_runtime_config
 
 logger = logging.getLogger(__name__)
 _XAI_PROVIDER_DURATION_CAP_SECONDS = 10
@@ -61,7 +62,19 @@ class XAIVideoProvider:
         segment_id: str,
     ) -> str:
         try:
-            model = effective_xai_video_model()
+            ai_cfg = get_ai_runtime_config(STAGE_S4_VIDEO_GENERATION)
+            provider = (ai_cfg.provider or "").strip().lower()
+            model = (ai_cfg.model_id or "").strip() or effective_xai_video_model()
+            if provider and provider not in {"xai", "grok"}:
+                logger.warning(
+                    "[AI_RUNTIME_PROVIDER_UNSUPPORTED_DIRECT_VIDEO] project_id=%s segment_id=%s "
+                    "provider=%s model=%s fallback_provider=xai",
+                    project_id,
+                    segment_id,
+                    provider,
+                    model,
+                )
+                model = effective_xai_video_model()
             dur = int(duration_seconds)
             dur_pass = dur <= _XAI_PROVIDER_DURATION_CAP_SECONDS
             logger.info(
@@ -131,7 +144,11 @@ class XAIVideoProvider:
     ) -> SegmentVideoResult:
         try:
             _ = duration_seconds
-            model = effective_xai_video_model()
+            ai_cfg = get_ai_runtime_config(STAGE_S4_VIDEO_GENERATION)
+            provider = (ai_cfg.provider or "").strip().lower()
+            model = (ai_cfg.model_id or "").strip() or effective_xai_video_model()
+            if provider and provider not in {"xai", "grok"}:
+                model = effective_xai_video_model()
             final = self._client.poll_video_generation(
                 request_id=request_id,
                 model=model,

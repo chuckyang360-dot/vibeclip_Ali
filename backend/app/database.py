@@ -544,3 +544,13 @@ def init_db():
     ensure_short_drama_project_columns(engine)
     _ensure_short_drama_asset_library_backfill()
     _ensure_short_drama_product_context_columns()
+    try:
+        from .admin.ai_model_config_service import seed_default_ai_model_configs
+
+        session = SessionLocal()
+        try:
+            seed_default_ai_model_configs(session)
+        finally:
+            session.close()
+    except Exception:
+        logger.exception("Seeding default AI model configs failed")

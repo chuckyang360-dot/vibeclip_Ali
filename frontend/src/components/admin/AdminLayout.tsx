@@ -10,6 +10,7 @@ const nav = [
   { to: '/admin/api-logs', key: 'apiLogs', icon: 'ri-server-line' },
   { to: '/admin/credits', key: 'credits', icon: 'ri-coin-line' },
   { to: '/admin/logs', key: 'adminLogs', icon: 'ri-shield-check-line' },
+  { to: '/admin/model-config', key: 'modelConfig', icon: 'ri-robot-2-line' },
   { to: '/admin/settings', key: 'settings', icon: 'ri-settings-3-line' },
 ];
 
@@ -20,6 +21,7 @@ function titleKeyFromPath(pathname: string): string {
   if (pathname.startsWith('/admin/api-logs')) return 'apiLogs';
   if (pathname.startsWith('/admin/credits')) return 'credits';
   if (pathname.startsWith('/admin/logs')) return 'adminLogs';
+  if (pathname.startsWith('/admin/model-config')) return 'modelConfig';
   if (pathname.startsWith('/admin/settings')) return 'settings';
   return 'admin';
 }

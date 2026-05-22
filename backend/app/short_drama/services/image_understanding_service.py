@@ -13,6 +13,11 @@ from ..providers.railway_s1_vision import (
 )
 from ..providers.xai_text_provider import XAITextProvider, get_xai_text_provider
 from ..schemas.product import ProductImageUnderstandingSchema, ProductRawInputSchema
+from ..utils.ai_runtime_config import (
+    STAGE_S1_PRODUCT_UNDERSTANDING,
+    apply_runtime_user_prompt_template,
+    get_ai_runtime_config,
+)
 from ..utils.prompts import (
     ASSET_CREATE_FROM_IMAGE_SYSTEM_PROMPT,
     ASSET_REFERENCE_IMAGE_ANALYSIS_SYSTEM_PROMPT,
@@ -181,6 +186,16 @@ class ProductImageUnderstandingService:
             "project_id": project_id,
             "raw_input": text_payload,
         }
+        ai_cfg = get_ai_runtime_config(STAGE_S1_PRODUCT_UNDERSTANDING)
+        effective_system_prompt = ai_cfg.system_prompt or PRODUCT_IMAGE_UNDERSTANDING_SYSTEM_PROMPT
+        effective_payload = apply_runtime_user_prompt_template(
+            user_payload=payload,
+            template=ai_cfg.user_prompt_template,
+            payload_placeholder="product_payload",
+            values={"project_id": project_id, "image_urls": image_urls},
+        )
+        effective_provider = (ai_cfg.provider or "").strip().lower() or None
+        effective_model = (ai_cfg.model_id or "").strip() or None
         use_railway_proxy = ai_provider_wants_railway_proxy()
         use_geoq = (not use_railway_proxy) and s1_vision_wants_geoq()
         if use_railway_proxy:
@@ -196,36 +211,43 @@ class ProductImageUnderstandingService:
             "S1_IMAGE_UNDERSTANDING_PROMPT",
             {
                 "project_id": project_id,
-                "system_prompt": PRODUCT_IMAGE_UNDERSTANDING_SYSTEM_PROMPT,
-                "user_payload": payload,
+                "system_prompt": effective_system_prompt,
+                "user_payload": effective_payload,
                 "image_urls_count": len(image_urls),
                 "provider": provider_trace,
-                "model": model_trace,
+                "model": effective_model or model_trace,
+                "configured_provider": effective_provider,
+                "prompt_template_id": ai_cfg.prompt_template_id,
+                "prompt_version": ai_cfg.prompt_version,
             },
         )
         if use_railway_proxy:
             data = generate_product_image_understanding_via_railway_proxy(
                 project_id=project_id,
-                system_prompt=PRODUCT_IMAGE_UNDERSTANDING_SYSTEM_PROMPT,
-                user_payload=payload,
+                system_prompt=effective_system_prompt,
+                user_payload=effective_payload,
                 image_urls=image_urls,
+                provider=effective_provider,
+                model=effective_model,
             )
         elif use_geoq:
             data = generate_product_image_understanding_json(
                 project_id=project_id,
-                system_prompt=PRODUCT_IMAGE_UNDERSTANDING_SYSTEM_PROMPT,
-                user_payload=payload,
+                system_prompt=effective_system_prompt,
+                user_payload=effective_payload,
                 image_urls=image_urls,
             )
         else:
             data = self._text.generate_structured_json(
                 project_id=project_id,
                 service_name="product_image_understanding",
-                system_prompt=PRODUCT_IMAGE_UNDERSTANDING_SYSTEM_PROMPT,
-                user_payload=payload,
+                system_prompt=effective_system_prompt,
+                user_payload=effective_payload,
                 image_urls=image_urls,
                 expected_schema_name="ProductImageUnderstanding",
                 stage="PRODUCT_IMAGE_UNDERSTANDING",
+                provider=effective_provider,
+                model=effective_model,
             )
         data = _normalize_image_understanding_list_fields(project_id, data)
         _trace(

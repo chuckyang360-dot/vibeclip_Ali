@@ -18,6 +18,11 @@ from ..schemas.story import (
 )
 from ..utils.creative_brief import build_creative_brief
 from ..utils.prompts import STORY_PLANNER_REPAIR_SYSTEM_PROMPT, STORY_PLANNER_SYSTEM_PROMPT
+from ..utils.ai_runtime_config import (
+    STAGE_S2_STORY_GENERATION,
+    apply_runtime_user_prompt_template,
+    get_ai_runtime_config,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -801,6 +806,9 @@ class XAIStoryPlannerProvider:
             },
             "original_blueprint": original_blueprint_data,
         }
+        ai_cfg = get_ai_runtime_config(STAGE_S2_STORY_GENERATION)
+        effective_model = (ai_cfg.model_id or "").strip() or effective_xai_story_model()
+        effective_provider = (ai_cfg.provider or "").strip().lower() or None
         try:
             repaired_data = self._text.generate_structured_json(
                 project_id=project_id,
@@ -810,7 +818,8 @@ class XAIStoryPlannerProvider:
                 image_urls=None,
                 expected_schema_name="StoryBlueprint",
                 stage="STORY_GENERATION_REPAIR",
-                model=effective_xai_story_model(),
+                model=effective_model,
+                provider=effective_provider,
                 max_output_tokens=effective_xai_story_max_output_tokens(),
             )
             repaired_blueprint = parse_story_blueprint_json(repaired_data)
@@ -868,13 +877,25 @@ class XAIStoryPlannerProvider:
             )
             sp_len = len(STORY_PLANNER_SYSTEM_PROMPT)
             up_chars = _validate_s2_payload_for_provider(project_id, s2_payload)
+            ai_cfg = get_ai_runtime_config(STAGE_S2_STORY_GENERATION)
+            effective_system_prompt = ai_cfg.system_prompt or STORY_PLANNER_SYSTEM_PROMPT
+            effective_payload = apply_runtime_user_prompt_template(
+                user_payload=s2_payload,
+                template=ai_cfg.user_prompt_template,
+                payload_placeholder="story_payload",
+                values={"project_id": project_id},
+            )
+            effective_model = (ai_cfg.model_id or "").strip() or effective_xai_story_model()
+            effective_provider = (ai_cfg.provider or "").strip().lower() or None
             logger.info(
                 "[S2_PROMPT] %s",
                 json.dumps(
                     {
-                        "system_prompt_len": sp_len,
+                        "system_prompt_len": len(effective_system_prompt),
                         "user_payload_chars": up_chars,
                         "user_payload_keys": list(s2_payload.keys()),
+                        "prompt_template_id": ai_cfg.prompt_template_id,
+                        "prompt_version": ai_cfg.prompt_version,
                     },
                     ensure_ascii=False,
                 ),
@@ -883,21 +904,25 @@ class XAIStoryPlannerProvider:
                 "S2_PROMPT",
                 {
                     "project_id": project_id,
-                    "system_prompt_len": sp_len,
+                    "system_prompt_len": len(effective_system_prompt),
                     "user_payload_chars": up_chars,
                     "provider": "xai_text_provider",
-                    "model": effective_xai_story_model(),
+                    "model": effective_model,
+                    "configured_provider": effective_provider,
+                    "prompt_template_id": ai_cfg.prompt_template_id,
+                    "prompt_version": ai_cfg.prompt_version,
                 },
             )
             data = self._text.generate_structured_json(
                 project_id=project_id,
                 service_name="story_planner",
-                system_prompt=STORY_PLANNER_SYSTEM_PROMPT,
-                user_payload=s2_payload,
+                system_prompt=effective_system_prompt,
+                user_payload=effective_payload,
                 image_urls=None,
                 expected_schema_name="StoryBlueprint",
                 stage="STORY_GENERATION",
-                model=effective_xai_story_model(),
+                model=effective_model,
+                provider=effective_provider,
                 max_output_tokens=effective_xai_story_max_output_tokens(),
             )
             logger.info("[S2_RESPONSE] %s", json.dumps(data, ensure_ascii=False))

@@ -13,6 +13,7 @@ from .railway_image_proxy import (
     railway_create_image_from_text,
 )
 from .xai_image_client import XaiImageClient, effective_xai_image_model
+from ..utils.ai_runtime_config import STAGE_S3_ASSET_MANAGEMENT, get_ai_runtime_config
 
 logger = logging.getLogger(__name__)
 
@@ -56,7 +57,9 @@ class RailwayImageProvider:
         asset_id: int,
         metadata: dict[str, Any] | None = None,
     ) -> GeneratedImage:
-        model = effective_xai_image_model()
+        ai_cfg = get_ai_runtime_config(STAGE_S3_ASSET_MANAGEMENT)
+        model = (ai_cfg.model_id or "").strip() or effective_xai_image_model()
+        provider = (ai_cfg.provider or "").strip().lower() or None
         meta_in = metadata or {}
         proxy_base = effective_railway_image_proxy_base_url()
         timeout_sec = effective_railway_image_proxy_timeout_seconds()
@@ -80,6 +83,7 @@ class RailwayImageProvider:
                 target_id=asset_id,
                 prompt=prompt,
                 model=model,
+                provider=provider,
                 response_format="r2_url",
                 aspect_ratio=(settings.SHORT_DRAMA_IMAGE_ASPECT_RATIO or "").strip() or None,
                 resolution=(settings.SHORT_DRAMA_IMAGE_RESOLUTION or "").strip() or None,
@@ -143,6 +147,8 @@ class RailwayImageProvider:
             "style_tags": meta_in.get("style_tags") or ["commercial_short_drama", "clean_composition"],
             "response_format": "r2_url",
             "via_railway_proxy": True,
+            "configured_provider": provider,
+            "ai_stage_key": STAGE_S3_ASSET_MANAGEMENT,
             "image_source": image_source,
             "storage": proxy_result.storage,
         }

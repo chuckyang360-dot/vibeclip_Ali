@@ -101,8 +101,10 @@ class XAITextProvider:
         stage: str,
         max_output_tokens: int = 8192,
         model: str | None = None,
+        provider: str | None = None,
     ) -> dict[str, Any]:
         model = model or effective_xai_text_model()
+        provider = (provider or "xai").strip().lower()
         user_text = json.dumps(user_payload, ensure_ascii=False)
         user_content = _build_user_content_parts(user_text, image_urls)
         system_prompt_len = len(system_prompt or "")
@@ -148,11 +150,24 @@ class XAITextProvider:
                     user_text=user_text,
                     image_urls=urls or None,
                     max_output_tokens=max_output_tokens,
+                    provider=provider,
+                    model=model,
                 )
                 request_id = client_rid
                 raw: dict[str, Any] = {}
                 model_returned = ""
             else:
+                if provider not in {"", "xai", "grok"}:
+                    logger.warning(
+                        "[AI_RUNTIME_PROVIDER_UNSUPPORTED_DIRECT_TEXT] project_id=%s service_name=%s "
+                        "stage=%s provider=%s model=%s fallback_provider=xai",
+                        project_id,
+                        service_name,
+                        stage,
+                        provider,
+                        model,
+                    )
+                    model = effective_xai_text_model()
                 raw, request_id, _latency = self._client.post_responses(
                     model=model,
                     system_prompt=system_prompt,

@@ -19,6 +19,9 @@ from .short_drama.providers.ai_provider_config_audit import log_ai_provider_conf
 from .models import (  # noqa: F401
     AdminOperationLog,
     ApiCallLog,
+    AIModelCatalog,
+    AIPromptTemplate,
+    AIStageConfig,
     PaymentOrder,
     User,
     UserCreditAccount,

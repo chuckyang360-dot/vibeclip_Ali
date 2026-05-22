@@ -34,6 +34,7 @@ from ..schemas.segment import SegmentScriptSchema
 from ..utils.enums import ProjectStatus, RenderJobStatus, RenderTargetType
 from ..utils.segment_mp4_validate import validate_segment_mp4_path
 from ..utils.video_prompt_builder import build_segment_video_plan
+from ..utils.ai_runtime_config import STAGE_S4_VIDEO_GENERATION, get_ai_runtime_config
 from ..utils.video_storage import (
     absolutize_media_url_for_provider,
 )
@@ -53,6 +54,65 @@ _HARD_VIDEO_PROMPT_CHARS = 4096
 
 def _trace(tag: str, payload: dict[str, Any]) -> None:
     logger.info("[AI_CHAIN_TRACE][%s] %s", tag, json.dumps(payload, ensure_ascii=False, default=str))
+
+
+def _render_template(template: str, values: dict[str, Any]) -> str:
+    out = str(template or "")
+    for key, value in values.items():
+        if isinstance(value, (dict, list)):
+            rendered = json.dumps(value, ensure_ascii=False, default=str)
+        else:
+            rendered = str(value or "")
+        out = out.replace("{" + key + "}", rendered)
+    return out
+
+
+def _apply_s4_runtime_prompt_config(
+    *,
+    base_prompt: str,
+    project_id: int,
+    segment_id: str,
+    reference_image_urls: list[str],
+    duration_seconds: int,
+    aspect_ratio: str,
+    resolution: str | None,
+) -> tuple[str, dict[str, Any]]:
+    cfg = get_ai_runtime_config(STAGE_S4_VIDEO_GENERATION)
+    if not cfg.system_prompt and not cfg.user_prompt_template:
+        return base_prompt, {}
+    video_payload = {
+        "project_id": project_id,
+        "segment_id": segment_id,
+        "base_video_prompt": base_prompt,
+        "reference_image_urls": reference_image_urls,
+        "duration_seconds": duration_seconds,
+        "aspect_ratio": aspect_ratio,
+        "resolution": resolution,
+    }
+    values = {
+        "video_payload": video_payload,
+        "base_video_prompt": base_prompt,
+        "reference_image_urls": reference_image_urls,
+        "duration_seconds": duration_seconds,
+        "aspect_ratio": aspect_ratio,
+        "resolution": resolution or "",
+    }
+    parts = []
+    if cfg.system_prompt:
+        parts.append(str(cfg.system_prompt).strip())
+    if cfg.user_prompt_template:
+        parts.append(_render_template(cfg.user_prompt_template, values).strip())
+    else:
+        parts.append(base_prompt)
+    prompt = "\n\n".join([p for p in parts if p])
+    meta = {
+        "ai_stage_key": STAGE_S4_VIDEO_GENERATION,
+        "prompt_template_id": cfg.prompt_template_id,
+        "prompt_version": cfg.prompt_version,
+        "configured_provider": cfg.provider,
+        "configured_model": cfg.model_id,
+    }
+    return prompt, meta
 
 
 def _extract_raw_character_asset_ids(seg: SegmentScriptSchema) -> list[Any]:
@@ -518,7 +578,15 @@ class RenderExecutorService:
                 db.refresh(job)
 
             model_name = self._video_model_name()
-            final_prompt = plan.segment_video_prompt or ""
+            final_prompt, runtime_prompt_meta = _apply_s4_runtime_prompt_config(
+                base_prompt=plan.segment_video_prompt or "",
+                project_id=project_id,
+                segment_id=segment_id,
+                reference_image_urls=ref_for_api,
+                duration_seconds=plan.duration_seconds,
+                aspect_ratio=plan.aspect_ratio,
+                resolution=plan.resolution,
+            )
             final_prompt_len = len(final_prompt)
             logger.info("[VIDEO_PROMPT] %s", final_prompt)
             if final_prompt_len > _HARD_VIDEO_PROMPT_CHARS:
@@ -581,15 +649,16 @@ class RenderExecutorService:
                 {
                     "project_id": project_id,
                     "segment_id": segment_id,
-                    "final_prompt": plan.segment_video_prompt,
+                    "final_prompt": final_prompt,
                     "prompt_source": "ai_shot_video_prompt",
+                    "runtime_prompt_config": runtime_prompt_meta,
                     "reference_image_urls": ref_for_api,
                     "provider": self._provider_label(),
                     "model": model_name,
                 },
             )
             rid = self._provider.submit_reference_segment_video(
-                prompt=plan.segment_video_prompt,
+                prompt=final_prompt,
                 reference_image_urls=ref_for_api,
                 duration_seconds=plan.duration_seconds,
                 aspect_ratio=plan.aspect_ratio,

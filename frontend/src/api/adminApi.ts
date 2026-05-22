@@ -52,6 +52,70 @@ export interface AdminDashboardResponse {
   top_consuming_users: Record<string, unknown>[];
 }
 
+export interface AdminAIModel {
+  id: number;
+  provider: string;
+  model_id: string;
+  display_name: string;
+  capability: string;
+  enabled: boolean;
+  sort_order: number;
+  config_schema?: Record<string, unknown>;
+  default_config?: Record<string, unknown>;
+  metadata_json?: Record<string, unknown>;
+}
+
+export interface AdminAIPrompt {
+  id: number;
+  stage_key: string;
+  name: string;
+  version: number;
+  status: string;
+  system_prompt?: string;
+  user_prompt_template?: string;
+  variables_schema?: Record<string, unknown>;
+  metadata_json?: Record<string, unknown>;
+}
+
+export interface AdminAIStageConfig {
+  stage_key: string;
+  stage_name: string;
+  enabled: boolean;
+  capability: string;
+  active_model: AdminAIModel | null;
+  fallback_model: AdminAIModel | null;
+  active_prompt: AdminAIPrompt | null;
+  candidate_models: AdminAIModel[];
+  prompt_versions: AdminAIPrompt[];
+  config_json?: Record<string, unknown>;
+}
+
+export interface AdminAIConfigsResponse {
+  items: AdminAIStageConfig[];
+  models: AdminAIModel[];
+}
+
+export interface AdminAIModelCreateBody {
+  provider: string;
+  model_id: string;
+  display_name: string;
+  capability: string;
+  enabled?: boolean;
+  sort_order?: number;
+  config_schema?: Record<string, unknown>;
+  default_config?: Record<string, unknown>;
+  metadata_json?: Record<string, unknown>;
+}
+
+export interface AdminAIPromptBody {
+  name: string;
+  system_prompt: string;
+  user_prompt_template?: string;
+  variables_schema?: Record<string, unknown>;
+  metadata_json?: Record<string, unknown>;
+  reason: string;
+}
+
 export const adminApi = {
   dashboard: () => adminFetch<AdminDashboardResponse>('/dashboard'),
   users: (q: string) => adminFetch<Record<string, unknown>>(`/users?${q}`),
@@ -84,4 +148,25 @@ export const adminApi = {
   creditTransactions: (q: string) => adminFetch<Record<string, unknown>>(`/credits/transactions?${q}`),
   operationLogs: (q: string) => adminFetch<Record<string, unknown>>(`/operation-logs?${q}`),
   settings: () => adminFetch<Record<string, unknown>>('/settings'),
+  aiConfigs: () => adminFetch<AdminAIConfigsResponse>('/ai-models/configs'),
+  createAiModel: (body: AdminAIModelCreateBody) =>
+    adminFetch<{ success: boolean; model: AdminAIModel }>('/ai-models/catalog', {
+      method: 'POST',
+      body: JSON.stringify(body),
+    }),
+  updateAiStageModel: (stageKey: string, body: { model_catalog_id: number; fallback_model_catalog_id?: number; reason: string }) =>
+    adminFetch<{ success: boolean; config: AdminAIStageConfig }>(`/ai-models/configs/${encodeURIComponent(stageKey)}/model`, {
+      method: 'PUT',
+      body: JSON.stringify(body),
+    }),
+  publishAiPrompt: (stageKey: string, body: AdminAIPromptBody) =>
+    adminFetch<{ success: boolean; config: AdminAIStageConfig }>(`/ai-models/configs/${encodeURIComponent(stageKey)}/prompts/publish`, {
+      method: 'POST',
+      body: JSON.stringify(body),
+    }),
+  activateAiPrompt: (stageKey: string, body: { prompt_template_id: number; reason: string }) =>
+    adminFetch<{ success: boolean; config: AdminAIStageConfig }>(`/ai-models/configs/${encodeURIComponent(stageKey)}/prompts/active`, {
+      method: 'PUT',
+      body: JSON.stringify(body),
+    }),
 };

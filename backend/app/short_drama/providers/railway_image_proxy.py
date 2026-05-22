@@ -94,6 +94,7 @@ def railway_create_image_from_text(
     response_format: str,
     aspect_ratio: str | None,
     resolution: str | None,
+    provider: str | None = None,
 ) -> RailwayProxyImageResult:
     """POST Railway /images/generations. Default response_format=r2_url (proxy uploads to R2)."""
     base = effective_railway_image_proxy_base_url()
@@ -134,11 +135,14 @@ def railway_create_image_from_text(
     }
     body: dict[str, Any] = {
         "prompt": prompt,
+        "model": model,
         "response_format": fmt,
         "project_id": project_id,
         "target_type": target_type,
         "target_id": target_id,
     }
+    if provider:
+        body["provider"] = str(provider).strip()
     if aspect_ratio:
         body["aspect_ratio"] = aspect_ratio
     if resolution:

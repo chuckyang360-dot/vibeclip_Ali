@@ -1,205 +1,83 @@
-# Vibe Marketing Backend
+# Vibe Clip Backend
 
-FastAPI backend for Vibe Marketing platform with Google OAuth authentication and X AI integration.
+FastAPI backend for the Vibe Clip short-drama generation workspace.
 
 ## Features
 
-- **Authentication**: Google OAuth with JWT token management
-- **X Agent API**: Analyze keywords on X (Twitter) platform
-  - Trending topics analysis
-  - Sentiment analysis
-  - Comprehensive analysis
-- **User Management**: User profiles and activity tracking
-- **History Tracking**: Store and retrieve analysis history
-- **API Documentation**: Auto-generated with Swagger/OpenAPI
+- Email/password authentication with JWT tokens
+- User profile, account status, and admin role management
+- Short-drama project workflow:
+  - Creative intent capture
+  - Product text/link/image understanding
+  - Story blueprint generation
+  - Character, scene, and product asset planning
+  - Asset image generation
+  - Segment script and video generation
+  - Final video merge and export
+- Credits and subscription billing
+- Alipay and WeChat Pay order callbacks
+- Admin dashboards for users, projects, credits, API logs, and operation logs
 
 ## Tech Stack
 
-- **Framework**: FastAPI
-- **Database**: SQLite (development) / PostgreSQL (production)
-- **Caching**: Redis
-- **Authentication**: Google OAuth 2.0 + JWT
-- **AI Integration**: X AI API
+- Framework: FastAPI
+- Database: SQLite for local development, PostgreSQL for production
+- ORM: SQLAlchemy
+- Auth: JWT
+- AI providers: xAI, Gemini, Railway proxy, Seedance, and local mock providers for development
+- Media: local static files in development, R2-compatible storage hooks where configured
 
-## Project Structure
+## Local Development
 
-```
-backend/
-├── app/
-│   ├── __init__.py
-│   ├── main.py                 # FastAPI application entry point
-│   ├── config.py               # Application configuration
-│   ├── database.py             # Database connection and session
-│   ├── models.py               # SQLAlchemy models
-│   ├── schemas.py              # Pydantic schemas
-│   ├── auth/
-│   │   ├── __init__.py
-│   │   ├── routes.py          # Authentication endpoints
-│   │   ├── google_oauth.py    # Google OAuth logic
-│   │   └── jwt_handler.py     # JWT token management
-│   ├── api/
-│   │   ├── x_agent/
-│   │   │   ├── __init__.py
-│   │   │   └── routes.py      # X agent API endpoints
-│   │   └── other_agents/      # Reserved for future agents
-│   ├── services/
-│   │   ├── __init__.py
-│   │   └── xai_service.py    # X AI API integration
-│   └── middleware/
-│       ├── __init__.py
-│       └── auth.py            # Authentication middleware
-├── tests/                     # Test files
-├── logs/                      # Application logs
-├── requirements.txt           # Python dependencies
-├── .env.example              # Environment variables template
-├── docker-compose.yml        # Docker Compose configuration
-├── Dockerfile                # Docker image
-├── run.py                    # Application runner
-└── FRONTEND_INTEGRATION.md   # Frontend integration guide
-```
-
-## Installation
-
-### Prerequisites
-
-- Python 3.11+
-- pip
-
-### Setup
-
-1. Clone the repository:
 ```bash
-cd /Users/johnstills/Documents/Vibe\ Marckrting/backend
-```
-
-2. Install dependencies:
-```bash
+cd backend
+python3 -m venv venv
+source venv/bin/activate
 pip install -r requirements.txt
-```
-
-3. Configure environment variables:
-```bash
 cp .env.example .env
-# Edit .env with your credentials
+uvicorn app.main:app --host 127.0.0.1 --port 8000 --reload
 ```
 
-4. Run the application:
-```bash
-python run.py
+The API will be available at `http://127.0.0.1:8000`.
+
+## Environment
+
+Use `backend/.env.example` as the source of truth. Common local settings:
+
+```env
+PORT=8000
+DEBUG=True
+DATABASE_URL=sqlite:///./vibeclip.db
+FRONTEND_ORIGIN=http://localhost:5173
+PUBLIC_BASE_URL=http://localhost:8000
 ```
 
-The API will be available at `http://localhost:8000`
+For real AI generation, configure the provider-specific keys in `.env`. For offline development, use the mock provider flags documented in `.env.example`.
 
-## Environment Variables
+## API Groups
 
-| Variable | Description | Default |
-|----------|-------------|---------|
-| `PORT` | Server port | 8000 |
-| `DEBUG` | Debug mode | True |
-| `DATABASE_URL` | Database connection string | `sqlite:///./vibe_marketing.db` |
-| `SECRET_KEY` | JWT secret key | - |
-| `GOOGLE_CLIENT_ID` | Google OAuth Client ID | - |
-| `GOOGLE_CLIENT_SECRET` | Google OAuth Client Secret | - |
-| `XAI_API_KEY` | X AI API Key | - |
-| `FRONTEND_URL` | Frontend URL for CORS | `http://localhost:3000` |
+- `/api/auth/*`: login, register, current user
+- `/api/short-drama/*`: project workflow, product parsing, story, assets, segment scripts, videos, exports
+- `/api/billing/*`: subscription orders, payment callbacks, credit records
+- `/api/admin/*`: admin dashboards and operations
+- `/health`: service health check
+- `/docs`: Swagger UI
 
-## API Endpoints
-
-### Authentication
-
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| POST | `/api/auth/login` | Login with email and password |
-| POST | `/api/auth/register` | Register with email and password |
-| GET | `/api/auth/google` | Google OAuth placeholder |
-| POST | `/api/auth/google/login` | Login with Google OAuth token |
-| GET | `/api/auth/google/auth-url` | Get Google OAuth authorization URL |
-
-### X Agent
-
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| POST | `/api/v1/x-agent/analyze` | Analyze keyword on X platform |
-| GET | `/api/v1/x-agent/history` | Get user's analysis history |
-| GET | `/api/v1/x-agent/trending` | Get trending topics |
-
-### Documentation
-
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| GET | `/docs` | Swagger UI documentation |
-| GET | `/redoc` | ReDoc documentation |
-| GET | `/openapi.json` | OpenAPI schema |
-
-## Docker Deployment
-
-### Using Docker Compose
+## Tests
 
 ```bash
-docker-compose up -d
+cd backend
+PYTHONPATH=. pytest -q
 ```
 
-This will start:
-- FastAPI backend on port 8000
-- PostgreSQL database on port 5432
-- Redis cache on port 6379
+## Deployment
 
-### Using Docker
+Relevant deployment files:
 
-```bash
-docker build -t vibe-marketing-backend .
-docker run -p 8000:8000 vibe-marketing-backend
-```
+- `backend/Dockerfile`
+- `backend/start.sh`
+- `backend/railway.toml`
+- `backend/docker-compose.yml`
+- `deploy/aliyun/`
 
-## Development
-
-### Database Migrations
-
-```bash
-# Generate migration
-alembic revision --autogenerate -m "migration message"
-
-# Apply migration
-alembic upgrade head
-```
-
-### Running Tests
-
-```bash
-pytest tests/
-```
-
-### Code Style
-
-The project follows PEP 8 style guidelines. Use black for formatting:
-
-```bash
-black app/
-```
-
-## Production Deployment
-
-### Security Checklist
-
-- [ ] Set strong `SECRET_KEY`
-- [ ] Use PostgreSQL instead of SQLite
-- [ ] Enable HTTPS
-- [ ] Set `DEBUG=False`
-- [ ] Enable authentication middleware
-- [ ] Use environment-specific config
-- [ ] Set up rate limiting
-- [ ] Configure proper CORS origins
-
-### Recommended Hosting
-
-- **Vercel / Railway**: Easy deployment
-- **AWS / GCP / Azure**: Full control
-- **DigitalOcean / Linode**: Cost-effective
-
-## License
-
-Proprietary - Vibe Marketing
-
-## Support
-
-For support, please contact the development team.
+Before production deployment, set a strong `SECRET_KEY`, use PostgreSQL, configure exact CORS origins, configure public media/API origins, and disable development mock providers unless explicitly intended.

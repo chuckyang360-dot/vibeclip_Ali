@@ -8,6 +8,7 @@ from ...config import settings
 from ..exceptions import ShortDramaImageProviderError
 from .generated_image import GeneratedImage
 from .xai_image_client import XaiImageClient, effective_xai_image_model
+from ..utils.ai_runtime_config import STAGE_S3_ASSET_MANAGEMENT, get_ai_runtime_config
 
 logger = logging.getLogger(__name__)
 
@@ -51,7 +52,20 @@ class XaiImageProvider:
         asset_id: int,
         metadata: dict[str, Any] | None = None,
     ) -> GeneratedImage:
-        model = effective_xai_image_model()
+        ai_cfg = get_ai_runtime_config(STAGE_S3_ASSET_MANAGEMENT)
+        provider = (ai_cfg.provider or "").strip().lower()
+        model = (ai_cfg.model_id or "").strip() or effective_xai_image_model()
+        if provider and provider not in {"xai", "grok"}:
+            logger.warning(
+                "[AI_RUNTIME_PROVIDER_UNSUPPORTED_DIRECT_IMAGE] project_id=%s target_type=%s target_id=%s "
+                "provider=%s model=%s fallback_provider=xai",
+                project_id,
+                asset_type,
+                asset_id,
+                provider,
+                model,
+            )
+            model = effective_xai_image_model()
         meta_in = metadata or {}
         fmt = (settings.SHORT_DRAMA_IMAGE_RETURN_FORMAT or "url").strip().lower()
 
@@ -112,6 +126,8 @@ class XaiImageProvider:
             "generation_seed": meta_in.get("generation_seed"),
             "style_tags": meta_in.get("style_tags") or ["commercial_short_drama", "clean_composition"],
             "response_format": fmt,
+            "configured_provider": provider or "xai",
+            "ai_stage_key": STAGE_S3_ASSET_MANAGEMENT,
         }
         logger.info(
             "[IMAGE_RENDER_SUCCESS] provider=%s model=%s project_id=%s target_type=%s target_id=%s direct=true",

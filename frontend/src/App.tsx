@@ -4,6 +4,7 @@ import { AdminRouteGuard } from './components/admin/AdminRouteGuard';
 import { AdminApiLogsPage } from './pages/admin/AdminApiLogsPage';
 import { AdminCreditsPage } from './pages/admin/AdminCreditsPage';
 import { AdminDashboardPage } from './pages/admin/AdminDashboardPage';
+import { AdminModelConfigPage } from './pages/admin/AdminModelConfigPage';
 import { AdminOperationLogsPage } from './pages/admin/AdminOperationLogsPage';
 import { AdminProjectDetailPage } from './pages/admin/AdminProjectDetailPage';
 import { AdminProjectsPage } from './pages/admin/AdminProjectsPage';
@@ -95,6 +96,7 @@ export function App() {
           <Route path="api-logs" element={<AdminApiLogsPage />} />
           <Route path="credits" element={<AdminCreditsPage />} />
           <Route path="logs" element={<AdminOperationLogsPage />} />
+          <Route path="model-config" element={<AdminModelConfigPage />} />
           <Route path="settings" element={<AdminSettingsPage />} />
         </Route>
         <Route path="*" element={<Navigate to="/" replace />} />
