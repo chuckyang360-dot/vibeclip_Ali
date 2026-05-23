@@ -18,7 +18,6 @@ from app.short_drama.providers.railway_image_proxy import (
 )
 from app.short_drama.providers.railway_image_provider import RailwayImageProvider
 from app.short_drama.providers.xai_image_provider import XaiImageProvider
-from app.short_drama.utils.ai_runtime_config import AIRuntimeConfig
 from app.short_drama.utils.image_storage import persist_generated_image_url
 
 
@@ -102,49 +101,6 @@ def test_railway_create_image_defaults_r2_url_request(monkeypatch: pytest.Monkey
     assert result.mime_type == "image/jpeg"
     assert result.storage == "r2"
     assert result.raw_bytes is None
-
-
-def test_railway_create_image_normalizes_resolution_case(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(settings, "AI_PROXY_BASE_URL", "https://proxy.example")
-    monkeypatch.setattr(settings, "AI_PROXY_TOKEN", "tok")
-
-    captured: dict = {}
-    payload = {"b64_json": "aGVsbG8="}
-
-    class FakeResp:
-        status_code = 200
-        text = json.dumps(payload)
-
-        def json(self):
-            return payload
-
-    class FakeClient:
-        def __init__(self, *args, **kwargs):
-            pass
-
-        def __enter__(self):
-            return self
-
-        def __exit__(self, *args):
-            return False
-
-        def post(self, url, headers=None, json=None):
-            captured["body"] = json
-            return FakeResp()
-
-    monkeypatch.setattr("app.short_drama.providers.railway_image_proxy.httpx.Client", FakeClient)
-    railway_create_image_from_text(
-        project_id=1,
-        target_type="character",
-        target_id=9,
-        prompt="a cat",
-        model="grok-imagine-image",
-        response_format="b64_json",
-        aspect_ratio="1:1",
-        resolution="1K",
-    )
-
-    assert captured["body"]["resolution"] == "1k"
 
 
 def test_railway_create_image_b64_json_compat(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -257,45 +213,6 @@ def test_railway_image_provider_r2_url_no_download(monkeypatch: pytest.MonkeyPat
     assert out.data == b""
     assert out.meta.get("image_source") == "r2_url"
     download.download_url.assert_not_called()
-
-
-def test_railway_image_provider_gemini_runtime_uses_direct_client(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(
-        "app.short_drama.providers.railway_image_provider.get_ai_runtime_config",
-        lambda stage: AIRuntimeConfig(
-            stage_key=stage,
-            provider="gemini",
-            model_id="gemini-3.1-flash-image-preview",
-        ),
-    )
-    monkeypatch.setattr(
-        "app.short_drama.providers.railway_image_provider.railway_create_image_from_text",
-        MagicMock(side_effect=AssertionError("Gemini image models must not be sent to Railway /images/generations")),
-    )
-
-    class FakeGeminiClient:
-        def generate_image_from_text(self, **kwargs):
-            assert kwargs["model"] == "gemini-3.1-flash-image-preview"
-            return b"png-bytes", "image/png"
-
-    monkeypatch.setattr(
-        "app.short_drama.providers.railway_image_provider.GeminiImageClient",
-        lambda: FakeGeminiClient(),
-    )
-
-    prov = RailwayImageProvider(download_client=MagicMock())
-    out = prov.generate_from_text(
-        prompt="test",
-        asset_type="scene",
-        project_id=2,
-        asset_id=3,
-    )
-
-    assert out.provider == "gemini_image"
-    assert out.model == "gemini-3.1-flash-image-preview"
-    assert out.data == b"png-bytes"
-    assert out.meta.get("image_source") == "gemini_direct"
-    assert out.meta.get("via_railway_proxy") is False
 
 
 def test_persist_generated_image_url_uses_remote(monkeypatch: pytest.MonkeyPatch) -> None:

@@ -84,16 +84,6 @@ def _extract_url_from_proxy_payload(data: dict[str, Any]) -> str | None:
     return None
 
 
-def _normalize_image_resolution(resolution: str | None) -> str | None:
-    value = (resolution or "").strip()
-    if not value:
-        return None
-    lowered = value.lower()
-    if lowered in {"1k", "2k"}:
-        return lowered
-    return value
-
-
 def railway_create_image_from_text(
     *,
     project_id: int,
@@ -155,9 +145,8 @@ def railway_create_image_from_text(
         body["provider"] = str(provider).strip()
     if aspect_ratio:
         body["aspect_ratio"] = aspect_ratio
-    normalized_resolution = _normalize_image_resolution(resolution)
-    if normalized_resolution:
-        body["resolution"] = normalized_resolution
+    if resolution:
+        body["resolution"] = resolution
 
     timeout = httpx.Timeout(float(timeout_sec), connect=min(30.0, float(timeout_sec)))
     try:
