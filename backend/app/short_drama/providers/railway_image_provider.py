@@ -7,6 +7,7 @@ from typing import Any
 from ...config import settings
 from ..exceptions import ShortDramaImageProviderError
 from .generated_image import GeneratedImage
+from .gemini_image_client import GeminiImageClient
 from .railway_image_proxy import (
     effective_railway_image_proxy_base_url,
     effective_railway_image_proxy_timeout_seconds,
@@ -21,7 +22,11 @@ _PROVIDER_ID = "railway_proxy"
 
 
 class RailwayImageProvider:
-    """S3 asset images via Railway AI Proxy → upstream xAI images API (no ECS direct)."""
+    """S3 asset images via Railway AI Proxy for xAI, with Gemini direct fallback.
+
+    The deployed Railway /images/generations schema is xAI-compatible and ignores
+    provider selection, so Gemini model ids must not be sent through that path.
+    """
 
     def __init__(self, download_client: XaiImageClient | None = None):
         self._download_client = download_client or XaiImageClient()
@@ -61,6 +66,16 @@ class RailwayImageProvider:
         model = (ai_cfg.model_id or "").strip() or effective_xai_image_model()
         provider = (ai_cfg.provider or "").strip().lower() or None
         meta_in = metadata or {}
+        if provider == "gemini":
+            return self._generate_gemini_direct(
+                prompt=prompt,
+                asset_type=asset_type,
+                project_id=project_id,
+                asset_id=asset_id,
+                metadata=meta_in,
+                model=model,
+            )
+
         proxy_base = effective_railway_image_proxy_base_url()
         timeout_sec = effective_railway_image_proxy_timeout_seconds()
 
@@ -169,4 +184,74 @@ class RailwayImageProvider:
             model=model,
             meta=out_meta,
             remote_url=remote_url,
+        )
+
+    def _generate_gemini_direct(
+        self,
+        *,
+        prompt: str,
+        asset_type: str,
+        project_id: int,
+        asset_id: int,
+        metadata: dict[str, Any],
+        model: str,
+    ) -> GeneratedImage:
+        logger.info(
+            "[IMAGE_RENDER_STARTED] provider=gemini_image model=%s project_id=%s target_type=%s "
+            "target_id=%s direct=true reason=railway_images_proxy_xai_only",
+            model,
+            project_id,
+            asset_type,
+            asset_id,
+        )
+        try:
+            raw, mime = GeminiImageClient().generate_image_from_text(
+                prompt=prompt,
+                model=model,
+                log_context={
+                    "project_id": project_id,
+                    "asset_id": asset_id,
+                    "asset_type": asset_type,
+                    "provider": "gemini_image",
+                    "model": model,
+                },
+            )
+        except Exception:
+            logger.warning(
+                "[IMAGE_RENDER_FAILED] provider=gemini_image model=%s project_id=%s target_type=%s "
+                "target_id=%s direct=true",
+                model,
+                project_id,
+                asset_type,
+                asset_id,
+                exc_info=True,
+            )
+            raise
+
+        prompt_hash = hashlib.sha256(prompt.encode("utf-8")).hexdigest()[:16]
+        logger.info(
+            "[IMAGE_RENDER_SUCCESS] provider=gemini_image model=%s project_id=%s target_type=%s "
+            "target_id=%s direct=true",
+            model,
+            project_id,
+            asset_type,
+            asset_id,
+        )
+        return GeneratedImage(
+            data=raw,
+            mime_type=mime or "image/png",
+            provider="gemini_image",
+            model=model,
+            meta={
+                "provider": "gemini_image",
+                "model": model,
+                "prompt_hash": prompt_hash,
+                "generation_seed": metadata.get("generation_seed"),
+                "style_tags": metadata.get("style_tags") or ["commercial_short_drama", "clean_composition"],
+                "via_railway_proxy": False,
+                "configured_provider": "gemini",
+                "ai_stage_key": STAGE_S3_ASSET_MANAGEMENT,
+                "image_source": "gemini_direct",
+                "railway_images_proxy": "xai_only",
+            },
         )
