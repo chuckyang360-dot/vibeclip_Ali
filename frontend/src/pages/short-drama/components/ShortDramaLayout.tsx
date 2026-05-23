@@ -25,7 +25,7 @@ export function ShortDramaLayout({ children, headerMode: _headerMode = 'workflow
   return (
     <div className="min-h-screen bg-white text-[#1D1D1F]">
       <header
-        className="fixed top-0 left-0 right-0 z-50 flex h-14 items-center justify-between px-6 transition-all duration-300 backdrop-blur-md lg:px-10"
+        className="fixed top-0 left-0 right-0 z-50 flex h-14 items-center justify-between px-4 transition-all duration-300 backdrop-blur-md md:px-6 lg:px-10"
         style={{
           background: scrolled ? 'rgba(255,255,255,0.98)' : 'rgba(255,255,255,0.82)',
           borderBottom: '1px solid #E5E5EA',
@@ -56,10 +56,10 @@ export function ShortDramaLayout({ children, headerMode: _headerMode = 'workflow
             <UserMenuDropdown />
           ) : (
             <>
-              <Link to="/login" className="px-3.5 py-1.5 text-[13px] font-medium rounded-lg text-[#444444] hover:bg-[#F5F5F7]">
+              <Link to="/login" className="px-2.5 py-1.5 text-[13px] font-medium rounded-lg text-[#444444] hover:bg-[#F5F5F7] md:px-3.5">
                 登录
               </Link>
-              <Link to="/register" className="px-3.5 py-1.5 text-[13px] font-medium rounded-lg bg-[#1D1D1F] text-white">
+              <Link to="/register" className="px-3 py-1.5 text-[13px] font-medium rounded-lg bg-[#1D1D1F] text-white md:px-3.5">
                 注册
               </Link>
             </>

@@ -524,6 +524,146 @@ function AssetModulePanel({
   );
 }
 
+function MobileProjectWorkbench({
+  loading,
+  error,
+  projects,
+  statusCounts,
+  onOpenProject,
+  onCreateProject,
+}: {
+  loading: boolean;
+  error: string | null;
+  projects: ShortDramaProjectDto[];
+  statusCounts: Record<ProjectStatusFilter, number>;
+  onOpenProject: (id: number) => void;
+  onCreateProject: () => void;
+}) {
+  const generating = projects.filter((p) => p.overall_status === 'generating');
+  const failed = projects.filter((p) => p.overall_status === 'failed' || p.overall_status === 'stale');
+  const completed = projects.filter((p) => p.overall_status === 'completed');
+  const topProjects = projects.slice(0, 5);
+
+  return (
+    <div className="md:hidden">
+      <section className="rounded-[28px] bg-[#111111] p-5 text-white shadow-[0_16px_40px_rgba(15,23,42,0.16)]">
+        <div className="flex items-start justify-between gap-4">
+          <div>
+            <p className="text-[11px] font-bold uppercase tracking-[0.18em] text-white/45">Mobile Workspace</p>
+            <h1 className="mt-2 text-[28px] font-black leading-tight">今天要继续哪个视频？</h1>
+            <p className="mt-3 text-[13px] leading-relaxed text-white/60">手机端优先处理创建、进度、重试和成片查看。</p>
+          </div>
+          <button
+            type="button"
+            onClick={onCreateProject}
+            className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-white text-[#111111]"
+            aria-label="创建项目"
+          >
+            <i className="ri-add-line text-[22px]" aria-hidden />
+          </button>
+        </div>
+        <div className="mt-6 grid grid-cols-3 gap-2">
+          <div className="rounded-2xl bg-white/10 p-3">
+            <p className="text-[20px] font-black">{statusCounts.all}</p>
+            <p className="mt-1 text-[11px] text-white/55">全部项目</p>
+          </div>
+          <div className="rounded-2xl bg-white/10 p-3">
+            <p className="text-[20px] font-black">{generating.length}</p>
+            <p className="mt-1 text-[11px] text-white/55">生成中</p>
+          </div>
+          <div className="rounded-2xl bg-white/10 p-3">
+            <p className="text-[20px] font-black">{completed.length}</p>
+            <p className="mt-1 text-[11px] text-white/55">已完成</p>
+          </div>
+        </div>
+      </section>
+
+      <section className="mt-4 grid grid-cols-2 gap-3">
+        <button
+          type="button"
+          onClick={onCreateProject}
+          className="rounded-2xl border border-[#EAEAEA] bg-white p-4 text-left"
+        >
+          <i className="ri-add-circle-line text-[22px] text-[#1D1D1F]" aria-hidden />
+          <p className="mt-3 text-[14px] font-bold text-[#1D1D1F]">新建项目</p>
+          <p className="mt-1 text-[12px] leading-relaxed text-[#8E8E93]">上传商品图开始</p>
+        </button>
+        <button
+          type="button"
+          onClick={() => {
+            const target = failed[0] || generating[0] || topProjects[0];
+            if (target?.id) onOpenProject(target.id);
+          }}
+          disabled={!topProjects.length}
+          className="rounded-2xl border border-[#EAEAEA] bg-white p-4 text-left disabled:opacity-50"
+        >
+          <i className="ri-refresh-line text-[22px] text-[#1D1D1F]" aria-hidden />
+          <p className="mt-3 text-[14px] font-bold text-[#1D1D1F]">继续处理</p>
+          <p className="mt-1 text-[12px] leading-relaxed text-[#8E8E93]">{failed.length ? `${failed.length} 个需更新` : '打开最近项目'}</p>
+        </button>
+      </section>
+
+      {loading ? <div className="mt-5 text-[13px] text-[#8E8E93]">项目加载中...</div> : null}
+      {error ? <div className="mt-5 rounded-2xl border border-red-200 bg-red-50 p-4 text-[13px] text-red-800">{error}</div> : null}
+
+      {!loading && !error && topProjects.length === 0 ? (
+        <section className="mt-5 rounded-2xl border border-dashed border-[#D1D1D6] bg-white px-5 py-8 text-center">
+          <p className="text-[15px] font-bold text-[#1D1D1F]">还没有项目</p>
+          <p className="mt-2 text-[12px] leading-relaxed text-[#8E8E93]">先创建一个商品视频项目，后续生成进度会出现在这里。</p>
+          <button type="button" onClick={onCreateProject} className="mt-5 rounded-xl bg-[#1D1D1F] px-5 py-2.5 text-[13px] font-semibold text-white">
+            开始创建
+          </button>
+        </section>
+      ) : null}
+
+      {!loading && !error && topProjects.length > 0 ? (
+        <section className="mt-5">
+          <div className="mb-3 flex items-center justify-between">
+            <h2 className="text-[15px] font-bold text-[#1D1D1F]">最近项目</h2>
+            <span className="text-[12px] text-[#8E8E93]">共 {projects.length} 个</span>
+          </div>
+          <div className="space-y-3">
+            {topProjects.map((p) => {
+              const tone = overallStatusTone(p.overall_status);
+              const updatedText = formatUpdatedAt(p.updated_at) || formatUpdatedAt(p.created_at) || '未知时间';
+              const progressTotal = Number(p.segment_video_total || 0);
+              const progressDone = Number(p.segment_video_count || 0);
+              const progressLabel = progressTotal > 0 ? `${progressDone}/${progressTotal}` : stepLabel(p.last_active_step);
+              return (
+                <button
+                  key={p.id}
+                  type="button"
+                  onClick={() => onOpenProject(p.id)}
+                  className="flex w-full items-center gap-3 rounded-2xl border border-[#EAEAEA] bg-white p-3 text-left"
+                >
+                  <div className="h-16 w-16 shrink-0 overflow-hidden rounded-2xl bg-[#F5F5F7]">
+                    <ProjectCoverImage
+                      projectName={p.project_name || `项目 ${p.id}`}
+                      cover={p.cover_asset ?? null}
+                      emptyTitle=""
+                    />
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-2">
+                      <h3 className="truncate text-[14px] font-bold text-[#1D1D1F]">{p.project_name || `项目 ${p.id}`}</h3>
+                      <span className="shrink-0 rounded-full px-2 py-0.5 text-[10px] font-semibold" style={{ background: tone.bg, color: tone.color }}>
+                        {overallStatusLabel(p.overall_status)}
+                      </span>
+                    </div>
+                    <p className="mt-1 text-[12px] text-[#8E8E93]">视频进度：{progressLabel}</p>
+                    <p className="mt-0.5 text-[11px] text-[#C7C7CC]">更新于 {updatedText}</p>
+                  </div>
+                  <i className="ri-arrow-right-s-line text-[20px] text-[#C7C7CC]" aria-hidden />
+                </button>
+              );
+            })}
+          </div>
+        </section>
+      ) : null}
+    </div>
+  );
+}
+
 export function ShortDramaProjectsPage() {
   const navigate = useNavigate();
   const location = useLocation();
@@ -707,7 +847,7 @@ export function ShortDramaProjectsPage() {
 
   return (
     <ShortDramaLayout headerMode="landing">
-      <div className="min-h-screen bg-[#F7F8FA] px-6 py-10" style={{ fontFamily: "'Inter', sans-serif" }}>
+      <div className="min-h-screen bg-[#F7F8FA] px-4 py-7 md:px-6 md:py-10" style={{ fontFamily: "'Inter', sans-serif" }}>
         <div className="mx-auto max-w-5xl">
         {!user?.id ? (
           <div className="rounded-2xl border border-amber-200 bg-amber-50 p-6">
@@ -735,17 +875,26 @@ export function ShortDramaProjectsPage() {
           </div>
         ) : (
           <>
-        <div className="mb-7">
+        <MobileProjectWorkbench
+          loading={loading}
+          error={error}
+          projects={sorted}
+          statusCounts={statusCounts}
+          onOpenProject={(id) => navigate(`/short-drama/projects/${id}`)}
+          onCreateProject={() => navigate('/short-drama/create')}
+        />
+
+        <div className="mb-7 hidden md:block">
           <div>
             <span className="text-[11px] font-bold uppercase tracking-[0.2em] text-[#8E8E93]">Management Center</span>
-            <h1 className="mt-2 text-3xl font-black text-[#1D1D1F]" style={{ fontFamily: "'Syne', sans-serif" }}>VibeClip 管理中心</h1>
+            <h1 className="mt-2 text-2xl font-black text-[#1D1D1F] md:text-3xl" style={{ fontFamily: "'Syne', sans-serif" }}>VibeClip 管理中心</h1>
             <p className="mt-2 max-w-2xl text-[13px] leading-relaxed text-[#8E8E93]">
               统一管理短剧项目和未来可跨项目复用的人物、场景、产品资产。项目内资产生成与编辑仍在各项目 S3 页面完成。
             </p>
           </div>
         </div>
 
-        <div className="mb-7 grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-4">
+        <div className="mb-7 hidden snap-x gap-3 overflow-x-auto pb-1 md:grid md:grid-cols-2 md:overflow-visible xl:grid-cols-4">
           {MANAGEMENT_MODULES.map((module) => {
             const active = activeModule === module.key;
             return (
@@ -753,7 +902,7 @@ export function ShortDramaProjectsPage() {
                 key={module.key}
                 type="button"
                 onClick={() => setActiveModule(module.key)}
-                className="rounded-2xl border p-4 text-left transition-all duration-150"
+                className="min-w-[220px] snap-start rounded-2xl border p-4 text-left transition-all duration-150 md:min-w-0"
                 style={{
                   background: active ? '#1D1D1F' : '#ffffff',
                   borderColor: active ? '#1D1D1F' : '#EAEAEA',
@@ -775,11 +924,12 @@ export function ShortDramaProjectsPage() {
           })}
         </div>
 
+        <div className="hidden md:block">
         {activeModule === 'projects' ? (
           <>
             {loading ? <div className="text-[13px] text-[#8E8E93]">加载中...</div> : null}
             {error ? <div className="rounded-xl border border-red-200 bg-red-50 p-4 text-[13px] text-red-800">{error}</div> : null}
-          <div className="mb-5 flex flex-wrap gap-2">
+          <div className="mb-5 flex gap-2 overflow-x-auto pb-1 md:flex-wrap md:overflow-visible">
             {STATUS_FILTERS.map((filter) => {
               const active = activeFilter === filter.key;
               return (
@@ -787,7 +937,7 @@ export function ShortDramaProjectsPage() {
                   key={filter.key}
                   type="button"
                   onClick={() => setActiveFilter(filter.key)}
-                  className="rounded-full px-3 py-1.5 text-[12px] font-semibold transition-colors duration-150"
+                  className="shrink-0 rounded-full px-3 py-1.5 text-[12px] font-semibold transition-colors duration-150"
                   style={{
                     background: active ? '#1D1D1F' : '#ffffff',
                     color: active ? '#ffffff' : '#444444',
@@ -973,6 +1123,7 @@ export function ShortDramaProjectsPage() {
             onPageChange={updateCurrentAssetPage}
           />
         )}
+        </div>
           </>
         )}
         </div>

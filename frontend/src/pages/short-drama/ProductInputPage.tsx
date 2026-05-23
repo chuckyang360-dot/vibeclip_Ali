@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { SDWorkflowNav } from './components/SDWorkflowNav';
+import { MobileBottomActionBar } from './components/MobileBottomActionBar';
 import { useEffectiveShortDramaProjectId } from './hooks/useEffectiveShortDramaProjectId';
 import {
   ShortDramaApiError,
@@ -152,6 +153,8 @@ export function ShortDramaProductInputPage() {
   const [noteFocused, setNoteFocused] = useState(false);
   const [urlFocused, setUrlFocused] = useState(false);
   const productImageInputRef = useRef<HTMLInputElement>(null);
+  const productCameraInputRef = useRef<HTMLInputElement>(null);
+  const productGalleryInputRef = useRef<HTMLInputElement>(null);
   const lastSavedProductInputRef = useRef<string>(serializeProductInput(emptyProductInput));
 
   useEffect(() => {
@@ -294,14 +297,14 @@ export function ShortDramaProductInputPage() {
           }
         }}
       />
-      <div className="pt-14">
-        <main className="mx-auto max-w-[1200px] px-5 py-8 lg:px-8">
-          <header className="mb-7">
+      <div className="pt-[112px] md:pt-14">
+        <main className="mx-auto max-w-[1200px] px-4 pb-28 pt-7 md:px-5 md:py-8 lg:px-8">
+          <header className="mb-5 md:mb-7">
             <span className="mb-2 inline-block rounded-full bg-[#EAEAEA] px-3 py-1 text-[11px] font-bold uppercase tracking-widest text-[#8E8E93]">
               S1 · 商品理解
             </span>
             <h1 className="mb-1 text-2xl font-black" style={{ ...sdFontHeading, color: sdColors.ink }}>
-              告诉 AI，这个商品是什么
+              上传商品，先生成理解
             </h1>
             <p className="text-[13.5px] text-[#8E8E93]">
               上传商品图片，补充少量信息，让 AI 理解这个商品适合怎么被表达。
@@ -328,6 +331,47 @@ export function ShortDramaProductInputPage() {
                     e.currentTarget.value = '';
                   }}
                 />
+                <input
+                  ref={productCameraInputRef}
+                  type="file"
+                  accept="image/*"
+                  capture="environment"
+                  className="hidden"
+                  onChange={(e) => {
+                    if (e.target.files) void addFiles(e.target.files);
+                    e.currentTarget.value = '';
+                  }}
+                />
+                <input
+                  ref={productGalleryInputRef}
+                  type="file"
+                  accept="image/jpeg,image/png,image/webp"
+                  multiple
+                  className="hidden"
+                  onChange={(e) => {
+                    if (e.target.files) void addFiles(e.target.files);
+                    e.currentTarget.value = '';
+                  }}
+                />
+
+                <div className="mb-4 grid grid-cols-2 gap-3 md:hidden">
+                  <button
+                    type="button"
+                    onClick={() => productCameraInputRef.current?.click()}
+                    className="flex h-24 flex-col items-center justify-center gap-2 rounded-2xl bg-[#1D1D1F] text-white"
+                  >
+                    <i className={ri('ri-camera-line', 'text-[24px]')} aria-hidden />
+                    <span className="text-[13px] font-semibold">拍照上传</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => productGalleryInputRef.current?.click()}
+                    className="flex h-24 flex-col items-center justify-center gap-2 rounded-2xl border border-[#EAEAEA] bg-[#F7F8FA] text-[#444444]"
+                  >
+                    <i className={ri('ri-image-line', 'text-[24px]')} aria-hidden />
+                    <span className="text-[13px] font-semibold">从相册选</span>
+                  </button>
+                </div>
 
                 {input.product_images.length === 0 ? (
                   <div
@@ -358,8 +402,8 @@ export function ShortDramaProductInputPage() {
                       <div className="mb-4 flex h-14 w-14 items-center justify-center rounded-2xl border border-[#E8E8EC] bg-[#F0F0F3]">
                         <i className={ri('ri-image-add-line', 'text-[24px] text-[#AEAEB2]')} aria-hidden />
                       </div>
-                      <p className="mb-1.5 text-[14px] font-semibold text-[#444444]">拖拽上传商品图片</p>
-                      <p className="mb-4 text-[12.5px] text-[#AEAEB2]">或点击此区域选择文件</p>
+                      <p className="mb-1.5 text-[14px] font-semibold text-[#444444]">点击上传商品图片</p>
+                      <p className="mb-4 text-[12.5px] text-[#AEAEB2]">电脑端也可以拖拽文件到这里</p>
                       <div className="inline-flex items-center gap-2 rounded-xl border border-[#E5E5EA] bg-white px-4 py-2 text-[12.5px] font-medium text-[#444444]">
                         <i className={ri('ri-folder-open-line', 'text-[13px]')} aria-hidden />
                         选择图片
@@ -369,7 +413,7 @@ export function ShortDramaProductInputPage() {
                   </div>
                 ) : (
                   <div>
-                    <div className="mb-3 grid grid-cols-3 gap-3">
+                    <div className="mb-3 grid grid-cols-2 gap-3 sm:grid-cols-3">
                     {input.product_images.map((img, idx) => (
                       <div key={`${idx}-${img.url.slice(0, 24)}`} className="group relative aspect-square overflow-hidden rounded-xl border border-[#E5E5EA]">
                         <img src={img.url} alt={`product-${idx + 1}`} className="h-full w-full object-cover object-top" />
@@ -377,7 +421,7 @@ export function ShortDramaProductInputPage() {
                           <button
                             type="button"
                             onClick={() => removeImage(idx)}
-                            className="flex h-8 w-8 cursor-pointer items-center justify-center rounded-full opacity-0 transition-opacity duration-200 group-hover:opacity-100"
+                            className="flex h-8 w-8 cursor-pointer items-center justify-center rounded-full opacity-100 transition-opacity duration-200 md:opacity-0 md:group-hover:opacity-100"
                             style={{ background: 'rgba(255,255,255,0.9)' }}
                           >
                             <i className={ri('ri-delete-bin-line', 'text-[13px] text-[#DC2626]')} aria-hidden />
@@ -405,7 +449,7 @@ export function ShortDramaProductInputPage() {
                       </button>
                     ) : null}
                     </div>
-                    <p className="text-[11px] text-[#C7C7CC]">已上传 {input.product_images.length}/5 张 · 悬停可删除</p>
+                    <p className="text-[11px] text-[#C7C7CC]">已上传 {input.product_images.length}/5 张 · 点按图片上的按钮可删除</p>
                   </div>
                 )}
               </div>
@@ -460,8 +504,8 @@ export function ShortDramaProductInputPage() {
             </section>
 
             <aside className="w-full shrink-0 lg:sticky lg:top-20 lg:w-[400px]">
-              <div className="min-h-[560px]">
-                <div className="flex h-full min-h-[560px] flex-col overflow-hidden rounded-2xl border border-[#E5E5EA] bg-white">
+              <div className="min-h-0 lg:min-h-[560px]">
+                <div className="flex h-full min-h-0 flex-col overflow-hidden rounded-2xl border border-[#E5E5EA] bg-white lg:min-h-[560px]">
                   <div className="shrink-0 border-b border-[#F0F0F0] px-5 pb-4 pt-5">
                     <div className="mb-2 flex items-center gap-2.5">
                       <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg border border-[#E5E5EA] bg-[#F5F5F7]">
@@ -499,7 +543,7 @@ export function ShortDramaProductInputPage() {
                         <p className="mb-4 text-[12px] text-[#AEAEB2]">
                           上传商品并点击分析后，AI 会把你的创作意图和商品信息整理成一份创作理解。
                         </p>
-                        <div className="space-y-4">
+                        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:block lg:space-y-4">
                           {placeholderItems.map((g) => (
                             <div key={g.label} className="flex gap-3">
                               <div className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-lg border border-[#EAEAEA] bg-[#F7F8FA]">
@@ -558,7 +602,7 @@ export function ShortDramaProductInputPage() {
             <p className="mt-4 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-[13px] text-red-800">{error}</p>
           ) : null}
 
-          <div className="mt-8 flex items-center justify-between border-t border-[#E5E5EA] pt-6">
+          <div className="mt-8 hidden items-center justify-between border-t border-[#E5E5EA] pt-6 md:flex">
             <button
               type="button"
               onClick={() => navigate(withProjectQuery('/short-drama/create', projectId))}
@@ -594,6 +638,42 @@ export function ShortDramaProductInputPage() {
               </button>
             )}
           </div>
+          <MobileBottomActionBar>
+            <button
+              type="button"
+              onClick={() => navigate(withProjectQuery('/short-drama/create', projectId))}
+              className="flex h-11 shrink-0 items-center justify-center rounded-xl border border-[#E5E5EA] bg-white px-4 text-[13px] font-medium text-[#6E6E73]"
+              aria-label="返回创作意图"
+            >
+              <i className={ri('ri-arrow-left-line', 'text-[14px]')} aria-hidden />
+            </button>
+            {canContinue ? (
+              <button
+                type="button"
+                onClick={() => void saveAndContinue()}
+                className="flex h-11 min-w-0 flex-1 items-center justify-center gap-2 rounded-xl bg-[#1D1D1F] px-4 text-[13.5px] font-semibold text-white"
+              >
+                进入剧本生成
+                <i className={ri('ri-arrow-right-line', 'text-[13px]')} aria-hidden />
+              </button>
+            ) : briefStatus === 'loading' ? (
+              <div className="flex h-11 min-w-0 flex-1 items-center justify-center gap-2 rounded-xl bg-[#F5F5F7] px-4 text-[13px] text-[#8E8E93]">
+                <i className={ri('ri-loader-4-line', 'animate-spin text-[14px]')} aria-hidden />
+                AI 分析中…
+              </div>
+            ) : (
+              <button
+                type="button"
+                onClick={() => void runAnalysis()}
+                disabled={!canAnalyze}
+                className="flex h-11 min-w-0 flex-1 items-center justify-center gap-2 rounded-xl px-4 text-[13.5px] font-semibold text-white disabled:cursor-not-allowed disabled:bg-[#EAEAEA] disabled:text-[#AEAEB2]"
+                style={{ background: canAnalyze ? sdColors.ink : undefined }}
+              >
+                <i className={ri('ri-sparkling-2-line', 'text-[13px]')} aria-hidden />
+                生成理解
+              </button>
+            )}
+          </MobileBottomActionBar>
         </main>
       </div>
     </div>

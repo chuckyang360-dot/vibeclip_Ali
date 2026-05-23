@@ -1,6 +1,7 @@
 import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { SDWorkflowNav } from './components/SDWorkflowNav';
+import { MobileBottomActionBar } from './components/MobileBottomActionBar';
 import { AssetLightbox, type LightboxItem } from './components/AssetLightbox';
 import { AssetInteractionModal, type AssetEditorPayload, type AssetInteractionEntity, type AssetKind } from './components/AssetInteractionModal';
 import { useEffectiveShortDramaProjectId } from './hooks/useEffectiveShortDramaProjectId';
@@ -561,6 +562,212 @@ function activeRenderableImages(row: AssetLibraryItemDto) {
       return resolvedUrl ? { ...img, resolvedUrl } : null;
     })
     .filter((img): img is NonNullable<typeof img> => img !== null);
+}
+
+type MobileAssetsConfirmProps = {
+  tabs: Array<{ key: TabType; label: string; count: number; icon: string }>;
+  activeTab: TabType;
+  currentRows: AssetLibraryItemDto[];
+  totalCount: number;
+  s3AssetGridUi: S3AssetGridUiState;
+  workInProgress: boolean;
+  autoPreparing: boolean;
+  canGenerateS3Assets: boolean;
+  imageLoadFailedIds: Set<number>;
+  imageGenerationFailedIds: Set<number>;
+  generatingImageAssetIds: Set<number>;
+  analyzingAssetIds: Set<number>;
+  onTabChange: (tab: TabType) => void;
+  onOpenDetail: (row: AssetLibraryItemDto) => void;
+  onOpenPreview: (url: string, name: string) => void;
+  onUploadReference: (assetId: number) => void;
+  onGenerateAssetImage: (row: AssetLibraryItemDto) => void;
+  onGenerateS3Assets: () => void;
+  onCreateAsset: () => void;
+};
+
+function MobileAssetsConfirm({
+  tabs,
+  activeTab,
+  currentRows,
+  totalCount,
+  s3AssetGridUi,
+  workInProgress,
+  autoPreparing,
+  canGenerateS3Assets,
+  imageLoadFailedIds,
+  imageGenerationFailedIds,
+  generatingImageAssetIds,
+  analyzingAssetIds,
+  onTabChange,
+  onOpenDetail,
+  onOpenPreview,
+  onUploadReference,
+  onGenerateAssetImage,
+  onGenerateS3Assets,
+  onCreateAsset,
+}: MobileAssetsConfirmProps) {
+  const activeLabel = tabs.find((tab) => tab.key === activeTab)?.label ?? '资产';
+  const isWaiting = s3AssetGridUi === 'waiting' || workInProgress || autoPreparing;
+  const isFailed = s3AssetGridUi === 'failed';
+
+  return (
+    <div className="md:hidden">
+      <section className="rounded-[28px] bg-[#111111] p-5 text-white shadow-[0_16px_42px_rgba(15,23,42,0.16)]">
+        <div className="flex items-start justify-between gap-4">
+          <div>
+            <p className="text-[11px] font-bold uppercase tracking-[0.18em] text-white/45">Asset Review</p>
+            <h1 className="mt-2 text-[28px] font-black leading-tight">确认角色、场景和产品资产</h1>
+            <p className="mt-3 text-[13px] leading-relaxed text-white/60">手机端先看图、看描述、补参考图；复杂字段精修留给电脑。</p>
+          </div>
+          <button
+            type="button"
+            onClick={onCreateAsset}
+            className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-white text-[#111111]"
+            aria-label="新增资产"
+          >
+            <i className="ri-add-line text-[22px]" aria-hidden />
+          </button>
+        </div>
+        <div className="mt-6 grid grid-cols-3 gap-2">
+          {tabs.map((tab) => (
+            <button
+              key={tab.key}
+              type="button"
+              onClick={() => onTabChange(tab.key)}
+              className="rounded-2xl p-3 text-left"
+              style={{ background: activeTab === tab.key ? '#ffffff' : 'rgba(255,255,255,0.1)', color: activeTab === tab.key ? '#111111' : '#ffffff' }}
+            >
+              <i className={`${tab.icon} text-[18px]`} aria-hidden />
+              <p className="mt-2 text-[16px] font-black">{tab.count}</p>
+              <p className="mt-0.5 text-[11px] opacity-70">{tab.label}</p>
+            </button>
+          ))}
+        </div>
+      </section>
+
+      {isWaiting ? (
+        <div className="mt-4 rounded-2xl border border-[#EAEAEA] bg-white p-4">
+          <div className="flex items-center gap-3">
+            <div className="flex h-10 w-10 items-center justify-center rounded-2xl bg-[#F5F5F7]">
+              <i className="ri-loader-4-line animate-spin text-[18px] text-[#8E8E93]" aria-hidden />
+            </div>
+            <div>
+              <p className="text-[14px] font-bold text-[#1D1D1F]">资产正在生成</p>
+              <p className="mt-1 text-[12px] text-[#8E8E93]">完成后会自动刷新当前列表。</p>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {isFailed ? (
+        <div className="mt-4 rounded-2xl border border-red-200 bg-red-50 p-4">
+          <p className="text-[14px] font-bold text-red-800">资产生成失败</p>
+          <p className="mt-1 text-[12px] leading-relaxed text-red-700">可以重新触发资产生成。</p>
+          <button
+            type="button"
+            disabled={!canGenerateS3Assets}
+            onClick={onGenerateS3Assets}
+            className="mt-3 rounded-xl bg-[#1D1D1F] px-4 py-2 text-[12.5px] font-semibold text-white disabled:opacity-50"
+          >
+            重试生成资产
+          </button>
+        </div>
+      ) : null}
+
+      <section className="mt-5">
+        <div className="mb-3 flex items-center justify-between">
+          <h2 className="text-[16px] font-bold text-[#1D1D1F]">{activeLabel}</h2>
+          <span className="text-[12px] text-[#8E8E93]">全部 {totalCount} 个</span>
+        </div>
+
+        {currentRows.length === 0 && !isWaiting && !isFailed ? (
+          <div className="rounded-2xl border border-dashed border-[#D1D1D6] bg-white px-5 py-8 text-center">
+            <p className="text-[14px] font-bold text-[#1D1D1F]">当前分类还没有资产</p>
+            <p className="mt-2 text-[12px] leading-relaxed text-[#8E8E93]">可以新增一个资产，或返回 S2 重新生成剧本蓝图。</p>
+            <button type="button" onClick={onCreateAsset} className="mt-5 rounded-xl bg-[#1D1D1F] px-5 py-2.5 text-[13px] font-semibold text-white">
+              新增资产
+            </button>
+          </div>
+        ) : null}
+
+        <div className="space-y-3">
+          {currentRows.map((row) => {
+            const visualAnchor = getAssetThumbnailUrl(row);
+            const galleryUrls = activeRenderableImages(row).map((img) => img.resolvedUrl);
+            const previewUrl = visualAnchor || galleryUrls[0] || null;
+            const name = displayAssetName(row);
+            const roleLabel = resolveAssetRoleLabel(row);
+            const imageLoadFailed = imageLoadFailedIds.has(row.id);
+            const generating = generatingImageAssetIds.has(row.id) || assetImageGenerationStatus(row) === 'generating' || assetImageGenerationStatus(row) === 'processing';
+            const failed = imageGenerationFailedIds.has(row.id) || assetImageGenerationFailed(row) || imageLoadFailed;
+            return (
+              <article key={row.id} className="overflow-hidden rounded-2xl border border-[#EAEAEA] bg-white">
+                <button
+                  type="button"
+                  className="block w-full bg-[#F5F5F7]"
+                  onClick={() => previewUrl && onOpenPreview(previewUrl, name)}
+                  disabled={!previewUrl}
+                >
+                  {previewUrl ? (
+                    <img
+                      src={previewUrl}
+                      alt={name}
+                      className={`h-56 w-full ${row.asset_type === 'character' || row.asset_type === 'product' ? 'object-contain object-center' : 'object-cover object-center'}`}
+                    />
+                  ) : (
+                    <div className="flex h-48 flex-col items-center justify-center gap-2 text-[#8E8E93]">
+                      <i className={`${generating ? 'ri-loader-4-line animate-spin' : failed ? 'ri-error-warning-line' : 'ri-image-line'} text-[22px]`} aria-hidden />
+                      <span className="text-[12px]">{generating ? '图片生成中' : failed ? '图片生成失败' : '等待图片生成'}</span>
+                    </div>
+                  )}
+                </button>
+                <div className="p-4">
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <h3 className="text-[15px] font-bold leading-snug text-[#1D1D1F]">{name}</h3>
+                      <p className="mt-1 text-[11px] text-[#8E8E93]">{roleLabel} · {row.image_count}/6 图</p>
+                    </div>
+                    {row.has_reference_images ? (
+                      <span className="shrink-0 rounded-full bg-emerald-50 px-2 py-1 text-[10px] font-semibold text-emerald-700">有参考图</span>
+                    ) : null}
+                  </div>
+                  <p className="mt-3 text-[12.5px] leading-relaxed text-[#6E6E73]">
+                    {row.description || '暂无描述'}
+                  </p>
+                  <div className="mt-4 grid grid-cols-3 gap-2">
+                    <button
+                      type="button"
+                      onClick={() => onOpenDetail(row)}
+                      className="rounded-xl bg-[#1D1D1F] px-3 py-2 text-[11.5px] font-semibold text-white"
+                    >
+                      详情
+                    </button>
+                    <button
+                      type="button"
+                      disabled={analyzingAssetIds.has(row.id)}
+                      onClick={() => onUploadReference(row.id)}
+                      className="rounded-xl border border-[#EAEAEA] bg-[#F7F8FA] px-3 py-2 text-[11.5px] font-semibold text-[#444444] disabled:opacity-50"
+                    >
+                      {analyzingAssetIds.has(row.id) ? '分析中' : '参考图'}
+                    </button>
+                    <button
+                      type="button"
+                      disabled={generatingImageAssetIds.has(row.id)}
+                      onClick={() => onGenerateAssetImage(row)}
+                      className="rounded-xl border border-[#EAEAEA] bg-[#F7F8FA] px-3 py-2 text-[11.5px] font-semibold text-[#444444] disabled:opacity-50"
+                    >
+                      重生成
+                    </button>
+                  </div>
+                </div>
+              </article>
+            );
+          })}
+        </div>
+      </section>
+    </div>
+  );
 }
 
 function toPositiveInt(value: unknown): number | null {
@@ -1556,9 +1763,9 @@ export function ShortDramaAssetsPage() {
           return false;
         }
       }} />
-      <div className="pt-14">
+      <div className="pt-[112px] md:pt-14">
         <div
-          className="flex flex-col gap-4 px-6 py-6 md:flex-row md:items-center md:justify-between lg:px-10"
+          className="hidden flex-col gap-4 px-4 py-5 md:flex md:flex-row md:items-center md:justify-between md:px-6 md:py-6 lg:px-10"
           style={{ borderBottom: '1px solid #EAEAEA', background: '#ffffff' }}
         >
           <div>
@@ -1571,8 +1778,8 @@ export function ShortDramaAssetsPage() {
             </p>
           </div>
         </div>
-        <div className="px-6 pb-0 pt-5 lg:px-10">
-          <div className="flex w-fit gap-1 rounded-xl p-1" style={{ background: '#F5F5F7', border: '1px solid #EAEAEA' }}>
+        <div className="hidden overflow-x-auto px-4 pb-0 pt-5 md:block md:px-6 lg:px-10">
+          <div className="flex w-fit min-w-max gap-1 rounded-xl p-1" style={{ background: '#F5F5F7', border: '1px solid #EAEAEA' }}>
             {tabs.map((tab) => {
               const active = activeTab === tab.key;
               return (
@@ -1604,7 +1811,33 @@ export function ShortDramaAssetsPage() {
             })}
           </div>
         </div>
-        <div className="px-6 lg:px-10 py-7">
+        <div className="px-4 pb-28 pt-6 md:hidden">
+          <MobileAssetsConfirm
+            tabs={tabs}
+            activeTab={activeTab}
+            currentRows={currentRows}
+            totalCount={listedAssetTotal}
+            s3AssetGridUi={s3AssetGridUi}
+            workInProgress={workInProgress}
+            autoPreparing={autoPreparing}
+            canGenerateS3Assets={canGenerateS3Assets}
+            imageLoadFailedIds={imageLoadFailedIds}
+            imageGenerationFailedIds={imageGenerationFailedIds}
+            generatingImageAssetIds={generatingImageAssetIds}
+            analyzingAssetIds={analyzingAssetIds}
+            onTabChange={setActiveTab}
+            onOpenDetail={(row) => void openDetail(row.id, row)}
+            onOpenPreview={(url, name) => setLightbox({ img: url, name })}
+            onUploadReference={(assetId) => {
+              refTargetAssetId.current = assetId;
+              refUploadInput.current?.click();
+            }}
+            onGenerateAssetImage={(row) => void handleGenerateAssetImage(row)}
+            onGenerateS3Assets={() => void handleGenerateS3Assets()}
+            onCreateAsset={() => setShowCreate(true)}
+          />
+        </div>
+        <div className="hidden px-4 py-7 md:block md:px-6 lg:px-10">
           {initialLoading && !hasVisibleAssets && s3AssetGridUi !== 'waiting' && !error ? (
             <div className="mb-3 text-[12px] text-[#8E8E93]">加载中…</div>
           ) : null}
@@ -1915,6 +2148,25 @@ export function ShortDramaAssetsPage() {
           </div>
         </div>
       </div>
+      <MobileBottomActionBar>
+        <button
+          type="button"
+          onClick={() => navigate(withProjectQuery('/short-drama/story-blueprint', effectiveProjectId))}
+          className="flex h-11 shrink-0 items-center justify-center rounded-xl border border-[#E5E5EA] bg-white px-4 text-[13px] font-medium text-[#6E6E73]"
+          aria-label="返回剧本生成"
+        >
+          <i className="ri-arrow-left-line text-[14px]" aria-hidden />
+        </button>
+        <button
+          type="button"
+          disabled={!effectiveProjectId}
+          onClick={() => navigate(withProjectQuery('/short-drama/step4', effectiveProjectId))}
+          className="flex h-11 min-w-0 flex-1 items-center justify-center gap-2 rounded-xl bg-[#1D1D1F] px-4 text-[13.5px] font-semibold text-white disabled:opacity-45"
+        >
+          进入视频生成
+          <i className="ri-arrow-right-line text-[13px]" aria-hidden />
+        </button>
+      </MobileBottomActionBar>
       <input ref={refUploadInput} type="file" accept={SUPPORTED_IMAGE_ACCEPT} className="hidden" onChange={(e) => void (async () => {
         const f = e.target.files?.[0];
         e.target.value = '';

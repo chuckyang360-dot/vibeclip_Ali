@@ -5,10 +5,12 @@ import { StepFourAssetLibrary } from './components/StepFourAssetLibrary';
 import { StepFourSegmentWorkbench } from './components/StepFourSegmentWorkbench';
 import { StepFourVideoPreview } from './components/StepFourVideoPreview';
 import { StepFourTimeline } from './components/StepFourTimeline';
+import { MobileBottomActionBar } from './components/MobileBottomActionBar';
 import { useStepFourPage } from './hooks/useStepFourPage';
 import { NEUTRAL_VERTICAL_POSTER, resolvePublicMediaUrl } from './utils/shortDramaMedia';
 import { SHORT_DRAMA_UI } from './utils/shortDramaUiCopy';
 import { withProjectQuery } from './utils/shortDramaRoutes';
+import type { Step4SegmentItem, Step4VideoStatusMap } from '@/types/shortDrama';
 
 export function ShortDramaStepFourPage() {
   const navigate = useNavigate();
@@ -167,14 +169,54 @@ export function ShortDramaStepFourPage() {
       <SDWorkflowNav currentStep={4} projectName={navProjectName} projectId={projectId} isDirty={isDirty} onSaveDraft={saveDraft} />
 
       {step4Stale ? (
-        <div className="px-5 pt-16">
+        <div className="hidden px-5 pt-16 md:block">
           <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-[13px] text-amber-900">
             你已修改剧本或资产，当前分镜/视频基于旧内容生成，请重新生成后生效。
           </div>
         </div>
       ) : null}
 
-      <div className="flex flex-1 pt-14" style={{ minHeight: 'calc(100vh - 56px)' }}>
+      <MobileStepFourStudio
+        segments={segments}
+        activeSegment={activeSegment}
+        active={active}
+        videoStatus={videoStatus}
+        previewTarget={previewTarget}
+        posterUrl={posterUrl}
+        videoSrc={videoSrc}
+        finalVideoResolved={finalVideoResolved}
+        finalVideoUrlRaw={pipeline?.final_video_url ?? null}
+        step4Stale={step4Stale}
+        segmentScriptsBlocked={segmentScriptsBlocked}
+        segmentScriptsError={segmentScriptsError}
+        segmentScriptsBusyError={segmentScriptsBusyError}
+        autoMaterializingSegments={autoMaterializingSegments}
+        hasBackendSegmentScripts={hasBackendSegmentScripts}
+        canGenerateVideos={canGenerateVideos}
+        videoStatusBlockedHint={videoStatusBlockedHint}
+        projectVideoHeadline={projectVideoHeadline}
+        isMockTestPatternVideo={isMockTestPatternVideo}
+        generateError={generateError}
+        mergeError={mergeError}
+        doneCount={doneCount}
+        displayTotal={displayTotal}
+        batchGenerating={batchGenerating}
+        videoActionsDisabled={videoActionsDisabled}
+        mergeUiDisabled={mergeUiDisabled}
+        mergeReadyByRequirement={mergeReadyByRequirement}
+        timelineMergeLabel={timelineMergeLabel}
+        onPreviewTargetChange={setPreviewTarget}
+        onSegmentChange={setActiveSegment}
+        onGenerateAll={handleGenerateAll}
+        onGenerateVideo={handleGenerateVideo}
+        onRegenerate={handleRegenerate}
+        onRetryGenerateSegments={handleRetryGenerateSegments}
+        onMergeFinalVideo={() => mergeFinalVideo({ buttonType: 'merge_only', navigateOnSuccess: false })}
+        onBack={() => navigate(withProjectQuery('/short-drama/assets', projectId))}
+        onGoOverview={goOverview}
+      />
+
+      <div className="hidden flex-1 pt-14 md:flex" style={{ minHeight: 'calc(100vh - 56px)' }}>
         <StepFourAssetLibrary library={assetLibraryVm} />
 
         <div className="flex flex-col flex-1 overflow-hidden">
@@ -385,7 +427,7 @@ export function ShortDramaStepFourPage() {
         />
       </div>
 
-      <div className="px-6 py-3 flex items-center justify-between" style={{ background: '#F7F8FA', borderTop: '1px solid #EAEAEA' }}>
+      <div className="hidden px-6 py-3 md:flex items-center justify-between" style={{ background: '#F7F8FA', borderTop: '1px solid #EAEAEA' }}>
         <button
           type="button"
           onClick={() => navigate(withProjectQuery('/short-drama/assets', projectId))}
@@ -447,4 +489,417 @@ export function ShortDramaStepFourPage() {
       </div>
     </div>
   );
+}
+
+type MobileStepFourStudioProps = {
+  segments: Step4SegmentItem[];
+  activeSegment: number;
+  active?: Step4SegmentItem;
+  videoStatus: Step4VideoStatusMap;
+  previewTarget: 'segment' | 'final';
+  posterUrl: string;
+  videoSrc: string | null;
+  finalVideoResolved: string | null;
+  finalVideoUrlRaw: string | null;
+  step4Stale: boolean;
+  segmentScriptsBlocked: string | null;
+  segmentScriptsError: string | null;
+  segmentScriptsBusyError: boolean;
+  autoMaterializingSegments: boolean;
+  hasBackendSegmentScripts: boolean;
+  canGenerateVideos: boolean;
+  videoStatusBlockedHint: string;
+  projectVideoHeadline: string;
+  isMockTestPatternVideo: boolean;
+  generateError: string | null;
+  mergeError: string | null;
+  doneCount: number;
+  displayTotal: number;
+  batchGenerating: boolean;
+  videoActionsDisabled: boolean;
+  mergeUiDisabled: boolean;
+  mergeReadyByRequirement: boolean;
+  timelineMergeLabel: string;
+  onPreviewTargetChange: (target: 'segment' | 'final') => void;
+  onSegmentChange: (id: number) => void;
+  onGenerateAll: () => Promise<void> | void;
+  onGenerateVideo: (id: number) => Promise<void> | void;
+  onRegenerate: (id: number) => Promise<void> | void;
+  onRetryGenerateSegments: () => Promise<void> | void;
+  onMergeFinalVideo: () => Promise<void> | void;
+  onBack: () => void;
+  onGoOverview: () => void;
+};
+
+function MobileStepFourStudio({
+  segments,
+  activeSegment,
+  active,
+  videoStatus,
+  previewTarget,
+  posterUrl,
+  videoSrc,
+  finalVideoResolved,
+  finalVideoUrlRaw,
+  step4Stale,
+  segmentScriptsBlocked,
+  segmentScriptsError,
+  segmentScriptsBusyError,
+  autoMaterializingSegments,
+  hasBackendSegmentScripts,
+  canGenerateVideos,
+  videoStatusBlockedHint,
+  projectVideoHeadline,
+  isMockTestPatternVideo,
+  generateError,
+  mergeError,
+  doneCount,
+  displayTotal,
+  batchGenerating,
+  videoActionsDisabled,
+  mergeUiDisabled,
+  mergeReadyByRequirement,
+  timelineMergeLabel,
+  onPreviewTargetChange,
+  onSegmentChange,
+  onGenerateAll,
+  onGenerateVideo,
+  onRegenerate,
+  onRetryGenerateSegments,
+  onMergeFinalVideo,
+  onBack,
+  onGoOverview,
+}: MobileStepFourStudioProps) {
+  const total = displayTotal || segments.length || 0;
+  const progress = total > 0 ? Math.round((doneCount / total) * 100) : 0;
+  const primaryLabel = finalVideoUrlRaw
+    ? '查看成片'
+    : mergeReadyByRequirement
+      ? timelineMergeLabel
+      : batchGenerating
+        ? '生成中...'
+        : '全部生成';
+  const primaryDisabled = finalVideoUrlRaw
+    ? false
+    : mergeReadyByRequirement
+      ? mergeUiDisabled
+      : videoActionsDisabled;
+
+  const handlePrimary = () => {
+    if (finalVideoUrlRaw) {
+      onGoOverview();
+      return;
+    }
+    if (mergeReadyByRequirement) {
+      void onMergeFinalVideo();
+      return;
+    }
+    void onGenerateAll();
+  };
+
+  const notices = [
+    step4Stale ? { tone: 'warn' as const, text: '你已修改剧本或资产，当前视频基于旧内容生成，请重新生成后生效。' } : null,
+    segmentScriptsBlocked ? { tone: 'warn' as const, text: segmentScriptsBlocked } : null,
+    segmentScriptsError ? { tone: 'danger' as const, text: segmentScriptsBusyError ? '当前服务繁忙，请稍后重试。' : '生成失败，请稍后重试。' } : null,
+    autoMaterializingSegments ? { tone: 'info' as const, text: '正在准备片段数据...' } : null,
+    hasBackendSegmentScripts && !canGenerateVideos ? { tone: 'info' as const, text: videoStatusBlockedHint } : null,
+    projectVideoHeadline ? { tone: 'info' as const, text: projectVideoHeadline } : null,
+    isMockTestPatternVideo ? { tone: 'warn' as const, text: SHORT_DRAMA_UI.stepFour.mockTestVideoBanner } : null,
+    generateError ? { tone: 'danger' as const, text: generateError } : null,
+    mergeError ? { tone: 'danger' as const, text: mergeError } : null,
+  ].filter(Boolean) as Array<{ tone: 'info' | 'warn' | 'danger'; text: string }>;
+
+  return (
+    <div className="md:hidden flex-1 px-4 pb-32 pt-[112px]">
+      <div className="rounded-2xl border border-[#EAEAEA] bg-[#111] p-3">
+        <div className="mb-3 flex items-center justify-between gap-3">
+          <div className="min-w-0">
+            <p className="text-[11px] font-bold uppercase tracking-[0.16em] text-white/50">视频预览</p>
+            <p className="truncate text-[13px] font-semibold text-white">
+              {previewTarget === 'final' ? '完整成片' : active?.name || '当前片段'}
+            </p>
+          </div>
+          <div className="flex rounded-lg bg-white/10 p-1">
+            <button
+              type="button"
+              onClick={() => onPreviewTargetChange('segment')}
+              className="rounded-md px-2.5 py-1 text-[11px] font-semibold"
+              style={{
+                background: previewTarget === 'segment' ? '#ffffff' : 'transparent',
+                color: previewTarget === 'segment' ? '#1D1D1F' : 'rgba(255,255,255,0.72)',
+              }}
+            >
+              片段
+            </button>
+            <button
+              type="button"
+              onClick={() => onPreviewTargetChange('final')}
+              className="rounded-md px-2.5 py-1 text-[11px] font-semibold"
+              style={{
+                background: previewTarget === 'final' ? '#ffffff' : 'transparent',
+                color: previewTarget === 'final' ? '#1D1D1F' : 'rgba(255,255,255,0.72)',
+              }}
+            >
+              成片
+            </button>
+          </div>
+        </div>
+        {previewTarget === 'final' && finalVideoResolved ? (
+          <video controls playsInline src={finalVideoResolved} poster={posterUrl} className="aspect-[9/16] max-h-[58vh] w-full rounded-xl bg-black object-contain" />
+        ) : previewTarget === 'segment' && videoSrc ? (
+          <video controls playsInline src={videoSrc} poster={posterUrl} className="aspect-[9/16] max-h-[58vh] w-full rounded-xl bg-black object-contain" />
+        ) : (
+          <div className="flex aspect-[9/16] max-h-[58vh] w-full items-center justify-center rounded-xl bg-black text-center text-[12px] text-white/50">
+            {previewTarget === 'final' ? '合成完整视频后可预览' : '生成当前片段后可预览'}
+          </div>
+        )}
+      </div>
+
+      <div className="mt-4 rounded-2xl border border-[#EAEAEA] bg-white p-4">
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <p className="text-[11px] font-bold uppercase tracking-[0.16em]" style={{ color: '#8E8E93' }}>
+              STEP 04
+            </p>
+            <h1 className="mt-1 text-[22px] font-black leading-tight" style={{ fontFamily: "'Syne', sans-serif", color: '#1D1D1F' }}>
+              视频生成
+            </h1>
+          </div>
+          <div className="rounded-2xl bg-[#F7F8FA] px-3 py-2 text-right">
+            <p className="text-[18px] font-black leading-none" style={{ color: '#1D1D1F' }}>
+              {doneCount}/{total}
+            </p>
+            <p className="mt-1 text-[10px] font-semibold" style={{ color: '#8E8E93' }}>
+              已完成
+            </p>
+          </div>
+        </div>
+        <div className="mt-4 h-2 overflow-hidden rounded-full bg-[#EAEAEA]">
+          <div className="h-full rounded-full bg-[#1D1D1F] transition-all" style={{ width: `${progress}%` }} />
+        </div>
+        <button
+          type="button"
+          disabled={videoActionsDisabled}
+          onClick={() => void onGenerateAll()}
+          className="mt-4 flex h-11 w-full items-center justify-center gap-2 rounded-xl text-[13px] font-semibold transition-all"
+          style={{
+            background: videoActionsDisabled ? '#EAEAEA' : '#1D1D1F',
+            color: videoActionsDisabled ? '#AEAEB2' : '#ffffff',
+            cursor: videoActionsDisabled ? 'not-allowed' : 'pointer',
+          }}
+        >
+          <i className="ri-video-add-line text-[14px]" />
+          {batchGenerating ? '正在生成全部片段' : '生成全部片段'}
+        </button>
+      </div>
+
+      {notices.length > 0 ? (
+        <div className="mt-3 space-y-2">
+          {notices.map((notice, index) => (
+            <div
+              key={`${notice.tone}-${index}`}
+              className="rounded-xl px-3 py-2 text-[12px] leading-relaxed"
+              style={{
+                background: notice.tone === 'danger' ? 'rgba(220,38,38,0.06)' : notice.tone === 'warn' ? 'rgba(180,83,9,0.08)' : 'rgba(51,65,85,0.06)',
+                border: notice.tone === 'danger' ? '1px solid rgba(220,38,38,0.2)' : notice.tone === 'warn' ? '1px solid rgba(180,83,9,0.2)' : '1px solid rgba(51,65,85,0.15)',
+                color: notice.tone === 'danger' ? '#B91C1C' : notice.tone === 'warn' ? '#92400E' : '#334155',
+              }}
+            >
+              {notice.text}
+            </div>
+          ))}
+        </div>
+      ) : null}
+
+      {!hasBackendSegmentScripts ? (
+        <div className="mt-4 rounded-2xl border border-[#EAEAEA] bg-white px-5 py-8 text-center">
+          <i className="ri-file-list-3-line text-3xl" style={{ color: '#AEAEB2' }} />
+          <p className="mt-3 text-[15px] font-bold" style={{ color: '#1D1D1F' }}>
+            {autoMaterializingSegments ? '正在准备片段数据...' : '片段脚本暂未生成'}
+          </p>
+          <p className="mt-2 text-[12px] leading-relaxed" style={{ color: '#8E8E93' }}>
+            {autoMaterializingSegments
+              ? '正在同步 S2 已生成的片段脚本，完成后会自动展示。'
+              : segmentScriptsError
+                ? '本次生成未完成，项目内容已保存。'
+                : segmentScriptsBlocked
+                  ? '返回「角色场景」页完成上一步后，系统会自动同步分段脚本。'
+                  : '请先完成前置流程，或返回「角色场景」页确认资产规范已生成。'}
+          </p>
+          {segmentScriptsError ? (
+            <button
+              type="button"
+              onClick={() => void onRetryGenerateSegments()}
+              className="mt-5 h-11 rounded-xl px-5 text-[13px] font-semibold text-white"
+              style={{ background: '#1D1D1F' }}
+            >
+              重新生成
+            </button>
+          ) : null}
+        </div>
+      ) : (
+        <div className="mt-4 space-y-3">
+          <div className="flex items-center justify-between">
+            <h2 className="text-[15px] font-black" style={{ color: '#1D1D1F' }}>
+              片段队列
+            </h2>
+            <span className="text-[12px]" style={{ color: '#8E8E93' }}>
+              {segments.length} 个片段
+            </span>
+          </div>
+          {segments.map((segment) => (
+            <MobileSegmentCard
+              key={segment.id}
+              segment={segment}
+              active={activeSegment === segment.id}
+              status={videoStatus[segment.id] || 'idle'}
+              generateDisabled={videoActionsDisabled}
+              onOpen={() => {
+                onSegmentChange(segment.id);
+                onPreviewTargetChange('segment');
+              }}
+              onGenerate={() => {
+                onSegmentChange(segment.id);
+                void onGenerateVideo(segment.id);
+              }}
+              onRegenerate={() => {
+                onSegmentChange(segment.id);
+                void onRegenerate(segment.id);
+              }}
+            />
+          ))}
+        </div>
+      )}
+
+      <MobileBottomActionBar>
+        <button
+          type="button"
+          onClick={onBack}
+          className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl border border-[#EAEAEA] bg-white text-[18px]"
+          style={{ color: '#444444' }}
+          aria-label="上一步"
+        >
+          <i className="ri-arrow-left-line" />
+        </button>
+        <button
+          type="button"
+          disabled={primaryDisabled}
+          onClick={handlePrimary}
+          className="flex h-12 flex-1 items-center justify-center gap-2 rounded-xl text-[14px] font-semibold"
+          style={{
+            background: primaryDisabled ? '#D1D1D6' : '#1D1D1F',
+            color: '#ffffff',
+            cursor: primaryDisabled ? 'not-allowed' : 'pointer',
+          }}
+        >
+          {finalVideoUrlRaw ? <i className="ri-film-line text-[15px]" /> : <i className="ri-sparkling-line text-[15px]" />}
+          {primaryLabel}
+        </button>
+      </MobileBottomActionBar>
+    </div>
+  );
+}
+
+function MobileSegmentCard({
+  segment,
+  active,
+  status,
+  generateDisabled,
+  onOpen,
+  onGenerate,
+  onRegenerate,
+}: {
+  segment: Step4SegmentItem;
+  active: boolean;
+  status: Step4VideoStatusMap[number];
+  generateDisabled: boolean;
+  onOpen: () => void;
+  onGenerate: () => void;
+  onRegenerate: () => void;
+}) {
+  const statusMeta = getMobileVideoStatus(status);
+  const segmentVideo = resolvePublicMediaUrl(segment.videoUrl);
+  const isCompleted = status === 'completed' || Boolean(segment.videoUrl);
+  const actionDisabled = generateDisabled || status === 'queued' || status === 'running';
+
+  return (
+    <div
+      className="rounded-2xl border bg-white p-3"
+      style={{ borderColor: active ? `${segment.color}66` : '#EAEAEA', boxShadow: active ? '0 10px 24px rgba(15,23,42,0.08)' : 'none' }}
+    >
+      <button type="button" onClick={onOpen} className="flex w-full items-start gap-3 text-left">
+        <div className="relative h-[112px] w-[64px] shrink-0 overflow-hidden rounded-xl bg-[#111]">
+          {segmentVideo ? (
+            <video src={segmentVideo} poster={NEUTRAL_VERTICAL_POSTER} playsInline muted className="h-full w-full object-cover" />
+          ) : (
+            <div className="flex h-full w-full items-center justify-center text-[20px] text-white/45">
+              <i className="ri-movie-2-line" />
+            </div>
+          )}
+          <span
+            className="absolute bottom-1.5 left-1.5 right-1.5 rounded-md px-1.5 py-0.5 text-center text-[10px] font-semibold"
+            style={{ background: statusMeta.bg, color: statusMeta.color }}
+          >
+            {statusMeta.label}
+          </span>
+        </div>
+        <div className="min-w-0 flex-1 pt-0.5">
+          <div className="flex items-start justify-between gap-2">
+            <h3 className="line-clamp-2 text-[14px] font-bold leading-snug" style={{ color: '#1D1D1F' }}>
+              {segment.name}
+            </h3>
+            <span className="shrink-0 rounded-full bg-[#F7F8FA] px-2 py-0.5 text-[10px] font-semibold" style={{ color: '#8E8E93' }}>
+              {segment.duration}
+            </span>
+          </div>
+          <p className="mt-2 line-clamp-2 text-[12px] leading-relaxed" style={{ color: '#6E6E73' }}>
+            {segment.goal || segment.placement || '点击查看并生成该片段视频'}
+          </p>
+          <div className="mt-3 flex flex-wrap gap-1.5">
+            {segment.characters.slice(0, 2).map((character) => (
+              <span key={character} className="rounded-full bg-[#F7F8FA] px-2 py-1 text-[10px] font-medium" style={{ color: '#6E6E73' }}>
+                {character}
+              </span>
+            ))}
+            {segment.scene ? (
+              <span className="rounded-full bg-[#F7F8FA] px-2 py-1 text-[10px] font-medium" style={{ color: '#6E6E73' }}>
+                {segment.scene}
+              </span>
+            ) : null}
+          </div>
+        </div>
+      </button>
+      <div className="mt-3 grid grid-cols-2 gap-2">
+        <button
+          type="button"
+          onClick={onOpen}
+          className="h-10 rounded-xl border border-[#EAEAEA] bg-white text-[12px] font-semibold"
+          style={{ color: '#444444' }}
+        >
+          预览
+        </button>
+        <button
+          type="button"
+          disabled={actionDisabled}
+          onClick={isCompleted ? onRegenerate : onGenerate}
+          className="h-10 rounded-xl text-[12px] font-semibold"
+          style={{
+            background: actionDisabled ? '#EAEAEA' : '#1D1D1F',
+            color: actionDisabled ? '#AEAEB2' : '#ffffff',
+            cursor: actionDisabled ? 'not-allowed' : 'pointer',
+          }}
+        >
+          {isCompleted ? '重新生成' : status === 'running' || status === 'queued' ? '生成中' : '生成视频'}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function getMobileVideoStatus(status: Step4VideoStatusMap[number]) {
+  if (status === 'completed') return { label: '已完成', bg: 'rgba(4,120,87,0.14)', color: '#047857' };
+  if (status === 'running') return { label: '生成中', bg: 'rgba(180,83,9,0.16)', color: '#92400E' };
+  if (status === 'queued') return { label: '排队中', bg: 'rgba(180,83,9,0.12)', color: '#92400E' };
+  if (status === 'failed') return { label: '失败', bg: 'rgba(220,38,38,0.12)', color: '#B91C1C' };
+  return { label: '待生成', bg: 'rgba(255,255,255,0.88)', color: '#6E6E73' };
 }

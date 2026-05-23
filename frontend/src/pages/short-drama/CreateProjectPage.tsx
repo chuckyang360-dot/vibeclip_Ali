@@ -10,12 +10,18 @@ import {
 } from '@/services/shortDramaApi';
 import type { CreativeIntentInputDto } from '@/types/shortDramaApi';
 import { useShortDramaProject } from './hooks/useShortDramaProject';
+import { MobileBottomActionBar } from './components/MobileBottomActionBar';
 import { ri } from './utils/shortDramaHelpers';
 import { withProjectQuery } from './utils/shortDramaRoutes';
 
 const platformOptions = ['TikTok', '抖音', '小红书', 'Amazon', 'Instagram', 'YouTube'];
 const durationOptions = ['15s', '30s', '45s', '60s'];
 const aspectRatioOptions = ['9:16', '16:9'];
+const mobileIdeaTemplates = [
+  '给这个商品做一条 TikTok 种草短剧，突出真实使用场景和购买理由。',
+  '做一条 30 秒竖屏广告，开头要有强 Hook，结尾引导下单。',
+  '把商品卖点包装成生活痛点解决方案，不要太像硬广。',
+];
 
 const emptyIntent: CreativeIntentInputDto = {
   intent_text: '',
@@ -166,9 +172,9 @@ export function ShortDramaCreateProjectPage() {
   return (
     <div className="min-h-screen bg-[#F7F8FA]" style={{ fontFamily: "'Inter', sans-serif" }}>
       <SDWorkflowNav currentStep={0} projectId={projectId} allowSaveAndLeave={false} />
-      <div className="pt-14">
-        <main className="mx-auto max-w-2xl px-5 py-10">
-          <header className="mb-6 text-center">
+      <div className="pt-[112px] md:pt-14">
+        <main className="mx-auto max-w-2xl px-4 pb-28 pt-7 md:px-5 md:py-10">
+          <header className="mb-5 text-left md:mb-6 md:text-center">
             <span
               className="mb-3 inline-block rounded-full px-3 py-1 text-[11px] font-bold uppercase tracking-widest"
               style={{ color: '#8E8E93', background: '#EAEAEA' }}
@@ -176,12 +182,31 @@ export function ShortDramaCreateProjectPage() {
               S0 · 创作意图
             </span>
             <h1
-              className="mb-0 text-[28px] font-black"
+              className="mb-0 text-[28px] font-black md:text-[28px]"
               style={{ fontFamily: "'Syne', sans-serif", color: '#1D1D1F', lineHeight: 1.25 }}
             >
-              先告诉 AI，<br />你想做什么视频。
+              先说目标，<br className="md:hidden" />AI 再补全方案。
             </h1>
+            <p className="mt-3 text-[13px] leading-relaxed text-[#8E8E93] md:hidden">
+              一句话就能创建项目，平台、时长和比例可以稍后再调。
+            </p>
           </header>
+
+          <section className="mb-4 md:hidden">
+            <p className="mb-2 text-[12px] font-semibold text-[#6E6E73]">快速套用</p>
+            <div className="flex snap-x gap-2 overflow-x-auto pb-1">
+              {mobileIdeaTemplates.map((text) => (
+                <button
+                  key={text}
+                  type="button"
+                  onClick={() => setIntent((prev) => ({ ...prev, intent_text: text }))}
+                  className="min-w-[245px] snap-start rounded-2xl border border-[#EAEAEA] bg-white p-3 text-left text-[12.5px] leading-relaxed text-[#444444]"
+                >
+                  {text}
+                </button>
+              ))}
+            </div>
+          </section>
 
           <section
             className="mb-3 overflow-hidden rounded-2xl transition-all duration-300"
@@ -194,7 +219,7 @@ export function ShortDramaCreateProjectPage() {
               <label className="text-[13px] font-bold" style={{ color: '#444444' }}>
                 描述你的创作想法
               </label>
-              <span className="text-[12px]" style={{ color: '#AEAEB2' }}>
+              <span className="hidden text-[12px] md:inline" style={{ color: '#AEAEB2' }}>
                 一句话也可以，越具体越好。
               </span>
             </div>
@@ -203,7 +228,7 @@ export function ShortDramaCreateProjectPage() {
               onChange={(e) => setIntent((p) => ({ ...p, intent_text: e.target.value }))}
               onFocus={() => setIntentFocused(true)}
               onBlur={() => setIntentFocused(false)}
-              rows={4}
+              rows={6}
               placeholder="例如：我想给这个鼻毛器做一个适合 TikTok 的欧美风短剧，感觉真实一点，不要太像硬广，突出便携、安全、不尴尬。"
               className="w-full resize-none px-5 pb-4 pt-2 text-[14.5px] leading-relaxed outline-none"
               style={{ color: '#1D1D1F', background: 'transparent' }}
@@ -258,7 +283,7 @@ export function ShortDramaCreateProjectPage() {
                   </span>
                 ) : null}
                 {!hasHints ? (
-                  <span className="text-[11px]" style={{ color: '#C7C7CC' }}>
+                  <span className="hidden text-[11px] sm:inline" style={{ color: '#C7C7CC' }}>
                     · 只作为 AI 理解方向的参考，不会成为固定规则。
                   </span>
                 ) : null}
@@ -296,7 +321,7 @@ export function ShortDramaCreateProjectPage() {
                   </div>
                 </div>
 
-                <div className="grid grid-cols-2 gap-5">
+                <div className="grid grid-cols-1 gap-5 sm:grid-cols-2">
                   <div>
                     <p className="mb-2 text-[12px] font-semibold" style={{ color: '#6E6E73' }}>
                       大概时长
@@ -349,7 +374,7 @@ export function ShortDramaCreateProjectPage() {
             </p>
           ) : null}
 
-          <div className="flex items-center justify-between gap-3">
+          <div className="hidden items-center justify-between gap-3 md:flex">
             <button
               type="button"
               onClick={() => void saveDraft()}
@@ -396,6 +421,39 @@ export function ShortDramaCreateProjectPage() {
               )}
             </button>
           </div>
+          <MobileBottomActionBar>
+            <button
+              type="button"
+              onClick={() => void saveDraft()}
+              disabled={!canSubmit}
+              className="flex h-11 shrink-0 cursor-pointer items-center justify-center rounded-xl border border-[#E5E5EA] bg-white px-4 text-[13px] font-medium text-[#6E6E73] disabled:cursor-not-allowed disabled:text-[#AEAEB2]"
+              aria-label="保存草稿"
+            >
+              <i className={ri('ri-save-line', 'text-[15px]')} aria-hidden />
+            </button>
+            <button
+              type="button"
+              onClick={() => void handleNext()}
+              disabled={!canSubmit}
+              className="flex h-11 min-w-0 flex-1 items-center justify-center gap-2 rounded-xl px-4 text-[13.5px] font-semibold disabled:cursor-not-allowed"
+              style={{
+                background: canSubmit ? '#1D1D1F' : '#F0F0F0',
+                color: canSubmit ? '#ffffff' : '#AEAEB2',
+              }}
+            >
+              {submitting ? (
+                <>
+                  <i className={ri('ri-loader-4-line', 'animate-spin text-[13px]')} aria-hidden />
+                  创建中…
+                </>
+              ) : (
+                <>
+                  下一步
+                  <i className={ri('ri-arrow-right-line', 'text-[13px]')} aria-hidden />
+                </>
+              )}
+            </button>
+          </MobileBottomActionBar>
         </main>
       </div>
     </div>

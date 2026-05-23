@@ -44,30 +44,52 @@ export function Register() {
   };
 
   return (
-    <div className="min-h-screen flex flex-col bg-[#F7F8FA]">
-      <header className="h-14 px-6 lg:px-10 flex items-center justify-between border-b border-[#EAEAEA] bg-[rgba(255,255,255,0.96)] backdrop-blur-md">
+    <div className="min-h-screen bg-[#0B0B0D] md:bg-[#F7F8FA]">
+      <header className="fixed top-0 left-0 right-0 z-50 h-14 px-4 md:px-6 lg:px-10 flex items-center justify-between border-b border-[#EAEAEA] bg-white/92 backdrop-blur-md">
         <Link to="/" className="flex items-center gap-2" style={{ textDecoration: 'none' }}>
           <VibeClipLogo />
         </Link>
         <Link to="/" className="text-[13px] font-medium text-[#8E8E93] hover:text-[#1D1D1F]">返回首页</Link>
       </header>
 
-      <main className="flex-1 flex items-center justify-center px-6 py-10">
-        <div className="w-full max-w-[400px]">
-          <div className="bg-white rounded-2xl p-7 md:p-8 border border-[#EAEAEA]" style={{ boxShadow: '0 2px 12px rgba(0,0,0,0.04)' }}>
-            <div className="text-center mb-7">
-              <h1 className="text-[24px] font-black text-[#1D1D1F]">注册 VibeClip</h1>
-              <p className="text-[13px] mt-2 text-[#8E8E93]">开始你的 AI 内容视频生成工作流</p>
+      <main className="min-h-screen md:grid md:grid-cols-[1.05fr_0.95fr]">
+        <section className="relative flex min-h-[31vh] items-end overflow-hidden px-4 pb-7 pt-24 md:min-h-screen md:px-10 md:pb-16 lg:px-14">
+          <img
+            src="https://images.unsplash.com/photo-1497015289639-54688650d173?auto=format&fit=crop&w=1600&q=82"
+            alt=""
+            className="absolute inset-0 h-full w-full object-cover opacity-72"
+          />
+          <div className="absolute inset-0 bg-[linear-gradient(180deg,rgba(7,7,9,0.24)_0%,rgba(7,7,9,0.88)_78%)] md:bg-[linear-gradient(90deg,rgba(7,7,9,0.92)_0%,rgba(7,7,9,0.54)_100%)]" />
+          <div className="relative z-10 max-w-xl text-white">
+            <div className="mb-4 inline-flex items-center gap-2 rounded-full border border-white/16 bg-white/10 px-3 py-1.5 text-[11px] font-semibold text-white/74 backdrop-blur">
+              <span className="h-1.5 w-1.5 rounded-full bg-emerald-400" />
+              新建 VibeClip 账号
+            </div>
+            <h1 className="text-[32px] font-black leading-[1.02] md:text-[58px]">
+              开始你的商品短片工作流
+            </h1>
+            <p className="mt-4 max-w-md text-[14px] leading-relaxed text-white/66 md:text-[16px]">
+              创建账号后即可上传商品资料，让 AI 帮你生成剧情、角色场景、分镜片段和最终成片。
+            </p>
+          </div>
+        </section>
+
+        <section className="-mt-5 rounded-t-[28px] bg-[#F7F8FA] px-4 pb-8 pt-5 md:mt-0 md:flex md:items-center md:justify-center md:rounded-none md:px-8 md:pt-20">
+          <div className="w-full max-w-[420px]">
+            <div className="rounded-[24px] border border-[#EAEAEA] bg-white p-5 shadow-[0_18px_48px_rgba(15,23,42,0.10)] md:p-8 md:shadow-[0_2px_12px_rgba(0,0,0,0.04)]">
+              <div className="mb-5 text-left md:mb-7 md:text-center">
+                <h2 className="text-[26px] font-black leading-tight text-[#1D1D1F] md:text-[24px]">注册 VibeClip</h2>
+                <p className="mt-2 text-[13px] leading-relaxed text-[#8E8E93]">用一个账号管理你的 AI 商品视频项目</p>
             </div>
 
-          {error && (
-              <div className="mb-4 rounded-lg bg-[#FEF2F2] px-3 py-2 flex items-center gap-2">
+            {error && (
+              <div className="mb-4 flex items-start gap-2 rounded-xl bg-[#FEF2F2] px-3 py-2.5">
                 <i className="ri-error-warning-line text-[14px] text-[#EF4444]" />
-                <p className="text-[12.5px] text-[#DC2626]">{error}</p>
+                <p className="text-[12.5px] leading-relaxed text-[#DC2626]">{error}</p>
               </div>
             )}
 
-            <form onSubmit={handleSubmit} className="space-y-4">
+            <form onSubmit={handleSubmit} className="space-y-3 md:space-y-4">
               <div>
                 <label className="block text-[12.5px] font-semibold mb-1.5 text-[#1D1D1F]">用户名</label>
                 <input
@@ -75,8 +97,9 @@ export function Register() {
                   value={name}
                   onChange={(e) => setName(e.target.value)}
                   placeholder="请输入用户名"
-                  className="w-full px-4 py-2.5 rounded-xl text-[13.5px] outline-none transition-all duration-200 border border-[#EAEAEA] bg-[#FAFAFA] focus:border-[#7C3AED] focus:bg-white"
+                  className="h-11 w-full rounded-xl border border-[#EAEAEA] bg-[#FAFAFA] px-4 text-[14.5px] outline-none transition-all duration-200 focus:border-[#1D1D1F] focus:bg-white md:h-[44px] md:text-[13.5px]"
                   disabled={loading}
+                  autoComplete="name"
                   required
                 />
               </div>
@@ -88,8 +111,9 @@ export function Register() {
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
                   placeholder="请输入邮箱地址"
-                  className="w-full px-4 py-2.5 rounded-xl text-[13.5px] outline-none transition-all duration-200 border border-[#EAEAEA] bg-[#FAFAFA] focus:border-[#7C3AED] focus:bg-white"
+                  className="h-11 w-full rounded-xl border border-[#EAEAEA] bg-[#FAFAFA] px-4 text-[14.5px] outline-none transition-all duration-200 focus:border-[#1D1D1F] focus:bg-white md:h-[44px] md:text-[13.5px]"
                   disabled={loading}
+                  autoComplete="email"
                   required
                 />
               </div>
@@ -101,8 +125,9 @@ export function Register() {
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
                   placeholder="至少 6 个字符"
-                  className="w-full px-4 py-2.5 rounded-xl text-[13.5px] outline-none transition-all duration-200 border border-[#EAEAEA] bg-[#FAFAFA] focus:border-[#7C3AED] focus:bg-white"
+                  className="h-11 w-full rounded-xl border border-[#EAEAEA] bg-[#FAFAFA] px-4 text-[14.5px] outline-none transition-all duration-200 focus:border-[#1D1D1F] focus:bg-white md:h-[44px] md:text-[13.5px]"
                   disabled={loading}
+                  autoComplete="new-password"
                   required
                 />
               </div>
@@ -114,8 +139,9 @@ export function Register() {
                   value={confirmPassword}
                   onChange={(e) => setConfirmPassword(e.target.value)}
                   placeholder="请再次输入密码"
-                  className="w-full px-4 py-2.5 rounded-xl text-[13.5px] outline-none transition-all duration-200 border border-[#EAEAEA] bg-[#FAFAFA] focus:border-[#7C3AED] focus:bg-white"
+                  className="h-11 w-full rounded-xl border border-[#EAEAEA] bg-[#FAFAFA] px-4 text-[14.5px] outline-none transition-all duration-200 focus:border-[#1D1D1F] focus:bg-white md:h-[44px] md:text-[13.5px]"
                   disabled={loading}
+                  autoComplete="new-password"
                   required
                 />
               </div>
@@ -123,20 +149,21 @@ export function Register() {
               <button
                 type="submit"
                 disabled={loading}
-                className="w-full py-3 rounded-xl text-[14px] font-bold text-white bg-[#1D1D1F] disabled:opacity-70"
+                className="mt-1 h-12 w-full rounded-xl bg-[#1D1D1F] text-[15px] font-bold text-white disabled:opacity-70 md:h-[46px] md:text-[14px]"
               >
                 {loading ? '注册中...' : '注册'}
               </button>
             </form>
 
-            <p className="text-center text-[13px] mt-6 text-[#8E8E93]">
+            <p className="mt-5 text-center text-[13px] text-[#8E8E93]">
               已有账号？{' '}
-              <Link to="/login" state={location.state} className="font-semibold text-[#7C3AED] hover:text-[#5B21B6]">
+              <Link to="/login" state={location.state} className="font-semibold text-[#1D1D1F]">
                 立即登录
               </Link>
             </p>
           </div>
         </div>
+        </section>
       </main>
     </div>
   );

@@ -21,7 +21,7 @@ export function StepFourAssetLibrary({ library, onDragAsset: _onDragAsset }: Ass
 
   return (
     <aside
-      className="flex flex-col w-56 shrink-0 overflow-y-auto"
+      className="hidden w-56 shrink-0 flex-col overflow-y-auto md:flex"
       style={{ background: "#F7F8FA", borderRight: "1px solid #EAEAEA" }}
     >
       <div className="p-4">

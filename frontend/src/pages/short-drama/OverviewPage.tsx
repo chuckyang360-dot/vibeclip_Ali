@@ -2,9 +2,16 @@ import { useNavigate } from 'react-router-dom';
 import { useOverviewExport } from './hooks/useOverviewExport';
 import { useOverviewPage } from './hooks/useOverviewPage';
 import { VibeClipLogo } from './components/VibeClipLogo';
+import { MobileBottomActionBar } from './components/MobileBottomActionBar';
 import { SHORT_DRAMA_UI } from './utils/shortDramaUiCopy';
-import { formatFinalVideoAddressDisplay } from './utils/overviewAdapters';
+import {
+  formatFinalVideoAddressDisplay,
+  type OverviewCharacterRowVm,
+  type OverviewProjectBannerVm,
+  type OverviewSegmentCardVm,
+} from './utils/overviewAdapters';
 import { withProjectQuery } from './utils/shortDramaRoutes';
+import type { OverviewExportBusyKey } from './hooks/useOverviewExport';
 
 export function ShortDramaOverviewPage() {
   const navigate = useNavigate();
@@ -117,26 +124,26 @@ export function ShortDramaOverviewPage() {
   return (
     <div className="min-h-screen" style={{ background: '#F7F8FA', fontFamily: "'Inter', sans-serif" }}>
       <header
-        className="fixed top-0 left-0 right-0 z-50 flex items-center justify-between px-6 lg:px-10 h-14"
+        className="fixed top-0 left-0 right-0 z-50 flex h-14 items-center justify-between gap-3 px-4 md:px-6 lg:px-10"
         style={{ background: '#ffffff', borderBottom: '1px solid #EAEAEA', boxShadow: '0 1px 6px rgba(0,0,0,0.04)' }}
       >
-        <div className="flex items-center gap-3">
+        <div className="flex min-w-0 items-center gap-2 md:gap-3">
           <button type="button" onClick={() => navigate('/short-drama/projects')} className="flex items-center gap-2 cursor-pointer">
             <VibeClipLogo compact />
             <span className="text-[14px] font-bold" style={{ fontFamily: "'Syne', sans-serif", color: '#1D1D1F' }}>
               VibeClip
             </span>
           </button>
-          <span style={{ color: '#D1D1D6' }}>/</span>
-          <span className="text-[13px]" style={{ color: '#8E8E93' }}>
+          <span className="hidden md:inline" style={{ color: '#D1D1D6' }}>/</span>
+          <span className="hidden max-w-[180px] truncate text-[13px] md:inline" style={{ color: '#8E8E93' }}>
             {headerProjectName}
           </span>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex shrink-0 items-center gap-1.5 md:gap-2">
           <button
             type="button"
             onClick={() => navigate(withProjectQuery('/short-drama/step4', projectId))}
-            className="flex items-center gap-1.5 px-4 py-1.5 rounded-lg text-[12.5px] cursor-pointer whitespace-nowrap transition-colors"
+            className="flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-[12.5px] cursor-pointer whitespace-nowrap transition-colors md:px-4"
             style={{ background: '#F7F8FA', color: '#444444', border: '1px solid #EAEAEA' }}
             onMouseEnter={(e) => {
               (e.currentTarget as HTMLElement).style.background = '#EAEAEA';
@@ -146,13 +153,13 @@ export function ShortDramaOverviewPage() {
             }}
           >
             <i className="ri-arrow-left-line text-[12px]" />
-            返回编辑
+            <span className="hidden sm:inline">返回编辑</span>
           </button>
           <button
             type="button"
             disabled={exportBusy}
             onClick={() => void exportAll()}
-            className="flex items-center gap-1.5 px-5 py-1.5 rounded-lg text-[12.5px] font-semibold whitespace-nowrap transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed"
+            className="flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-[12.5px] font-semibold whitespace-nowrap transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed md:px-5"
             style={{ background: '#1D1D1F', color: '#ffffff' }}
             onMouseEnter={(e) => {
               if (exportBusy) return;
@@ -165,19 +172,46 @@ export function ShortDramaOverviewPage() {
             {busy === 'all' ? (
               <>
                 <i className="ri-loader-4-line animate-spin text-[12px]" />
-                正在打包...
+                <span className="hidden sm:inline">正在打包...</span>
               </>
             ) : (
               <>
                 <i className="ri-download-cloud-line text-[12px]" />
-                一键全部导出
+                <span className="hidden sm:inline">一键全部导出</span>
               </>
             )}
           </button>
         </div>
       </header>
 
-      <main className="pt-14 px-6 lg:px-10 py-10">
+      <MobileOverviewDelivery
+        projectId={projectId}
+        project={PROJECT}
+        plotSummary={plotSummary}
+        characters={CHARS}
+        scenes={SCENES}
+        products={PRODUCTS}
+        segments={SEGMENTS}
+        finalVideoUrl={finalVideoUrl}
+        finalVideoPoster={finalVideoPoster}
+        finalMetaChip={finalMetaChip}
+        badge={badge}
+        busy={busy}
+        exportBusy={exportBusy}
+        mergeLoading={mergeLoading}
+        mergeError={mergeError}
+        canMergeFinalVideo={canMergeFinalVideo}
+        isMockTestPatternVideo={isMockTestPatternVideo}
+        onBackToEdit={() => navigate(withProjectQuery('/short-drama/step4', projectId))}
+        onMergeFinalVideo={mergeFinalVideo}
+        onDownloadFinalVideo={downloadFinalVideo}
+        onExportAll={exportAll}
+        onExportVideoPack={exportVideoPack}
+        onExportScript={exportScript}
+        onExportStoryboard={exportStoryboard}
+      />
+
+      <main className="hidden px-4 py-7 pt-20 md:block md:px-6 md:py-10 md:pt-14 lg:px-10">
         <div className="max-w-6xl mx-auto">
           {isMockTestPatternVideo && (
             <div
@@ -200,7 +234,7 @@ export function ShortDramaOverviewPage() {
                 <i className={`${badge.icon} text-[10px] ${PROJECT.statusBadge === 'in_progress' ? 'animate-spin' : ''}`} />
                 {badge.label}
               </div>
-              <h1 className="text-3xl font-black mb-3" style={{ fontFamily: "'Syne', sans-serif", color: '#1D1D1F' }}>
+              <h1 className="mb-3 text-2xl font-black md:text-3xl" style={{ fontFamily: "'Syne', sans-serif", color: '#1D1D1F' }}>
                 {PROJECT.name}
               </h1>
               <div className="flex flex-wrap gap-2">
@@ -580,6 +614,331 @@ export function ShortDramaOverviewPage() {
           </div>
         </div>
       </main>
+    </div>
+  );
+}
+
+type OverviewBadgeVm = {
+  label: string;
+  bg: string;
+  color: string;
+  border: string;
+  icon: string;
+};
+
+type MobileOverviewDeliveryProps = {
+  projectId: number;
+  project: OverviewProjectBannerVm;
+  plotSummary: string;
+  characters: OverviewCharacterRowVm[];
+  scenes: string[];
+  products: string[];
+  segments: OverviewSegmentCardVm[];
+  finalVideoUrl: string | null;
+  finalVideoPoster: string;
+  finalMetaChip: string;
+  badge: OverviewBadgeVm;
+  busy: OverviewExportBusyKey;
+  exportBusy: boolean;
+  mergeLoading: boolean;
+  mergeError: string | null;
+  canMergeFinalVideo: boolean;
+  isMockTestPatternVideo: boolean;
+  onBackToEdit: () => void;
+  onMergeFinalVideo: () => Promise<void> | void;
+  onDownloadFinalVideo: () => Promise<void> | void;
+  onExportAll: () => Promise<void> | void;
+  onExportVideoPack: () => Promise<void> | void;
+  onExportScript: () => Promise<void> | void;
+  onExportStoryboard: () => Promise<void> | void;
+};
+
+function MobileOverviewDelivery({
+  project,
+  plotSummary,
+  characters,
+  scenes,
+  products,
+  segments,
+  finalVideoUrl,
+  finalVideoPoster,
+  finalMetaChip,
+  badge,
+  busy,
+  exportBusy,
+  mergeLoading,
+  mergeError,
+  canMergeFinalVideo,
+  isMockTestPatternVideo,
+  onBackToEdit,
+  onMergeFinalVideo,
+  onDownloadFinalVideo,
+  onExportAll,
+  onExportVideoPack,
+  onExportScript,
+  onExportStoryboard,
+}: MobileOverviewDeliveryProps) {
+  const primaryLabel = finalVideoUrl
+    ? busy === 'video'
+      ? '下载中...'
+      : '下载成片'
+    : canMergeFinalVideo
+      ? mergeLoading
+        ? '合成中...'
+        : '合成成片'
+      : '返回生成';
+  const primaryDisabled = finalVideoUrl ? exportBusy : canMergeFinalVideo ? mergeLoading : false;
+  const completedSegments = segments.filter((segment) => segment.hasVideo).length;
+
+  const handlePrimary = () => {
+    if (finalVideoUrl) {
+      void onDownloadFinalVideo();
+      return;
+    }
+    if (canMergeFinalVideo) {
+      void onMergeFinalVideo();
+      return;
+    }
+    onBackToEdit();
+  };
+
+  return (
+    <main className="md:hidden px-4 pb-32 pt-20">
+      <section className="rounded-2xl border border-[#EAEAEA] bg-white p-4">
+        <div className="mb-3 flex items-start justify-between gap-3">
+          <div className="min-w-0">
+            <div
+              className="mb-2 inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[10px] font-bold uppercase tracking-[0.12em]"
+              style={{ background: badge.bg, color: badge.color, border: badge.border }}
+            >
+              <i className={`${badge.icon} text-[10px] ${project.statusBadge === 'in_progress' ? 'animate-spin' : ''}`} />
+              {badge.label}
+            </div>
+            <h1 className="line-clamp-2 text-[22px] font-black leading-tight" style={{ fontFamily: "'Syne', sans-serif", color: '#1D1D1F' }}>
+              {project.name}
+            </h1>
+          </div>
+          <button
+            type="button"
+            disabled={exportBusy}
+            onClick={() => void onExportAll()}
+            className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl text-[17px] disabled:opacity-50"
+            style={{ background: '#F7F8FA', color: '#1D1D1F', border: '1px solid #EAEAEA' }}
+            aria-label="导出全部"
+          >
+            <i className={busy === 'all' ? 'ri-loader-4-line animate-spin' : 'ri-download-cloud-line'} />
+          </button>
+        </div>
+
+        <div className="overflow-hidden rounded-2xl bg-[#111] p-3">
+          {finalVideoUrl ? (
+            <video
+              key={isMockTestPatternVideo ? 'mobile-mock-final' : 'mobile-final'}
+              src={finalVideoUrl}
+              className="aspect-[9/16] max-h-[62vh] w-full rounded-xl bg-black object-contain"
+              controls
+              playsInline
+              poster={finalVideoPoster}
+            />
+          ) : (
+            <div className="flex aspect-[9/16] max-h-[62vh] w-full flex-col items-center justify-center rounded-xl bg-black px-6 text-center">
+              <i className="ri-movie-2-line text-3xl text-white/35" />
+              <p className="mt-3 text-[14px] font-semibold text-white">{SHORT_DRAMA_UI.empty.noFinalVideo}</p>
+              <p className="mt-2 text-[12px] leading-relaxed text-white/50">{SHORT_DRAMA_UI.empty.noFinalVideoHint}</p>
+            </div>
+          )}
+        </div>
+
+        <div className="mt-3 grid grid-cols-3 gap-2">
+          {[
+            { label: '片段', value: `${completedSegments}/${segments.length}` },
+            { label: '比例', value: project.ratio },
+            { label: '形式', value: project.format },
+          ].map((item) => (
+            <div key={item.label} className="rounded-xl bg-[#F7F8FA] px-3 py-2">
+              <p className="truncate text-[13px] font-black" style={{ color: '#1D1D1F' }}>
+                {item.value}
+              </p>
+              <p className="mt-0.5 text-[10px] font-semibold" style={{ color: '#8E8E93' }}>
+                {item.label}
+              </p>
+            </div>
+          ))}
+        </div>
+      </section>
+
+      {(isMockTestPatternVideo || mergeError) && (
+        <div className="mt-3 space-y-2">
+          {isMockTestPatternVideo ? (
+            <div className="rounded-xl px-3 py-2 text-[12px] leading-relaxed" style={{ background: 'rgba(180,83,9,0.08)', color: '#92400E', border: '1px solid rgba(180,83,9,0.25)' }}>
+              {SHORT_DRAMA_UI.stepFour.mockTestVideoBanner}
+            </div>
+          ) : null}
+          {mergeError ? (
+            <div className="rounded-xl px-3 py-2 text-[12px] leading-relaxed" style={{ background: 'rgba(220,38,38,0.06)', color: '#B91C1C', border: '1px solid rgba(220,38,38,0.2)' }}>
+              {mergeError}
+            </div>
+          ) : null}
+        </div>
+      )}
+
+      <section className="mt-4 rounded-2xl border border-[#EAEAEA] bg-white p-4">
+        <div className="flex items-center justify-between gap-3">
+          <h2 className="text-[15px] font-black" style={{ color: '#1D1D1F' }}>
+            成片信息
+          </h2>
+          <span className="max-w-[190px] truncate rounded-full bg-[#F7F8FA] px-2.5 py-1 text-[11px] font-semibold" style={{ color: '#6E6E73' }}>
+            {isMockTestPatternVideo ? '测试拼接' : finalMetaChip}
+          </span>
+        </div>
+        <div className="mt-3 space-y-2">
+          {[
+            { label: '成片地址', value: finalVideoUrl ? formatFinalVideoAddressDisplay(finalVideoUrl, isMockTestPatternVideo) : '等待合成' },
+            { label: '创建时间', value: project.createdAt },
+            { label: '流程状态', value: project.status || '—' },
+            { label: '目标市场', value: project.market },
+          ].map((item) => (
+            <div key={item.label} className="flex items-center justify-between gap-4 text-[12px]">
+              <span className="shrink-0" style={{ color: '#8E8E93' }}>{item.label}</span>
+              <span className="min-w-0 truncate text-right font-medium" style={{ color: '#1D1D1F' }}>{item.value}</span>
+            </div>
+          ))}
+        </div>
+      </section>
+
+      <section className="mt-4">
+        <div className="mb-2 flex items-center justify-between">
+          <h2 className="text-[15px] font-black" style={{ color: '#1D1D1F' }}>
+            片段预览
+          </h2>
+          <span className="text-[12px]" style={{ color: '#8E8E93' }}>
+            {segments.length} 个
+          </span>
+        </div>
+        {segments.length === 0 ? (
+          <div className="rounded-2xl border border-dashed border-[#D1D1D6] bg-white px-4 py-8 text-center text-[13px]" style={{ color: '#8E8E93' }}>
+            {SHORT_DRAMA_UI.overview.emptySegments}
+          </div>
+        ) : (
+          <div className="-mx-4 flex snap-x gap-3 overflow-x-auto px-4 pb-1">
+            {segments.map((segment) => (
+              <article key={segment.id} className="w-[43vw] min-w-[152px] snap-start rounded-2xl border border-[#EAEAEA] bg-white p-2">
+                <div className="relative overflow-hidden rounded-xl bg-black" style={{ aspectRatio: '9/16' }}>
+                  {segment.hasVideo && segment.videoUrl ? (
+                    <video src={segment.videoUrl} className="h-full w-full object-cover object-top" muted playsInline controls poster={segment.posterUrl} />
+                  ) : (
+                    <>
+                      <img src={segment.posterUrl} alt={segment.name} className="h-full w-full object-cover object-top opacity-90" />
+                      <div className="absolute inset-0 flex items-center justify-center">
+                        <span className="rounded bg-black/55 px-2 py-1 text-[10px] text-white">暂无成片</span>
+                      </div>
+                    </>
+                  )}
+                  <span className="absolute left-2 top-2 rounded bg-white/90 px-1.5 py-0.5 text-[9px] font-bold" style={{ color: segment.color }}>
+                    {segment.duration}
+                  </span>
+                </div>
+                <p className="mt-2 line-clamp-2 text-[12px] font-semibold leading-snug" style={{ color: '#1D1D1F' }}>
+                  {segment.name}
+                </p>
+              </article>
+            ))}
+          </div>
+        )}
+      </section>
+
+      <section className="mt-4 rounded-2xl border border-[#EAEAEA] bg-white p-4">
+        <h2 className="text-[15px] font-black" style={{ color: '#1D1D1F' }}>
+          项目素材
+        </h2>
+        <p className="mt-2 line-clamp-3 text-[12px] leading-relaxed" style={{ color: plotSummary.trim() ? '#444444' : '#AEAEB2' }}>
+          {plotSummary.trim() ? plotSummary : '暂无剧情摘要'}
+        </p>
+        <div className="mt-4 grid grid-cols-3 gap-2">
+          <CompactAssetCount label="角色" value={characters.length} />
+          <CompactAssetCount label="场景" value={scenes.length} />
+          <CompactAssetCount label="产品" value={products.length} />
+        </div>
+        {characters.length > 0 ? (
+          <div className="mt-4 flex gap-2 overflow-x-auto pb-1">
+            {characters.slice(0, 6).map((character, index) => (
+              <div key={`${character.name}-${index}`} className="flex min-w-[96px] items-center gap-2 rounded-xl bg-[#F7F8FA] p-2">
+                <div className="h-8 w-8 shrink-0 overflow-hidden rounded-full bg-[#ECEDEF]">
+                  {character.img ? <img src={character.img} alt={character.name} className="h-full w-full object-cover" /> : null}
+                </div>
+                <div className="min-w-0">
+                  <p className="truncate text-[11px] font-semibold" style={{ color: '#1D1D1F' }}>{character.name}</p>
+                  <p className="truncate text-[10px]" style={{ color: '#8E8E93' }}>{character.role}</p>
+                </div>
+              </div>
+            ))}
+          </div>
+        ) : null}
+      </section>
+
+      <section className="mt-4 rounded-2xl border border-[#EAEAEA] bg-white p-4">
+        <h2 className="text-[15px] font-black" style={{ color: '#1D1D1F' }}>
+          导出
+        </h2>
+        <div className="mt-3 grid grid-cols-3 gap-2">
+          {[
+            { key: 'video_pack', label: '视频包', icon: 'ri-film-line', onClick: onExportVideoPack, loading: busy === 'video_pack' },
+            { key: 'script', label: '脚本', icon: 'ri-file-text-line', onClick: onExportScript, loading: busy === 'script' },
+            { key: 'storyboard', label: '分镜', icon: 'ri-layout-grid-line', onClick: onExportStoryboard, loading: busy === 'storyboard' },
+          ].map((item) => (
+            <button
+              key={item.key}
+              type="button"
+              disabled={exportBusy}
+              onClick={() => void item.onClick()}
+              className="flex h-20 flex-col items-center justify-center gap-1.5 rounded-xl bg-[#F7F8FA] text-[12px] font-semibold disabled:opacity-50"
+              style={{ color: '#1D1D1F', border: '1px solid #EAEAEA' }}
+            >
+              <i className={`${item.loading ? 'ri-loader-4-line animate-spin' : item.icon} text-[18px]`} />
+              {item.label}
+            </button>
+          ))}
+        </div>
+      </section>
+
+      <MobileBottomActionBar>
+        <button
+          type="button"
+          onClick={onBackToEdit}
+          className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl border border-[#EAEAEA] bg-white text-[18px]"
+          style={{ color: '#444444' }}
+          aria-label="返回编辑"
+        >
+          <i className="ri-arrow-left-line" />
+        </button>
+        <button
+          type="button"
+          disabled={primaryDisabled}
+          onClick={handlePrimary}
+          className="flex h-12 flex-1 items-center justify-center gap-2 rounded-xl text-[14px] font-semibold"
+          style={{
+            background: primaryDisabled ? '#D1D1D6' : '#1D1D1F',
+            color: '#ffffff',
+            cursor: primaryDisabled ? 'not-allowed' : 'pointer',
+          }}
+        >
+          <i className={finalVideoUrl ? 'ri-download-cloud-line text-[15px]' : canMergeFinalVideo ? 'ri-film-line text-[15px]' : 'ri-edit-line text-[15px]'} />
+          {primaryLabel}
+        </button>
+      </MobileBottomActionBar>
+    </main>
+  );
+}
+
+function CompactAssetCount({ label, value }: { label: string; value: number }) {
+  return (
+    <div className="rounded-xl bg-[#F7F8FA] px-3 py-2 text-center">
+      <p className="text-[17px] font-black leading-none" style={{ color: '#1D1D1F' }}>
+        {value}
+      </p>
+      <p className="mt-1 text-[10px] font-semibold" style={{ color: '#8E8E93' }}>
+        {label}
+      </p>
     </div>
   );
 }

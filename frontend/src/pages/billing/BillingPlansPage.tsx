@@ -53,18 +53,18 @@ export function BillingPlansPage() {
 
   return (
     <ShortDramaLayout headerMode="landing">
-      <div className="min-h-screen bg-[#F7F8FA] px-6 py-10 pb-20">
+      <div className="min-h-screen bg-[#F7F8FA] px-4 py-7 pb-20 md:px-6 md:py-10">
         <div className="mx-auto max-w-[1200px]">
-          <div className="text-center pt-8 pb-6">
-            <h1 className="text-[28px] md:text-[34px] font-black leading-tight text-[#1D1D1F]">
-              选择合适的计划，持续生产高质量内容
+          <div className="pb-5 pt-4 text-left md:pb-6 md:pt-8 md:text-center">
+            <h1 className="text-[26px] font-black leading-tight text-[#1D1D1F] md:text-[34px]">
+              选择计划
             </h1>
-            <p className="text-[14px] md:text-[15px] mt-4 max-w-[640px] mx-auto leading-relaxed text-[#8E8E93]">
+            <p className="mx-auto mt-2 max-w-[640px] text-[13px] leading-relaxed text-[#8E8E93] md:mt-4 md:text-[15px]">
               订阅套餐每月发放积分，可用于内容理解、脚本生成、图片资产生成和视频生成，适配商品营销、个人 IP、知识付费和短视频运营等场景。
             </p>
           </div>
 
-          <div className="flex justify-center mb-10">
+          <div className="mb-5 flex justify-start md:mb-10 md:justify-center">
             <div className="inline-flex items-center rounded-full p-1 border border-[#EAEAEA] bg-[#F0F0F5]">
               <button
                 type="button"
@@ -93,7 +93,12 @@ export function BillingPlansPage() {
             </div>
           </div>
 
-          <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-5 pb-20">
+          <div className="mb-3 flex items-center justify-between md:hidden">
+            <p className="text-[12px] font-semibold text-[#6E6E73]">左右滑动选择套餐</p>
+            <span className="rounded-full bg-white px-2.5 py-1 text-[11px] text-[#8E8E93]">4 个方案</span>
+          </div>
+
+          <div className="-mx-4 flex snap-x gap-3 overflow-x-auto px-4 pb-8 md:mx-0 md:grid md:grid-cols-2 md:gap-5 md:overflow-visible md:px-0 md:pb-20 xl:grid-cols-4">
             <PlanCard
               name="免费版"
               price="永久免费"
@@ -189,10 +194,10 @@ export function BillingPlansPage() {
             })}
           </div>
 
-          <section className="pb-20">
-            <div className="text-center mb-10">
+          <section className="pb-12 md:pb-20">
+            <div className="mb-5 text-left md:mb-10 md:text-center">
               <h2 className="text-[22px] md:text-[26px] font-bold text-[#1D1D1F]">积分如何消耗？</h2>
-              <p className="text-[13.5px] mt-2 text-[#8E8E93]">不同工作流复用同一套底层能力，按实际用量扣费</p>
+              <p className="text-[13px] mt-2 text-[#8E8E93]">按实际生成动作扣积分</p>
             </div>
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
               <div className="rounded-2xl border border-[#EAEAEA] bg-white p-6">
@@ -212,7 +217,7 @@ export function BillingPlansPage() {
                 </div>
                 <p className="mt-3 text-[12px] leading-relaxed text-[#8E8E93]">{CREDIT_USAGE_FOOTNOTE}</p>
               </div>
-              <div className="space-y-5">
+              <div className="hidden space-y-5 md:block">
                 <div className="rounded-2xl border border-[#EAEAEA] bg-white p-6">
                   <h3 className="text-[14px] font-bold text-[#1D1D1F] flex items-center gap-2">
                     <span className="w-7 h-7 rounded-lg bg-[#F5F3FF] flex items-center justify-center">
@@ -241,7 +246,7 @@ export function BillingPlansPage() {
             </div>
           </section>
 
-          <section className="pb-20">
+          <section className="hidden pb-20 md:block">
             <div className="text-center mb-10">
               <h2 className="text-[22px] md:text-[26px] font-bold text-[#1D1D1F]">适配多种内容场景</h2>
               <p className="text-[13.5px] mt-2 text-[#8E8E93]">同一套平台能力，灵活适配不同创作需求</p>
@@ -260,7 +265,7 @@ export function BillingPlansPage() {
           </section>
 
           <section className="pb-12">
-            <div className="text-center mb-10">
+            <div className="mb-5 text-left md:mb-10 md:text-center">
               <h2 className="text-[22px] md:text-[26px] font-bold text-[#1D1D1F]">常见问题</h2>
             </div>
             <div className="max-w-[760px] mx-auto space-y-3">
@@ -336,7 +341,7 @@ function PlanCard({
 }: PlanCardProps) {
   return (
     <div
-      className="rounded-2xl overflow-hidden relative flex flex-col h-full"
+      className="relative flex h-full min-w-[82vw] snap-center flex-col overflow-hidden rounded-[22px] md:min-w-0 md:rounded-2xl"
       style={{
         background: '#ffffff',
         border: `2px solid ${recommended ? '#7C3AED' : '#EAEAEA'}`,
@@ -345,7 +350,7 @@ function PlanCard({
     >
       {badge ? (
         <div
-          className="absolute top-4 right-4 px-2.5 py-1 rounded-full text-[10px] font-bold"
+          className="absolute right-4 top-4 rounded-full px-2.5 py-1 text-[10px] font-bold"
           style={{
             background: recommended ? '#7C3AED' : pro ? '#1D1D1F' : '#F5F5F7',
             color: recommended || pro ? '#ffffff' : '#444444',
@@ -356,42 +361,45 @@ function PlanCard({
       ) : null}
 
       <div
-        className="px-6 pt-6 pb-5"
+        className="px-5 pb-4 pt-5 md:px-6 md:pb-5 md:pt-6"
         style={{ background: recommended ? 'linear-gradient(180deg,#FAF5FF 0%,#FFFFFF 100%)' : '#FAFAFA' }}
       >
-        <div className="flex items-center gap-2 mb-3">
+        <div className="mb-3 flex items-center gap-2">
           <span className="text-[10px] font-bold px-2.5 py-1 rounded-full bg-[#F5F5F7] text-[#6E6E73]">套餐</span>
           {current ? (
             <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-[#16A34A] text-white">当前方案</span>
           ) : null}
         </div>
-        <h3 className="text-[18px] font-bold text-[#1D1D1F]">{name}</h3>
+        <h3 className="text-[17px] font-bold text-[#1D1D1F] md:text-[18px]">{name}</h3>
         <div className="mt-3 flex items-end gap-1.5">
-          <span className="text-[32px] font-black" style={{ color: recommended ? '#7C3AED' : '#1D1D1F' }}>
+          <span className="text-[30px] font-black md:text-[32px]" style={{ color: recommended ? '#7C3AED' : '#1D1D1F' }}>
             {price}
           </span>
           {period ? <span className="text-[13px] text-[#8E8E93] pb-1">{period}</span> : null}
         </div>
-        <p className="text-[12px] mt-1 text-[#8E8E93] min-h-[18px]">{yearlyHint || ''}</p>
+        <p className="mt-1 min-h-[18px] text-[12px] text-[#8E8E93]">{yearlyHint || ''}</p>
         <div className="mt-2 flex items-center gap-2">
           <span className="w-4 h-4 flex items-center justify-center">
             <i className="ri-coin-line text-[13px] text-[#7C3AED]" />
           </span>
           <span className="text-[13px] font-semibold text-[#7C3AED]">{credits} 积分 / 月</span>
         </div>
-        <p className="text-[12px] mt-2 text-[#6E6E73] leading-relaxed">适合：{target}</p>
+        <p className="mt-2 line-clamp-2 text-[12px] leading-relaxed text-[#6E6E73]">适合：{target}</p>
       </div>
 
-      <div className="px-6 py-4 flex flex-col flex-1">
+      <div className="flex flex-1 flex-col px-5 py-4 md:px-6">
         <div className="space-y-2 flex-1">
-          {features.map((f) => (
-            <div key={f} className="flex items-start gap-2.5">
+          {features.map((f, idx) => (
+            <div key={f} className={`items-start gap-2.5 ${idx > 3 ? 'hidden md:flex' : 'flex'}`}>
               <span className="w-4 h-4 mt-0.5 flex items-center justify-center shrink-0">
                 <i className={`ri-check-line text-[13px] ${recommended ? 'text-[#7C3AED]' : 'text-[#8E8E93]'}`} />
               </span>
               <span className="text-[12.5px] leading-relaxed text-[#444444]">{f}</span>
             </div>
           ))}
+          {features.length > 4 ? (
+            <p className="pt-1 text-[11px] text-[#8E8E93] md:hidden">还有 {features.length - 4} 项权益，订阅前可在桌面端查看完整说明</p>
+          ) : null}
         </div>
         <button
           type="button"

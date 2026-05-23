@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { SDWorkflowNav } from './components/SDWorkflowNav';
+import { MobileBottomActionBar } from './components/MobileBottomActionBar';
+import { MobileStoryBlueprintReview } from './components/MobileStoryBlueprintReview';
 import { StoryBlueprintLeftRail } from './components/StoryBlueprintLeftRail';
 import { StoryBlueprintRightRail } from './components/StoryBlueprintRightRail';
 import { StoryBlueprintStructureSection } from './components/StoryBlueprintStructureSection';
@@ -253,7 +255,7 @@ export function ShortDramaStoryBlueprintPage() {
         isDirty={isDirty}
         onSaveDraft={saveDraft}
       />
-      <div className="flex min-h-screen pt-14">
+      <div className="flex min-h-screen pt-[112px] md:pt-14">
         <StoryBlueprintLeftRail
           settings={leftRails.settings}
           metaRows={leftRails.metaRows}
@@ -261,7 +263,7 @@ export function ShortDramaStoryBlueprintPage() {
           inputSources={leftRails.inputSources}
         />
 
-        <main className="min-h-0 flex-1 overflow-y-auto p-6 lg:p-8">
+        <main className="min-h-0 flex-1 overflow-y-auto px-4 pb-28 pt-6 md:p-6 lg:p-8">
           {missingProject ? (
             <div
               className="mb-6 overflow-hidden rounded-2xl px-6 py-5 text-[13px]"
@@ -388,7 +390,7 @@ export function ShortDramaStoryBlueprintPage() {
                 AI 已根据创作意图与商品理解生成短剧生产蓝图，确认后将进入资产管理。
               </p>
             </div>
-            <div className="flex shrink-0 flex-wrap items-center justify-end gap-2">
+            <div className="hidden shrink-0 flex-wrap items-center justify-end gap-2 md:flex">
               {isEditing === 'all' ? (
                 <>
                   <button
@@ -490,11 +492,22 @@ export function ShortDramaStoryBlueprintPage() {
             </details>
           ) : null}
 
+          {hasBlueprint && !generateLoading ? (
+            <MobileStoryBlueprintReview
+              script={script}
+              segments={segments}
+              production={production}
+              regenerateDisabled={generateLoading || missingProject || !hasBlueprint || storyRegenerateLocked || !hasCreativeBrief}
+              regenerateLabel={generateLoading ? '生成中' : '重生成'}
+              onRegenerate={handleRegenerate}
+            />
+          ) : null}
+
           {hasBlueprint ? (
             generateLoading ? (
               <StoryBlueprintSkeleton />
             ) : (
-            <>
+            <div className="hidden md:block">
               <StoryBlueprintAnchorNav />
 
               <StoryBlueprintSectionDivider
@@ -658,14 +671,14 @@ export function ShortDramaStoryBlueprintPage() {
                 icon="ri-settings-4-line"
               />
               <StoryBlueprintProductionSection production={production} />
-            </>
+            </div>
             )
           ) : null}
 
 
           {hasBlueprint && !generateLoading ? (
             <div
-              className="mt-2 flex items-center justify-between border-t pt-6"
+              className="mt-2 hidden items-center justify-between border-t pt-6 md:flex"
               style={{ borderTop: '1px solid #EAEAEA' }}
             >
               <button
@@ -685,6 +698,26 @@ export function ShortDramaStoryBlueprintPage() {
                 <i className={ri('ri-arrow-right-line text-[13px]')} aria-hidden />
               </button>
             </div>
+          ) : null}
+          {hasBlueprint && !generateLoading ? (
+            <MobileBottomActionBar>
+              <button
+                type="button"
+                onClick={() => navigate(withProjectQuery('/short-drama/product-input', projectId))}
+                className="flex h-11 shrink-0 items-center justify-center rounded-xl border border-[#E5E5EA] bg-white px-4 text-[13px] font-medium text-[#6E6E73]"
+                aria-label="返回商品理解"
+              >
+                <i className={ri('ri-arrow-left-line text-[14px]')} aria-hidden />
+              </button>
+              <button
+                type="button"
+                onClick={() => navigate(withProjectQuery('/short-drama/assets', projectId))}
+                className="flex h-11 min-w-0 flex-1 items-center justify-center gap-2 rounded-xl bg-[#1D1D1F] px-4 text-[13.5px] font-semibold text-white"
+              >
+                进入资产管理
+                <i className={ri('ri-arrow-right-line text-[13px]')} aria-hidden />
+              </button>
+            </MobileBottomActionBar>
           ) : null}
         </main>
 

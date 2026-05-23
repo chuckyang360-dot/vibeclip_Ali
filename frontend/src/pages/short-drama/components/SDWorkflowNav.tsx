@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { ri } from '../utils/shortDramaHelpers';
 import { withProjectQuery } from '../utils/shortDramaRoutes';
+import { MobileWorkflowStepBar } from './MobileWorkflowStepBar';
 import { VibeClipLogo } from './VibeClipLogo';
 
 const STEPS = [
@@ -82,8 +83,8 @@ export function SDWorkflowNav({
         boxShadow: '0 1px 6px rgba(0,0,0,0.05)',
       }}
     >
-      <div className="mx-auto flex h-14 items-center justify-between px-6 lg:px-10" style={{ maxWidth: '1440px' }}>
-        <div className="flex shrink-0 items-center gap-3">
+      <div className="mx-auto flex h-14 items-center justify-between px-4 md:px-6 lg:px-10" style={{ maxWidth: '1440px' }}>
+        <div className="flex min-w-0 shrink items-center gap-2 md:gap-3">
           <button
             type="button"
             onClick={() => navigate('/short-drama')}
@@ -92,7 +93,7 @@ export function SDWorkflowNav({
             <span className="transition-transform duration-200 group-hover:scale-105">
               <VibeClipLogo compact />
             </span>
-            <span className="whitespace-nowrap text-[14px] font-bold text-[#1D1D1F]">
+            <span className="hidden whitespace-nowrap text-[14px] font-bold text-[#1D1D1F] sm:inline">
               VibeClip
             </span>
           </button>
@@ -100,7 +101,7 @@ export function SDWorkflowNav({
           {projectName ? (
             <>
               <span className="text-[14px] text-[#AEAEB2]">/</span>
-              <span className="max-w-[160px] truncate whitespace-nowrap text-[13px] text-[#8E8E93]">
+              <span className="max-w-[132px] truncate whitespace-nowrap text-[13px] text-[#8E8E93] sm:max-w-[160px]">
                 {projectName}
               </span>
             </>
@@ -150,11 +151,11 @@ export function SDWorkflowNav({
           </div>
         ) : null}
 
-        <div className="flex shrink-0 items-center gap-2">
+        <div className="flex shrink-0 items-center gap-1.5 md:gap-2">
           <button
             type="button"
             onClick={handleLeaveHomeClick}
-            className="flex cursor-pointer items-center gap-1.5 whitespace-nowrap rounded-lg px-3 py-1.5 text-[12.5px] transition-all duration-200"
+            className="flex cursor-pointer items-center gap-1.5 whitespace-nowrap rounded-lg px-2.5 py-1.5 text-[12.5px] transition-all duration-200 md:px-3"
             style={{ color: '#8E8E93', background: 'transparent' }}
             onMouseEnter={(e) => {
               (e.currentTarget as HTMLButtonElement).style.color = '#1D1D1F';
@@ -172,7 +173,7 @@ export function SDWorkflowNav({
             type="button"
             onClick={handleSaveProjectClick}
             disabled={!allowSaveAndLeave}
-            className="flex cursor-pointer items-center gap-1.5 whitespace-nowrap rounded-lg border border-[#EAEAEA] bg-[#F7F8FA] px-4 py-1.5 text-[12.5px] font-medium text-[#444444] transition-all duration-200"
+            className="flex cursor-pointer items-center gap-1.5 whitespace-nowrap rounded-lg border border-[#EAEAEA] bg-[#F7F8FA] px-2.5 py-1.5 text-[12.5px] font-medium text-[#444444] transition-all duration-200 md:px-4"
             onMouseEnter={(e) => {
               (e.currentTarget as HTMLButtonElement).style.background = '#EAEAEA';
               (e.currentTarget as HTMLButtonElement).style.color = '#1D1D1F';
@@ -183,10 +184,11 @@ export function SDWorkflowNav({
             }}
           >
             <i className={ri('ri-save-line', 'text-[12px]')} aria-hidden />
-            保存项目
+            <span className="hidden sm:inline">保存项目</span>
           </button>
         </div>
       </div>
+      {currentStep !== undefined ? <MobileWorkflowStepBar currentStep={currentStep} /> : null}
       {dialog ? (
         <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/35 px-4">
           <div className="w-full max-w-md rounded-2xl border border-[#EAEAEA] bg-white p-5 shadow-xl">
