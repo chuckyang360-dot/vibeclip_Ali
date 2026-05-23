@@ -1,4 +1,4 @@
-export function VibeClipLogo({ compact = false }: { compact?: boolean }) {
+export function VibeClipLogo({ compact = false, tone = 'dark' }: { compact?: boolean; tone?: 'dark' | 'light' }) {
   return (
     <div className="flex items-center gap-2">
       <div className="relative flex h-9 w-9 items-center justify-center rounded-xl bg-[#111111] shadow-sm">
@@ -34,7 +34,7 @@ export function VibeClipLogo({ compact = false }: { compact?: boolean }) {
 
       {!compact && (
         <div className="flex items-center gap-2">
-          <span className="text-lg font-bold tracking-tight text-neutral-950">
+          <span className={`text-lg font-bold tracking-tight ${tone === 'light' ? 'text-white' : 'text-neutral-950'}`}>
             VibeClip
           </span>
           <span className="rounded-full bg-purple-50 px-2 py-0.5 text-xs font-medium text-purple-700">
