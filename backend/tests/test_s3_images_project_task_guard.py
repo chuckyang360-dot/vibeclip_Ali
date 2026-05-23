@@ -10,7 +10,8 @@ from sqlalchemy.orm import Session
 
 from app.database import SessionLocal, init_db
 from app.models import User
-from app.short_drama.models import AssetEntity, ShortDramaProject
+from app.short_drama.models import AssetEntity, CharacterAsset, ShortDramaProject
+from app.short_drama.services.asset_library_service import asset_library_service
 from app.short_drama.services.project_task_guard import (
     acquire_project_task_lock,
     finalize_s3_images_task,
@@ -194,3 +195,55 @@ def test_recover_stale_s3_images_lock_even_when_task_running_true(db: Session) -
     assert result == "recovered"
     assert p.status == ProjectStatus.ASSET_SPECS_GENERATED.value
     assert not is_processing(p)
+
+
+def test_asset_library_sync_clears_stale_image_failure_meta_when_image_exists(db: Session) -> None:
+    p = _project(db)
+    legacy = CharacterAsset(
+        project_id=p.id,
+        name="Hero",
+        role_type="main",
+        description="retryable asset row",
+        visual_prompt="studio portrait",
+        image_url="https://cdn.example.com/hero.jpg",
+        meta_json={"image_prompt": "studio portrait"},
+    )
+    db.add(legacy)
+    db.commit()
+    db.refresh(legacy)
+    asset = AssetEntity(
+        project_id=p.id,
+        asset_type="character",
+        name="Hero",
+        description="retryable asset row",
+        base_prompt="studio portrait",
+        source="system_generated",
+        status="active",
+        extra_json={
+            "legacy_source": {"table_asset_id": legacy.id, "asset_type": "character"},
+            "image_generation_status": "failed",
+            "image_generation_error_type": "ShortDramaImageProviderError",
+            "image_generation_error_message": "old upstream error",
+            "type_fields": {
+                "image_prompt": "studio portrait",
+                "image_generation_status": "failed",
+                "image_generation_error_type": "ShortDramaImageProviderError",
+                "image_generation_error_message": "old upstream error",
+            },
+        },
+    )
+    db.add(asset)
+    db.commit()
+
+    asset_library_service.sync_legacy_assets_for_project(db, p.id)
+    db.commit()
+    db.refresh(asset)
+
+    extra = dict(asset.extra_json or {})
+    tf = dict(extra.get("type_fields") or {})
+    assert "image_generation_status" not in extra
+    assert "image_generation_error_type" not in extra
+    assert "image_generation_error_message" not in extra
+    assert "image_generation_status" not in tf
+    assert "image_generation_error_type" not in tf
+    assert "image_generation_error_message" not in tf

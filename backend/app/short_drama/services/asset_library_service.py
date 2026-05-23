@@ -55,6 +55,14 @@ def _merge_type_fields_preserve_non_empty(base: dict[str, Any], incoming: dict[s
     return out
 
 
+def _clear_image_generation_failure_fields(payload: dict[str, Any]) -> dict[str, Any]:
+    out = dict(payload or {})
+    out.pop("image_generation_status", None)
+    out.pop("image_generation_error_type", None)
+    out.pop("image_generation_error_message", None)
+    return out
+
+
 class AssetLibraryService:
     def __init__(self):
         self._provider = build_short_drama_image_provider()
@@ -693,6 +701,12 @@ class AssetLibraryService:
                 db.add(target)
 
             url = (image_url or "").strip() if isinstance(image_url, str) else ""
+            if url:
+                extra = _clear_image_generation_failure_fields(dict(target.extra_json or {}))
+                tf = _clear_image_generation_failure_fields(dict(extra.get("type_fields") or {}))
+                extra["type_fields"] = tf
+                target.extra_json = extra
+                db.add(target)
             if url:
                 exists = (
                     db.query(AssetImage)
