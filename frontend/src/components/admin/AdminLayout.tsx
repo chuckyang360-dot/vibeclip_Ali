@@ -77,9 +77,17 @@ function AdminLayoutInner() {
       </aside>
 
       <div className="min-h-screen lg:ml-56">
-        <header className="sticky top-0 z-40 flex h-14 items-center justify-between border-b border-gray-200 bg-white px-5">
-          <h1 className="text-base font-semibold text-gray-900">{title}</h1>
-          <div className="flex items-center gap-3">
+        <header className="sticky top-0 z-40 flex h-14 items-center justify-between border-b border-gray-200 bg-white px-3 sm:px-4 lg:px-5">
+          <div className="flex min-w-0 items-center gap-2">
+            <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-slate-900 text-white lg:hidden">
+              <i className="ri-film-line text-sm" />
+            </div>
+            <div className="min-w-0">
+              <p className="hidden text-[10px] font-semibold uppercase tracking-[0.14em] text-gray-400 sm:block lg:hidden">Admin</p>
+              <h1 className="truncate text-base font-semibold text-gray-900">{title}</h1>
+            </div>
+          </div>
+          <div className="flex items-center gap-1.5 sm:gap-2 lg:gap-3">
             <div className="hidden items-center rounded-lg bg-gray-100 p-0.5 md:flex">
               {['Today', '7D', '30D', 'Custom'].map((item) => (
                 <button
@@ -97,14 +105,14 @@ function AdminLayoutInner() {
             </div>
             <button
               onClick={toggleLocale}
-              className="rounded-md bg-gray-100 px-2 py-1 text-xs font-medium text-gray-600 hover:bg-gray-200"
+              className="rounded-md bg-gray-100 px-2.5 py-1.5 text-xs font-medium text-gray-600 hover:bg-gray-200 sm:px-2 sm:py-1"
             >
               {locale === 'zh' ? 'EN' : '中'}
             </button>
-            <button className="flex h-8 w-8 items-center justify-center rounded-full bg-gray-100 text-gray-600">
+            <button className="hidden h-8 w-8 items-center justify-center rounded-full bg-gray-100 text-gray-600 sm:flex">
               <i className="ri-notification-3-line text-sm" />
             </button>
-            <div className="flex items-center gap-2 rounded-lg px-2 py-1 hover:bg-gray-50">
+            <div className="flex items-center gap-2 rounded-lg px-1.5 py-1 hover:bg-gray-50 sm:px-2">
               <div className="flex h-7 w-7 items-center justify-center rounded-full bg-indigo-100 text-xs font-semibold text-indigo-600">
                 {(user?.name || user?.email || '?').slice(0, 1).toUpperCase()}
               </div>
@@ -112,10 +120,30 @@ function AdminLayoutInner() {
             </div>
           </div>
         </header>
-        <main className="p-5">
+        <main className="p-3 pb-24 sm:p-4 sm:pb-24 lg:p-5">
           <Outlet />
         </main>
       </div>
+
+      <nav className="fixed bottom-0 left-0 right-0 z-50 border-t border-gray-200 bg-white/95 px-2 pb-[calc(env(safe-area-inset-bottom)+8px)] pt-2 shadow-[0_-12px_30px_rgba(15,23,42,0.10)] backdrop-blur lg:hidden">
+        <div className="flex gap-1 overflow-x-auto">
+          {nav.map((item) => (
+            <NavLink
+              key={item.to}
+              to={item.to}
+              end={item.end}
+              className={({ isActive }) =>
+                `flex min-w-[74px] flex-col items-center justify-center rounded-xl px-2 py-2 text-[10px] font-semibold transition ${
+                  isActive ? 'bg-slate-900 text-white' : 'text-gray-500 hover:bg-gray-100 hover:text-gray-900'
+                }`
+              }
+            >
+              <i className={`${item.icon} text-[18px]`} />
+              <span className="mt-1 max-w-[68px] truncate">{t(item.key)}</span>
+            </NavLink>
+          ))}
+        </div>
+      </nav>
     </div>
   );
 }
