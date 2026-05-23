@@ -452,7 +452,41 @@ def build_xai_video_provider() -> SegmentVideoProvider:
         logger.warning("[VIDEO_PROVIDER] MOCK provider ENABLED")
         return MockXAIVideoProvider()
 
-    if provider_env == "railway_xai_proxy":
+    from ..utils.ai_runtime_config import STAGE_S4_VIDEO_GENERATION, get_ai_runtime_config
+
+    ai_cfg = get_ai_runtime_config(STAGE_S4_VIDEO_GENERATION)
+    runtime_provider = (ai_cfg.provider or "").strip().lower()
+    runtime_model = (ai_cfg.model_id or "").strip()
+    provider_choice = runtime_provider or provider_env
+
+    if provider_choice == "gemini":
+        from .railway_gemini_veo_video_proxy import RailwayGeminiVeoVideoProxyProvider
+
+        base = (
+            (settings.RAILWAY_XAI_VIDEO_PROXY_BASE_URL or "").strip()
+            or (settings.AI_PROXY_BASE_URL or "").strip()
+        )
+        token = (
+            (settings.RAILWAY_XAI_VIDEO_PROXY_TOKEN or "").strip()
+            or (settings.AI_PROXY_TOKEN or "").strip()
+        )
+        if not base:
+            raise ShortDramaVideoProviderError(
+                "AI_PROXY_BASE_URL is required for S4 Gemini/Veo video generation "
+                "(or set RAILWAY_XAI_VIDEO_PROXY_BASE_URL)"
+            )
+        if not token:
+            raise ShortDramaVideoProviderError(
+                "AI_PROXY_TOKEN is required for S4 Gemini/Veo video generation "
+                "(or set RAILWAY_XAI_VIDEO_PROXY_TOKEN)"
+            )
+        logger.info(
+            "[VIDEO_PROVIDER] RAILWAY_GEMINI_VEO_PROXY provider ENABLED by admin config model=%s",
+            runtime_model or "",
+        )
+        return RailwayGeminiVeoVideoProxyProvider()
+
+    if provider_choice == "railway_xai_proxy" or runtime_provider in {"xai", "grok"}:
         from .railway_xai_video_proxy import RailwayXAIVideoProxyProvider
 
         base = (
@@ -473,26 +507,21 @@ def build_xai_video_provider() -> SegmentVideoProvider:
                 "RAILWAY_XAI_VIDEO_PROXY_TOKEN is required when VIDEO_PROVIDER=railway_xai_proxy "
                 "(or set AI_PROXY_TOKEN)"
             )
-        logger.info("[VIDEO_PROVIDER] RAILWAY_XAI_PROXY video provider ENABLED")
+        logger.info(
+            "[VIDEO_PROVIDER] RAILWAY_XAI_PROXY video provider ENABLED by %s model=%s",
+            "admin config" if runtime_provider in {"xai", "grok"} else "env fallback",
+            runtime_model or "",
+        )
         return RailwayXAIVideoProxyProvider()
 
-    if provider_env == "seedance":
+    if provider_choice == "seedance":
         from .seedance_video_provider import SeedanceVideoProvider
 
         ark_key = (settings.ARK_API_KEY or "").strip()
         if not ark_key:
             raise ShortDramaVideoProviderError("ARK_API_KEY is required when VIDEO_PROVIDER=seedance")
-        logger.info("[VIDEO_PROVIDER] SEEDANCE provider ENABLED")
+        logger.info("[VIDEO_PROVIDER] SEEDANCE provider ENABLED by admin/env config")
         return SeedanceVideoProvider()
-
-    if provider_env == "gemini_veo":
-        from .gemini_veo_video_provider import GeminiVeoVideoProvider
-
-        gemini_key = (settings.GEMINI_API_KEY or "").strip()
-        if not gemini_key:
-            raise ShortDramaVideoProviderError("GEMINI_API_KEY is required when VIDEO_PROVIDER=gemini_veo")
-        logger.info("[VIDEO_PROVIDER] GEMINI_VEO provider ENABLED")
-        return GeminiVeoVideoProvider()
 
     if is_prod and not (settings.XAI_API_KEY or "").strip():
         raise ShortDramaVideoProviderError(_PRODUCTION_VIDEO_PROVIDER_ERROR)

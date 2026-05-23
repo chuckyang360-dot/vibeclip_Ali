@@ -9,6 +9,7 @@ import pytest
 
 from app.config import settings
 from app.short_drama.exceptions import ShortDramaVideoProviderError
+from app.short_drama.providers.railway_gemini_veo_video_proxy import RailwayGeminiVeoVideoProxyProvider
 from app.short_drama.providers.railway_xai_video_proxy import (
     RailwayXAIVideoProxyProvider,
     build_railway_xai_video_proxy_payload,
@@ -20,6 +21,11 @@ from app.short_drama.providers.xai_video_provider import (
     build_xai_video_provider,
 )
 from app.short_drama.providers.seedance_video_provider import SeedanceVideoProvider
+from app.short_drama.utils.ai_runtime_config import AIRuntimeConfig, STAGE_S4_VIDEO_GENERATION
+
+
+def _runtime(provider: str | None = None, model_id: str | None = None) -> AIRuntimeConfig:
+    return AIRuntimeConfig(stage_key=STAGE_S4_VIDEO_GENERATION, provider=provider, model_id=model_id)
 
 
 def test_build_railway_payload_fields() -> None:
@@ -49,6 +55,31 @@ def test_build_provider_railway_xai_proxy(monkeypatch: pytest.MonkeyPatch) -> No
     monkeypatch.setenv("SHORT_DRAMA_USE_MOCK_VIDEO_PROVIDER", "true")
     monkeypatch.setattr(settings, "RAILWAY_XAI_VIDEO_PROXY_BASE_URL", "https://proxy.example.com")
     monkeypatch.setattr(settings, "RAILWAY_XAI_VIDEO_PROXY_TOKEN", "tok")
+    monkeypatch.setattr("app.short_drama.utils.ai_runtime_config.get_ai_runtime_config", lambda stage: _runtime())
+    provider = build_xai_video_provider()
+    assert isinstance(provider, RailwayXAIVideoProxyProvider)
+
+
+def test_build_provider_uses_admin_gemini_over_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("VIDEO_PROVIDER", "railway_xai_proxy")
+    monkeypatch.setattr(settings, "RAILWAY_XAI_VIDEO_PROXY_BASE_URL", "https://proxy.example.com")
+    monkeypatch.setattr(settings, "RAILWAY_XAI_VIDEO_PROXY_TOKEN", "tok")
+    monkeypatch.setattr(
+        "app.short_drama.utils.ai_runtime_config.get_ai_runtime_config",
+        lambda stage: _runtime("gemini", "veo-3.1-generate-preview"),
+    )
+    provider = build_xai_video_provider()
+    assert isinstance(provider, RailwayGeminiVeoVideoProxyProvider)
+
+
+def test_build_provider_uses_admin_xai_proxy(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("VIDEO_PROVIDER", "gemini_veo")
+    monkeypatch.setattr(settings, "RAILWAY_XAI_VIDEO_PROXY_BASE_URL", "https://proxy.example.com")
+    monkeypatch.setattr(settings, "RAILWAY_XAI_VIDEO_PROXY_TOKEN", "tok")
+    monkeypatch.setattr(
+        "app.short_drama.utils.ai_runtime_config.get_ai_runtime_config",
+        lambda stage: _runtime("xai", "grok-imagine-video"),
+    )
     provider = build_xai_video_provider()
     assert isinstance(provider, RailwayXAIVideoProxyProvider)
 
@@ -58,11 +89,13 @@ def test_build_provider_railway_requires_base(monkeypatch: pytest.MonkeyPatch) -
     monkeypatch.setattr(settings, "RAILWAY_XAI_VIDEO_PROXY_BASE_URL", None)
     monkeypatch.setattr(settings, "AI_PROXY_BASE_URL", None)
     monkeypatch.setattr(settings, "RAILWAY_XAI_VIDEO_PROXY_TOKEN", "tok")
+    monkeypatch.setattr("app.short_drama.utils.ai_runtime_config.get_ai_runtime_config", lambda stage: _runtime())
     with pytest.raises(ShortDramaVideoProviderError, match="RAILWAY_XAI_VIDEO_PROXY_BASE_URL"):
         build_xai_video_provider()
 
 
 def test_build_provider_xai_and_seedance_unchanged(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("app.short_drama.utils.ai_runtime_config.get_ai_runtime_config", lambda stage: _runtime())
     monkeypatch.setenv("VIDEO_PROVIDER", "xai")
     monkeypatch.setattr(settings, "XAI_API_KEY", "k")
     assert isinstance(build_xai_video_provider(), XAIVideoProvider)

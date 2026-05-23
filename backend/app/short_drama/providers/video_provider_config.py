@@ -18,7 +18,7 @@ def effective_video_model_for_provider(provider_label: str) -> str:
         if configured_provider == "seedance" and configured_model:
             return configured_model
         return effective_seedance_video_model()
-    if label == "gemini_veo":
+    if label in {"gemini_veo", "railway_gemini_veo_proxy"}:
         if configured_provider == "gemini" and configured_model:
             return configured_model
         return effective_gemini_video_model()
