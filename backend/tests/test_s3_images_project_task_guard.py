@@ -3,18 +3,20 @@
 from __future__ import annotations
 
 import uuid
+from datetime import datetime, timedelta, timezone
 
 import pytest
 from sqlalchemy.orm import Session
 
 from app.database import SessionLocal, init_db
 from app.models import User
-from app.short_drama.models import ShortDramaProject
+from app.short_drama.models import AssetEntity, ShortDramaProject
 from app.short_drama.services.project_task_guard import (
     acquire_project_task_lock,
     finalize_s3_images_task,
     is_processing,
     mark_project_stage_failed,
+    recover_stale_processing_status_if_possible,
 )
 from app.short_drama.utils.enums import ProjectStatus
 
@@ -158,3 +160,37 @@ def test_finalize_s3_images_success_clears_processing(db: Session) -> None:
         ProjectStatus.ASSETS_READY.value,
         ProjectStatus.ASSET_SPECS_GENERATED.value,
     )
+
+
+def test_recover_stale_s3_images_lock_even_when_task_running_true(db: Session) -> None:
+    p = _project(db)
+    db.add(
+        AssetEntity(
+            project_id=p.id,
+            asset_type="character",
+            name="Hero",
+            description="retryable asset row",
+            base_prompt="studio portrait",
+            source="system_generated",
+            status="active",
+        )
+    )
+    stale_lock = (datetime.now(timezone.utc) - timedelta(minutes=30)).isoformat()
+    p.status = "processing"
+    p.step_status = {
+        "_runtime": {
+            "task_running": True,
+            "current_stage": "s3_images",
+            "lock_acquired_at": stale_lock,
+            "previous_status": ProjectStatus.ASSET_SPECS_GENERATED.value,
+        }
+    }
+    db.add(p)
+    db.commit()
+    db.refresh(p)
+
+    result = recover_stale_processing_status_if_possible(db, p)
+
+    assert result == "recovered"
+    assert p.status == ProjectStatus.ASSET_SPECS_GENERATED.value
+    assert not is_processing(p)

@@ -238,15 +238,29 @@ def recover_stale_processing_status_if_possible(db: Session, project: ShortDrama
     )
     if task_running:
         if stage_now != "s4_video":
+            if lock_dt is not None and lock_age_seconds is not None and lock_age_seconds < _RUNNING_LOCK_TIMEOUT_SECONDS:
+                logger.info(
+                    "[PROJECT_RUNNING_LOCK_ACTIVE_NON_S4] project_id=%s old_status=%s current_stage=%s "
+                    "task_running=%s lock_acquired_at=%s lock_age_seconds=%s",
+                    project.id,
+                    project.status,
+                    stage_now,
+                    task_running,
+                    lock_acquired_at or "",
+                    lock_age_seconds,
+                )
+                return "running"
             logger.info(
-                "[PROJECT_STALE_PROCESSING_DETECTED] project_id=%s old_status=%s current_stage=%s task_running=%s reason=%s",
+                "[PROJECT_RUNNING_LOCK_TIMEOUT_DETECTED] project_id=%s old_status=%s current_stage=%s task_running=%s "
+                "lock_acquired_at=%s lock_age_seconds=%s reason=%s",
                 project.id,
                 project.status,
                 stage_now,
                 task_running,
-                "active_runtime_lock_non_s4",
+                lock_acquired_at or "",
+                lock_age_seconds if lock_age_seconds is not None else -1,
+                "expired_runtime_lock_non_s4",
             )
-            return "running"
         if active_render_jobs_count > 0:
             logger.info(
                 "[PROJECT_RUNNING_LOCK_ACTIVE_JOB_FOUND] project_id=%s current_stage=%s task_running=%s "
