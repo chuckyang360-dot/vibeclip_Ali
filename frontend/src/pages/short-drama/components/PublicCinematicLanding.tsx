@@ -9,12 +9,12 @@ const PRODUCT_IMAGE =
   'https://images.unsplash.com/photo-1526947425960-945c6e72858f?auto=format&fit=crop&w=900&q=82';
 
 const CAPABILITIES = [
-  { title: '商品理解', desc: '读取商品图、卖点、目标人群，拆出适合短视频表达的核心钩子。', icon: 'ri-focus-3-line' },
-  { title: '真人感剧情', desc: '把功能卖点改写成角色、场景、冲突和转化动作，不再只是参数罗列。', icon: 'ri-user-voice-line' },
+  { title: '产品理解', desc: '读取产品资料、卖点、目标人群，拆出适合短视频表达的核心钩子。', icon: 'ri-focus-3-line' },
+  { title: '真人感剧情', desc: '把价值主张改写成角色、场景、冲突和转化动作，不再只是参数罗列。', icon: 'ri-user-voice-line' },
   { title: '分镜到视频', desc: '自动生成镜头规划、角色场景资产和视频片段，最后合成为完整成片。', icon: 'ri-movie-2-line' },
 ] as const;
 
-const FLOW = ['上传商品', '生成剧本', '确认资产', '生成片段', '交付成片'] as const;
+const FLOW = ['上传产品', '生成剧本', '确认资产', '生成片段', '交付成片'] as const;
 
 export function PublicCinematicLanding() {
   return (
@@ -28,13 +28,13 @@ export function PublicCinematicLanding() {
           <div className="max-w-3xl">
             <div className="mb-5 inline-flex items-center gap-2 rounded-full border border-white/18 bg-white/10 px-3 py-1.5 text-[11px] font-semibold text-white/76 backdrop-blur">
               <span className="h-1.5 w-1.5 rounded-full bg-emerald-400" />
-              VibeClip / 维播 · AI 商品短片工作台
+              VibeClip / 维播 · AI 产品短片工作台
             </div>
             <h1 className="text-[44px] font-black leading-[0.98] tracking-normal md:text-[76px]">
-              让商品进入一支真正的短片
+              让产品进入一支真正的短片
             </h1>
             <p className="mt-5 max-w-2xl text-[15px] leading-relaxed text-white/72 md:text-[19px]">
-              VibeClip 把商品资料转成有角色、有场景、有镜头语言的营销视频。从卖点理解到分镜、资产、片段生成和成片交付，一条线完成。
+              VibeClip 把产品资料转成有角色、有场景、有镜头语言的营销视频。从价值理解到分镜、资产、片段生成和成片交付，一条线完成。
             </p>
             <div className="mt-8 flex flex-col gap-3 sm:flex-row">
               <Link
@@ -57,7 +57,7 @@ export function PublicCinematicLanding() {
           <div className="mt-10 grid grid-cols-3 gap-2 md:max-w-xl md:gap-3">
             {[
               ['9:16', '短视频比例'],
-              ['5步', '从商品到成片'],
+              ['5步', '从产品到成片'],
               ['AI', '剧本与视频生成'],
             ].map(([value, label]) => (
               <div key={label} className="rounded-2xl border border-white/12 bg-white/10 px-3 py-3 backdrop-blur md:px-4">
@@ -73,9 +73,9 @@ export function PublicCinematicLanding() {
         <div className="grid gap-8 md:grid-cols-[0.9fr_1.1fr] md:items-center">
           <div>
             <p className="text-[11px] font-bold uppercase tracking-[0.18em] text-white/42">Core Ability</p>
-            <h2 className="mt-3 text-[30px] font-black leading-tight md:text-[48px]">不是模板拼贴，是商品叙事生成</h2>
+            <h2 className="mt-3 text-[30px] font-black leading-tight md:text-[48px]">不是模板拼贴，是产品叙事生成</h2>
             <p className="mt-4 text-[14px] leading-relaxed text-white/62 md:text-[16px]">
-              维播先理解商品卖点和用户动机，再把它们改写成短片结构：谁在什么场景里遇到问题，商品如何自然出现，镜头如何推动信任和转化。
+              维播先理解产品价值和用户动机，再把它们改写成短片结构：谁在什么场景里遇到问题，产品如何自然出现，镜头如何推动信任和转化。
             </p>
           </div>
           <div className="grid grid-cols-2 gap-3">
@@ -88,7 +88,7 @@ export function PublicCinematicLanding() {
               </div>
               <div className="rounded-2xl border border-white/10 bg-white/[0.08] p-4">
                 <p className="text-[12px] leading-relaxed text-white/68">
-                  真人角色、真实场景、商品露出、镜头节奏和字幕口播会一起进入生成链路。
+                  真人角色、真实场景、产品露出、镜头节奏和字幕口播会一起进入生成链路。
                 </p>
               </div>
             </div>
@@ -114,7 +114,7 @@ export function PublicCinematicLanding() {
         <div className="mx-auto max-w-6xl">
           <div className="flex flex-col gap-6 md:flex-row md:items-center md:justify-between">
             <div>
-              <h2 className="text-[24px] font-black md:text-[34px]">从一张商品图开始</h2>
+              <h2 className="text-[24px] font-black md:text-[34px]">从一份产品资料开始</h2>
               <p className="mt-2 text-[13px] text-white/56 md:text-[15px]">登录后进入工作台，按流程完成创建、生成和交付。</p>
             </div>
             <Link to="/register" className="flex h-12 items-center justify-center rounded-xl bg-white px-6 text-[14px] font-bold text-[#111111]">

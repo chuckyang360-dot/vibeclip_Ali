@@ -57,10 +57,10 @@ export function Login() {
               VibeClip 工作台
             </div>
             <h1 className="text-[34px] font-black leading-[1.02] md:text-[58px]">
-              继续生成你的商品短片
+              继续生成你的产品短片
             </h1>
             <p className="mt-4 max-w-md text-[14px] leading-relaxed text-white/66 md:text-[16px]">
-              登录后回到项目进度，继续完成商品理解、剧本、资产、视频生成和成片交付。
+              登录后回到项目进度，继续完成产品理解、剧本、资产、视频生成和成片交付。
             </p>
           </div>
         </section>
@@ -70,7 +70,7 @@ export function Login() {
             <div className="rounded-[24px] border border-[#EAEAEA] bg-white p-5 shadow-[0_18px_48px_rgba(15,23,42,0.10)] md:p-8 md:shadow-[0_2px_12px_rgba(0,0,0,0.04)]">
               <div className="mb-6 text-left md:mb-7 md:text-center">
                 <h2 className="text-[26px] font-black leading-tight text-[#1D1D1F] md:text-[24px]">登录 VibeClip</h2>
-                <p className="mt-2 text-[13px] leading-relaxed text-[#8E8E93]">继续创建你的 AI 商品营销视频项目</p>
+                <p className="mt-2 text-[13px] leading-relaxed text-[#8E8E93]">继续创建你的 AI 产品营销视频项目</p>
             </div>
 
             {error && (

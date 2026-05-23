@@ -56,7 +56,7 @@ export function ShortDramaHero() {
           }}
         >
           <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-emerald-500" />
-          VibeClip / 维播 · AI 商品营销短视频工作台
+          VibeClip / 维播 · AI 产品营销短视频工作台
         </div>
 
         <h1
@@ -67,14 +67,14 @@ export function ShortDramaHero() {
             color: sdColors.ink,
           }}
         >
-          让商品自己会讲故事
+          让产品自己会讲故事
         </h1>
 
         <p
           className="mx-auto mb-4 max-w-2xl text-[18px] leading-relaxed lg:text-[20px]"
           style={{ color: '#6E6E73' }}
         >
-          为出海企业打造的 AI 商品营销短视频工作台
+          为出海企业打造的 AI 产品营销短视频工作台
         </p>
         <p className="mx-auto mb-14 max-w-xl text-[15px] leading-relaxed" style={{ color: '#AEAEB2' }}>
           从产品资料到剧情、角色、场景、分镜与视频，一站式完成

@@ -4,7 +4,7 @@ import { ri } from '../utils/shortDramaHelpers';
 const QUICK_ACTIONS = [
   {
     title: '新建视频项目',
-    desc: '拍照上传商品，先让 AI 理解卖点',
+    desc: '上传产品资料，先让 AI 理解卖点',
     icon: 'ri-add-circle-line',
     to: '/short-drama/create',
     primary: true,
@@ -18,7 +18,7 @@ const QUICK_ACTIONS = [
   },
   {
     title: '查看行业样例',
-    desc: '快速判断适不适合你的商品场景',
+    desc: '快速判断适不适合你的产品场景',
     icon: 'ri-play-circle-line',
     to: '/cases',
     primary: false,
@@ -26,7 +26,7 @@ const QUICK_ACTIONS = [
 ] as const;
 
 const MOBILE_FLOW = [
-  { label: '上传商品', icon: 'ri-image-add-line' },
+  { label: '上传产品', icon: 'ri-image-add-line' },
   { label: '确认剧本', icon: 'ri-file-text-line' },
   { label: '生成资产', icon: 'ri-user-star-line' },
   { label: '预览成片', icon: 'ri-movie-2-line' },
@@ -43,7 +43,7 @@ export function MobileLandingHome() {
           手机端创作入口
         </div>
         <h1 className="max-w-[13rem] text-[34px] font-black leading-[1.04] tracking-normal">
-          从商品照片到短片初稿
+          从产品资料到短片初稿
         </h1>
         <p className="mt-4 text-[14px] leading-relaxed text-white/64">
           在手机上完成创建、上传、生成和预览；需要精修分镜时，再回到电脑继续。
@@ -61,7 +61,7 @@ export function MobileLandingHome() {
       <section className="mt-4 grid grid-cols-2 gap-3">
         <div className="rounded-2xl border border-[#EAEAEA] bg-white p-4">
           <p className="text-[22px] font-black text-[#1D1D1F]">5步</p>
-          <p className="mt-1 text-[12px] text-[#8E8E93]">从商品到成片</p>
+          <p className="mt-1 text-[12px] text-[#8E8E93]">从产品到成片</p>
         </div>
         <div className="rounded-2xl border border-[#EAEAEA] bg-white p-4">
           <p className="text-[22px] font-black text-[#1D1D1F]">9:16</p>

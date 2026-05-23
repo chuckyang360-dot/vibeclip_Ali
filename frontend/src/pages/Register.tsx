@@ -66,10 +66,10 @@ export function Register() {
               新建 VibeClip 账号
             </div>
             <h1 className="text-[32px] font-black leading-[1.02] md:text-[58px]">
-              开始你的商品短片工作流
+              开始你的产品短片工作流
             </h1>
             <p className="mt-4 max-w-md text-[14px] leading-relaxed text-white/66 md:text-[16px]">
-              创建账号后即可上传商品资料，让 AI 帮你生成剧情、角色场景、分镜片段和最终成片。
+              创建账号后即可上传产品资料，让 AI 帮你生成剧情、角色场景、分镜片段和最终成片。
             </p>
           </div>
         </section>
@@ -79,7 +79,7 @@ export function Register() {
             <div className="rounded-[24px] border border-[#EAEAEA] bg-white p-5 shadow-[0_18px_48px_rgba(15,23,42,0.10)] md:p-8 md:shadow-[0_2px_12px_rgba(0,0,0,0.04)]">
               <div className="mb-5 text-left md:mb-7 md:text-center">
                 <h2 className="text-[26px] font-black leading-tight text-[#1D1D1F] md:text-[24px]">注册 VibeClip</h2>
-                <p className="mt-2 text-[13px] leading-relaxed text-[#8E8E93]">用一个账号管理你的 AI 商品视频项目</p>
+                <p className="mt-2 text-[13px] leading-relaxed text-[#8E8E93]">用一个账号管理你的 AI 产品视频项目</p>
             </div>
 
             {error && (
