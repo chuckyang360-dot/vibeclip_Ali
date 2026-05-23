@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import logging
 import threading
+import time
 from typing import Any
 
 import httpx
@@ -74,7 +75,8 @@ def request_railway_gemini_veo_video_generation(
 
     logger.info(
         "[RAILWAY_GEMINI_VEO_PROXY_REQUEST] project_id=%s segment_id=%s proxy_base_url=%s "
-        "prompt_chars=%s reference_image_count=%s duration_seconds=%s aspect_ratio=%s resolution=%s model=%s",
+        "prompt_chars=%s reference_image_count=%s duration_seconds=%s aspect_ratio=%s resolution=%s model=%s "
+        "timeout_seconds=%s",
         project_id,
         segment_id,
         base,
@@ -84,8 +86,10 @@ def request_railway_gemini_veo_video_generation(
         aspect_ratio,
         resolution or "",
         model,
+        timeout_sec,
     )
 
+    started = time.monotonic()
     try:
         with httpx.Client(timeout=timeout, http2=False, verify=True, follow_redirects=True) as client:
             resp = client.post(
@@ -94,16 +98,51 @@ def request_railway_gemini_veo_video_generation(
                 json=payload,
             )
     except httpx.TimeoutException as e:
+        logger.error(
+            "[RAILWAY_GEMINI_VEO_PROXY_FAILED] project_id=%s segment_id=%s status_code=%s "
+            "error_code=%s error_message=%s request_id=%s elapsed_seconds=%.3f",
+            project_id,
+            segment_id,
+            "timeout",
+            "PROXY_TIMEOUT",
+            str(e),
+            "",
+            time.monotonic() - started,
+        )
         raise ShortDramaVideoProviderError(f"Railway Gemini Veo video proxy timeout: {e}") from e
     except httpx.RequestError as e:
+        logger.error(
+            "[RAILWAY_GEMINI_VEO_PROXY_FAILED] project_id=%s segment_id=%s status_code=%s "
+            "error_code=%s error_message=%s request_id=%s elapsed_seconds=%.3f",
+            project_id,
+            segment_id,
+            "network",
+            "PROXY_NETWORK_ERROR",
+            str(e),
+            "",
+            time.monotonic() - started,
+        )
         raise ShortDramaVideoProviderError(f"Railway Gemini Veo video proxy network error: {e}") from e
 
+    elapsed = time.monotonic() - started
     body_text = ""
     try:
         body_text = resp.text or ""
     except Exception:
         pass
     if resp.status_code < 200 or resp.status_code >= 300:
+        logger.error(
+            "[RAILWAY_GEMINI_VEO_PROXY_FAILED] project_id=%s segment_id=%s status_code=%s "
+            "error_code=%s error_message=%s request_id=%s elapsed_seconds=%.3f body_prefix=%s",
+            project_id,
+            segment_id,
+            resp.status_code,
+            "PROXY_HTTP_ERROR",
+            _safe_body_prefix(body_text),
+            "",
+            elapsed,
+            _safe_body_prefix(body_text),
+        )
         raise ShortDramaVideoProviderError(
             f"Railway Gemini Veo video proxy HTTP {resp.status_code} "
             f"(project_id={project_id}, segment_id={segment_id}): {_safe_body_prefix(body_text)}"
@@ -112,11 +151,35 @@ def request_railway_gemini_veo_video_generation(
     try:
         data = resp.json()
     except Exception as e:
+        logger.error(
+            "[RAILWAY_GEMINI_VEO_PROXY_FAILED] project_id=%s segment_id=%s status_code=%s "
+            "error_code=%s error_message=%s request_id=%s elapsed_seconds=%.3f body_prefix=%s",
+            project_id,
+            segment_id,
+            resp.status_code,
+            "PROXY_NON_JSON",
+            str(e),
+            "",
+            elapsed,
+            _safe_body_prefix(body_text),
+        )
         raise ShortDramaVideoProviderError(
             f"Railway Gemini Veo video proxy returned non-JSON "
             f"(project_id={project_id}, segment_id={segment_id}): {e}"
         ) from e
     if not isinstance(data, dict):
+        logger.error(
+            "[RAILWAY_GEMINI_VEO_PROXY_FAILED] project_id=%s segment_id=%s status_code=%s "
+            "error_code=%s error_message=%s request_id=%s elapsed_seconds=%.3f body_prefix=%s",
+            project_id,
+            segment_id,
+            resp.status_code,
+            "PROXY_INVALID_JSON_TYPE",
+            type(data).__name__,
+            "",
+            elapsed,
+            _safe_body_prefix(body_text),
+        )
         raise ShortDramaVideoProviderError(
             f"Railway Gemini Veo video proxy invalid response type "
             f"(project_id={project_id}, segment_id={segment_id})"
@@ -124,9 +187,20 @@ def request_railway_gemini_veo_video_generation(
 
     request_id = str(data.get("request_id") or "")
     video_url = (data.get("video_url") or "").strip() if isinstance(data.get("video_url"), str) else ""
+    gemini_video_uri = (
+        str(data.get("gemini_video_uri") or "").strip()
+        if isinstance(data.get("gemini_video_uri"), str)
+        else ""
+    )
+    operation_name = (
+        str(data.get("operation_name") or data.get("operation") or "").strip()
+        if isinstance(data.get("operation_name") or data.get("operation"), str)
+        else ""
+    )
     logger.info(
         "[RAILWAY_GEMINI_VEO_PROXY_RESPONSE] project_id=%s segment_id=%s ok=%s provider=%s model=%s "
-        "request_id=%s has_video_url=%s storage=%s r2_key=%s",
+        "request_id=%s has_video_url=%s storage=%s r2_key=%s has_gemini_video_uri=%s "
+        "operation_name=%s elapsed_seconds=%.3f body_chars=%s",
         project_id,
         segment_id,
         bool(data.get("ok")),
@@ -136,16 +210,44 @@ def request_railway_gemini_veo_video_generation(
         bool(video_url),
         data.get("storage"),
         data.get("r2_key"),
+        bool(gemini_video_uri),
+        operation_name,
+        elapsed,
+        len(body_text),
     )
 
     if not bool(data.get("ok")):
         error_code = str(data.get("error_code") or "GEMINI_VEO_VIDEO_GENERATION_FAILED")
         error_message = str(data.get("error_message") or "Railway Gemini Veo proxy reported failure")
+        logger.error(
+            "[RAILWAY_GEMINI_VEO_PROXY_FAILED] project_id=%s segment_id=%s status_code=%s "
+            "error_code=%s error_message=%s request_id=%s elapsed_seconds=%.3f body_prefix=%s",
+            project_id,
+            segment_id,
+            resp.status_code,
+            error_code,
+            error_message,
+            request_id,
+            elapsed,
+            _safe_body_prefix(body_text),
+        )
         raise ShortDramaVideoProviderError(
             f"Railway Gemini Veo video proxy failed ({error_code}): {error_message} "
             f"(project_id={project_id}, segment_id={segment_id}, request_id={request_id})"
         )
     if not video_url:
+        logger.error(
+            "[RAILWAY_GEMINI_VEO_PROXY_FAILED] project_id=%s segment_id=%s status_code=%s "
+            "error_code=%s error_message=%s request_id=%s elapsed_seconds=%.3f body_prefix=%s",
+            project_id,
+            segment_id,
+            resp.status_code,
+            "PROXY_MISSING_VIDEO_URL",
+            "Railway Gemini Veo proxy ok=true but video_url missing",
+            request_id,
+            elapsed,
+            _safe_body_prefix(body_text),
+        )
         raise ShortDramaVideoProviderError(
             f"Railway Gemini Veo video proxy ok=true but video_url missing "
             f"(project_id={project_id}, segment_id={segment_id}, request_id={request_id})"
