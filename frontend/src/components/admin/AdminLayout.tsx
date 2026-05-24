@@ -1,6 +1,6 @@
 import { NavLink, Outlet, useLocation } from 'react-router-dom';
 import { useAuth } from '../../contexts/AuthContext';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { AdminLocaleProvider, useAdminLocale } from '../../contexts/AdminLocaleContext';
 
 const nav = [
@@ -12,6 +12,13 @@ const nav = [
   { to: '/admin/logs', key: 'adminLogs', icon: 'ri-shield-check-line' },
   { to: '/admin/model-config', key: 'modelConfig', icon: 'ri-robot-2-line' },
   { to: '/admin/settings', key: 'settings', icon: 'ri-settings-3-line' },
+];
+
+const mobileNavGroups = [
+  { label: '常用', items: nav.slice(0, 4) },
+  { label: '财务', items: nav.slice(4, 5) },
+  { label: '审计', items: nav.slice(5, 6) },
+  { label: '系统', items: nav.slice(6) },
 ];
 
 function titleKeyFromPath(pathname: string): string {
@@ -32,6 +39,25 @@ function AdminLayoutInner() {
   const { locale, toggleLocale, t } = useAdminLocale();
   const title = t(titleKeyFromPath(location.pathname));
   const [timeRange, setTimeRange] = useState('Today');
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+
+  useEffect(() => {
+    setMobileMenuOpen(false);
+  }, [location.pathname]);
+
+  useEffect(() => {
+    if (!mobileMenuOpen) return;
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    return () => {
+      document.body.style.overflow = previousOverflow;
+    };
+  }, [mobileMenuOpen]);
+
+  const handleLogout = () => {
+    logout();
+    window.location.href = '/';
+  };
 
   return (
     <div className="min-h-screen bg-gray-50">
@@ -63,14 +89,7 @@ function AdminLayoutInner() {
         </nav>
         <div className="border-t border-slate-700/50 px-3 py-3 text-xs text-slate-400">
           <div className="truncate text-sm text-slate-200">{user?.email}</div>
-          <button
-            type="button"
-            onClick={() => {
-              logout();
-              window.location.href = '/';
-            }}
-            className="mt-3 w-full rounded-lg border border-slate-600 py-2 text-xs font-medium text-slate-200 hover:bg-slate-800"
-          >
+          <button type="button" onClick={handleLogout} className="mt-3 w-full rounded-lg border border-slate-600 py-2 text-xs font-medium text-slate-200 hover:bg-slate-800">
             {t('logout')}
           </button>
         </div>
@@ -79,9 +98,14 @@ function AdminLayoutInner() {
       <div className="min-h-screen lg:ml-56">
         <header className="sticky top-0 z-40 flex h-14 items-center justify-between border-b border-gray-200 bg-white px-3 sm:px-4 lg:px-5">
           <div className="flex min-w-0 items-center gap-2">
-            <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-slate-900 text-white lg:hidden">
-              <i className="ri-film-line text-sm" />
-            </div>
+            <button
+              type="button"
+              onClick={() => setMobileMenuOpen(true)}
+              className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-slate-900 text-white lg:hidden"
+              aria-label="打开后台导航"
+            >
+              <i className="ri-menu-2-line text-lg" />
+            </button>
             <div className="min-w-0">
               <p className="hidden text-[10px] font-semibold uppercase tracking-[0.14em] text-gray-400 sm:block lg:hidden">Admin</p>
               <h1 className="truncate text-base font-semibold text-gray-900">{title}</h1>
@@ -120,30 +144,82 @@ function AdminLayoutInner() {
             </div>
           </div>
         </header>
-        <main className="p-3 pb-24 sm:p-4 sm:pb-24 lg:p-5">
+        <main className="p-3 pb-5 sm:p-4 sm:pb-6 lg:p-5">
           <Outlet />
         </main>
       </div>
 
-      <nav className="fixed bottom-0 left-0 right-0 z-50 border-t border-gray-200 bg-white/95 px-2 pb-[calc(env(safe-area-inset-bottom)+8px)] pt-2 shadow-[0_-12px_30px_rgba(15,23,42,0.10)] backdrop-blur lg:hidden">
-        <div className="flex gap-1 overflow-x-auto">
-          {nav.map((item) => (
-            <NavLink
-              key={item.to}
-              to={item.to}
-              end={item.end}
-              className={({ isActive }) =>
-                `flex min-w-[74px] flex-col items-center justify-center rounded-xl px-2 py-2 text-[10px] font-semibold transition ${
-                  isActive ? 'bg-slate-900 text-white' : 'text-gray-500 hover:bg-gray-100 hover:text-gray-900'
-                }`
-              }
+      <div className={`fixed inset-0 z-[70] lg:hidden ${mobileMenuOpen ? 'pointer-events-auto' : 'pointer-events-none'}`}>
+        <button
+          type="button"
+          className={`absolute inset-0 bg-slate-950/45 transition-opacity ${mobileMenuOpen ? 'opacity-100' : 'opacity-0'}`}
+          aria-label="关闭后台导航"
+          onClick={() => setMobileMenuOpen(false)}
+        />
+        <aside
+          className={`absolute left-0 top-0 flex h-full w-[82vw] max-w-[320px] flex-col bg-slate-950 text-white shadow-2xl transition-transform duration-200 ${
+            mobileMenuOpen ? 'translate-x-0' : '-translate-x-full'
+          }`}
+        >
+          <div className="flex h-14 items-center justify-between border-b border-white/10 px-4">
+            <div className="flex min-w-0 items-center gap-3">
+              <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-indigo-600">
+                <i className="ri-film-line text-sm text-white" />
+              </div>
+              <div className="min-w-0">
+                <p className="truncate text-sm font-semibold tracking-tight">Vibe Clip Admin</p>
+                <p className="mt-0.5 truncate text-[11px] text-slate-400">{user?.email || t('admin')}</p>
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={() => setMobileMenuOpen(false)}
+              className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-slate-400 hover:bg-white/10 hover:text-white"
+              aria-label="关闭后台导航"
             >
-              <i className={`${item.icon} text-[18px]`} />
-              <span className="mt-1 max-w-[68px] truncate">{t(item.key)}</span>
-            </NavLink>
-          ))}
-        </div>
-      </nav>
+              <i className="ri-close-line text-xl" />
+            </button>
+          </div>
+
+          <nav className="flex-1 overflow-y-auto px-3 py-4">
+            {mobileNavGroups.map((group) => (
+              <div key={group.label} className="mb-5 last:mb-0">
+                <p className="mb-2 px-2 text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-500">{group.label}</p>
+                <div className="space-y-1">
+                  {group.items.map((item) => (
+                    <NavLink
+                      key={item.to}
+                      to={item.to}
+                      end={item.end}
+                      className={({ isActive }) =>
+                        `flex items-center rounded-xl px-3 py-3 text-sm font-medium transition ${
+                          isActive ? 'bg-indigo-600 text-white' : 'text-slate-300 hover:bg-white/10 hover:text-white'
+                        }`
+                      }
+                    >
+                      <span className="flex h-5 w-5 items-center justify-center">
+                        <i className={`${item.icon} text-lg`} />
+                      </span>
+                      <span className="ml-3">{t(item.key)}</span>
+                    </NavLink>
+                  ))}
+                </div>
+              </div>
+            ))}
+          </nav>
+
+          <div className="border-t border-white/10 px-4 pb-[calc(env(safe-area-inset-bottom)+14px)] pt-3">
+            <button
+              type="button"
+              onClick={handleLogout}
+              className="flex h-11 w-full items-center justify-center gap-2 rounded-xl border border-slate-700 text-sm font-semibold text-slate-200 hover:bg-white/10"
+            >
+              <i className="ri-logout-box-r-line text-base" />
+              {t('logout')}
+            </button>
+          </div>
+        </aside>
+      </div>
     </div>
   );
 }
