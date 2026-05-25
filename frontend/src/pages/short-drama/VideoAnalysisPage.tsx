@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import type { ReactNode } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { Navbar } from '@/components/Navbar';
 import { useAuth } from '@/contexts/AuthContext';
@@ -22,7 +23,7 @@ const SECTIONS: { key: SectionKey; label: string; desc: string; icon: string }[]
   { key: 'characters', label: '人物设定', desc: '人物身份、动作与情绪', icon: 'ri-user-voice-line' },
   { key: 'product_presentation', label: '产品呈现', desc: '产品出现和展示方式', icon: 'ri-box-3-line' },
   { key: 'shot_breakdown', label: '分镜拆解', desc: '逐镜头拆解拍摄要点', icon: 'ri-film-line' },
-  { key: 'video_prompt', label: '视频 PMT', desc: '可复制的视频生成提示词', icon: 'ri-sparkling-line' },
+  { key: 'video_prompt', label: '分镜 PMT', desc: '逐段复刻生成提示词', icon: 'ri-sparkling-line' },
 ];
 
 const SUPPORTED_TYPES = ['video/mp4', 'video/quicktime', 'video/webm', 'video/mpeg', 'video/avi', 'video/x-flv', 'video/wmv', 'video/3gpp'];
@@ -64,6 +65,31 @@ function textify(value: unknown): string {
   return String(value);
 }
 
+function firstText(data: Record<string, unknown> | null | undefined, keys: string[]): string {
+  if (!data) return '';
+  for (const key of keys) {
+    const text = textify(data[key]).trim();
+    if (text) return text;
+  }
+  return '';
+}
+
+function asRecordArray(value: unknown): Record<string, unknown>[] {
+  if (!Array.isArray(value)) return [];
+  return value.filter(isRecord);
+}
+
+function visibleEntries(data: Record<string, unknown>, exclude: string[] = []): [string, unknown][] {
+  const blocked = new Set(exclude);
+  return Object.entries(data).filter(([key, value]) => {
+    if (blocked.has(key)) return false;
+    if (value == null || value === '') return false;
+    if (Array.isArray(value) && value.length === 0) return false;
+    if (isRecord(value) && Object.keys(value).length === 0) return false;
+    return true;
+  });
+}
+
 function labelFor(key: string): string {
   const labels: Record<string, string> = {
     summary: '内容概述',
@@ -79,50 +105,371 @@ function labelFor(key: string): string {
     structure_type: '结构类型',
     is_marketing_structure: '是否营销结构',
     segments: '结构段落',
+    time_range: '时间段',
+    shot_id: '分镜编号',
+    visual: '画面内容',
+    action: '动作',
+    purpose: '片段作用',
+    recreate_notes: '复刻要点',
+    recreate_prompt: '复刻 PMT',
+    replaceable_parts: '可替换内容',
+    role: '人物身份',
+    appearance: '外观造型',
+    emotion_and_action: '情绪动作',
+    inference_notes: '判断依据',
+    product: '产品',
+    product_role: '产品角色',
+    appearance_timing: '出现时机',
+    presentation_method: '呈现方式',
+    selling_points: '卖点信息',
+    scene: '场景',
+    character: '人物',
+    shot_type: '景别',
+    subtitle_or_audio: '字幕/声音',
+    camera_movement: '运镜',
+    visual_content: '画面内容',
+    production_notes: '拍摄要点',
+    replication_notes: '复刻建议',
+    prompt: '生成 PMT',
+    continuity_note: '衔接说明',
+    video_recreation_overview: '复刻概览',
+    what_to_recreate: '复刻重点',
+    rhythm: '节奏',
+    replacement_strategy: '替换策略',
+    global_style_prompt: '全局风格',
+    style_bible: '风格设定',
+    global_negative_prompt: '全局负面词',
+    assembly_notes: '合成说明',
     notes: '说明',
     full_prompt: '完整 Prompt',
     short_prompt: '精简 Prompt',
     negative_prompt: 'Negative Prompt',
     style_keywords: '风格关键词',
   };
-  return labels[key] || key;
+  return labels[key] || key.replace(/_/g, ' ');
 }
 
-function ObjectBlock({ data }: { data: Record<string, unknown> }) {
+function HighlightPanel({ title, children }: { title: string; children: ReactNode }) {
   return (
-    <div className="space-y-3">
-      {Object.entries(data).map(([key, value]) => {
-        if (value == null || value === '' || (Array.isArray(value) && value.length === 0)) return null;
-        return (
-          <div key={key} className="rounded-lg border border-[#EAEAEA] bg-white p-4">
-            <div className="mb-2 text-[12px] font-bold text-[#6E6E73]">{labelFor(key)}</div>
-            <ValueBlock value={value} />
-          </div>
-        );
-      })}
+    <div className="rounded-xl border border-[#E5E5EA] bg-white p-5 shadow-[0_8px_24px_rgba(0,0,0,0.03)]">
+      <div className="mb-2 text-[12px] font-black text-[#6E6E73]">{title}</div>
+      <div className="text-[15px] leading-8 text-[#1D1D1F]">{children}</div>
     </div>
   );
 }
 
-function ValueBlock({ value }: { value: unknown }) {
+function FactGrid({ items }: { items: { label: string; value: unknown }[] }) {
+  const visible = items.map((item) => ({ ...item, text: textify(item.value).trim() })).filter((item) => item.text);
+  if (!visible.length) return null;
+  return (
+    <div className="grid gap-3 sm:grid-cols-2">
+      {visible.map((item) => (
+        <div key={item.label} className="rounded-xl bg-[#F5F6F8] px-4 py-3">
+          <div className="mb-1 text-[11px] font-black text-[#8E8E93]">{item.label}</div>
+          <div className="whitespace-pre-wrap text-[13px] leading-6 text-[#2C2C2E]">{item.text}</div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function DetailList({ value }: { value: unknown }) {
   if (Array.isArray(value)) {
     if (!value.length) return <p className="text-[13px] text-[#8E8E93]">暂无内容</p>;
     return (
       <div className="space-y-2">
         {value.map((item, index) => (
-          <div key={index} className="rounded-lg bg-[#F7F8FA] p-3 text-[13px] leading-relaxed text-[#333333]">
-            {isRecord(item) ? <ObjectBlock data={item} /> : <p className="whitespace-pre-wrap">{textify(item)}</p>}
+          <div key={index} className="rounded-lg bg-[#F5F6F8] px-4 py-3 text-[13px] leading-6 text-[#333333]">
+            {isRecord(item) ? <DetailList value={item} /> : <p className="whitespace-pre-wrap">{textify(item)}</p>}
           </div>
         ))}
       </div>
     );
   }
-  if (isRecord(value)) return <ObjectBlock data={value} />;
+  if (isRecord(value)) {
+    return (
+      <div className="space-y-3">
+        {visibleEntries(value).map(([key, inner]) => (
+          <div key={key}>
+            <div className="mb-1 text-[12px] font-black text-[#6E6E73]">{labelFor(key)}</div>
+            <DetailList value={inner} />
+          </div>
+        ))}
+      </div>
+    );
+  }
   return <p className="whitespace-pre-wrap text-[13px] leading-relaxed text-[#333333]">{textify(value) || '暂无内容'}</p>;
+}
+
+function TagList({ value }: { value: unknown }) {
+  const tags = Array.isArray(value) ? value.map(textify).filter(Boolean) : textify(value).split(/[、,\n]/).map((x) => x.trim()).filter(Boolean);
+  if (!tags.length) return null;
+  return (
+    <div className="flex flex-wrap gap-2">
+      {tags.map((tag) => (
+        <span key={tag} className="rounded-full bg-[#EFEFF2] px-3 py-1.5 text-[12px] font-bold text-[#3A3A3C]">
+          {tag}
+        </span>
+      ))}
+    </div>
+  );
+}
+
+function SectionFallbackView({ value }: { value: unknown }) {
+  if (!value) return <p className="text-[13px] text-[#8E8E93]">该模块暂无解析内容。</p>;
+  if (isRecord(value) && visibleEntries(value).length === 0) return null;
+  return <DetailList value={value} />;
+}
+
+function ScriptReadingView({ value }: { value: unknown }) {
+  if (!isRecord(value)) return <SectionFallbackView value={value} />;
+  const summary = firstText(value, ['summary', 'content_summary', 'overview']);
+  return (
+    <div className="space-y-4">
+      {summary && <HighlightPanel title="内容概述">{summary}</HighlightPanel>}
+      <FactGrid
+        items={[
+          { label: '核心表达', value: value.core_message },
+          { label: '情绪氛围', value: value.emotional_tone },
+          { label: '观众记忆点', value: value.audience_takeaway },
+          { label: '说明', value: value.notes },
+        ]}
+      />
+      <SectionFallbackView value={Object.fromEntries(visibleEntries(value, ['summary', 'content_summary', 'overview', 'core_message', 'emotional_tone', 'audience_takeaway', 'notes']))} />
+    </div>
+  );
+}
+
+function ShootingMethodView({ value }: { value: unknown }) {
+  if (!isRecord(value)) return <SectionFallbackView value={value} />;
+  const style = firstText(value, ['overall_style', 'style', 'summary']);
+  return (
+    <div className="space-y-4">
+      {style && <HighlightPanel title="整体拍法">{style}</HighlightPanel>}
+      <TagList value={value.style_keywords || value.keywords} />
+      <FactGrid
+        items={[
+          { label: '镜头语言', value: value.camera },
+          { label: '光线色彩', value: value.lighting },
+          { label: '构图', value: value.composition },
+          { label: '剪辑', value: value.editing },
+          { label: '声音字幕', value: value.sound },
+        ]}
+      />
+      <SectionFallbackView value={Object.fromEntries(visibleEntries(value, ['overall_style', 'style', 'summary', 'style_keywords', 'keywords', 'camera', 'lighting', 'composition', 'editing', 'sound']))} />
+    </div>
+  );
+}
+
+function ScriptStructureView({ value }: { value: unknown }) {
+  if (!isRecord(value)) return <SectionFallbackView value={value} />;
+  const segments = asRecordArray(value.segments);
+  return (
+    <div className="space-y-4">
+      <FactGrid items={[{ label: '结构类型', value: value.structure_type }, { label: '说明', value: value.notes }]} />
+      {segments.length > 0 && (
+        <div className="space-y-3">
+          {segments.map((item, index) => (
+            <div key={index} className="rounded-xl border border-[#E5E5EA] bg-white p-4">
+              <div className="mb-3 flex items-center gap-3">
+                <span className="rounded-full bg-[#1D1D1F] px-3 py-1 text-[11px] font-black text-white">{textify(item.time_range) || `段落 ${index + 1}`}</span>
+                <span className="text-[13px] font-black text-[#1D1D1F]">{textify(item.role || item.function || item.title) || '结构段落'}</span>
+              </div>
+              <DetailList value={Object.fromEntries(visibleEntries(item, ['time_range', 'role', 'function', 'title']))} />
+            </div>
+          ))}
+        </div>
+      )}
+      <SectionFallbackView value={Object.fromEntries(visibleEntries(value, ['structure_type', 'notes', 'segments']))} />
+    </div>
+  );
+}
+
+function CharactersView({ value }: { value: unknown }) {
+  const rows = asRecordArray(value);
+  if (!rows.length) return <SectionFallbackView value={value} />;
+  return (
+    <div className="space-y-3">
+      {rows.map((item, index) => (
+        <div key={index} className="rounded-xl border border-[#E5E5EA] bg-white p-4">
+          <div className="mb-3 flex items-center justify-between gap-3">
+            <h3 className="text-[15px] font-black text-[#1D1D1F]">{textify(item.role || item.name) || `人物 ${index + 1}`}</h3>
+            {textify(item.time_range) && <span className="rounded-full bg-[#F2F2F4] px-2.5 py-1 text-[11px] font-bold text-[#6E6E73]">{textify(item.time_range)}</span>}
+          </div>
+          <FactGrid
+            items={[
+              { label: '外观造型', value: item.appearance },
+              { label: '情绪动作', value: item.emotion_and_action || item.action },
+              { label: '判断依据', value: item.inference_notes || item.notes },
+            ]}
+          />
+          <SectionFallbackView value={Object.fromEntries(visibleEntries(item, ['role', 'name', 'time_range', 'appearance', 'emotion_and_action', 'action', 'inference_notes', 'notes']))} />
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function ProductPresentationView({ value }: { value: unknown }) {
+  const rows = asRecordArray(value);
+  if (!rows.length) return <SectionFallbackView value={value} />;
+  return (
+    <div className="space-y-3">
+      {rows.map((item, index) => (
+        <div key={index} className="rounded-xl border border-[#E5E5EA] bg-white p-4">
+          <div className="mb-3 flex flex-wrap items-center gap-2">
+            <span className="text-[15px] font-black">{textify(item.product || item.name) || `产品露出 ${index + 1}`}</span>
+            {textify(item.time_range) && <span className="rounded-full bg-[#F2F2F4] px-2.5 py-1 text-[11px] font-bold text-[#6E6E73]">{textify(item.time_range)}</span>}
+          </div>
+          <FactGrid
+            items={[
+              { label: '产品角色', value: item.product_role || item.role },
+              { label: '出现时机', value: item.appearance_timing || item.timing },
+              { label: '呈现方式', value: item.presentation_method || item.method },
+              { label: '卖点信息', value: item.selling_points },
+              { label: '场景关系', value: item.scene },
+            ]}
+          />
+          <SectionFallbackView value={Object.fromEntries(visibleEntries(item, ['product', 'name', 'time_range', 'product_role', 'role', 'appearance_timing', 'timing', 'presentation_method', 'method', 'selling_points', 'scene']))} />
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function ShotBreakdownView({ value }: { value: unknown }) {
+  const rows = asRecordArray(value);
+  if (!rows.length) return <SectionFallbackView value={value} />;
+  return (
+    <div className="space-y-3">
+      {rows.map((item, index) => (
+        <div key={index} className="rounded-xl border border-[#E5E5EA] bg-white p-4">
+          <div className="mb-3 flex flex-wrap items-center gap-2">
+            <span className="rounded-full bg-[#1D1D1F] px-3 py-1 text-[11px] font-black text-white">{textify(item.time_range) || `镜头 ${index + 1}`}</span>
+            <span className="text-[13px] font-black text-[#1D1D1F]">{textify(item.shot_type || item.scene || item.title) || '镜头拆解'}</span>
+          </div>
+          <FactGrid
+            items={[
+              { label: '画面内容', value: item.visual_content || item.visual || item.content },
+              { label: '场景', value: item.scene },
+              { label: '人物', value: item.character },
+              { label: '产品', value: item.product },
+              { label: '动作', value: item.action },
+              { label: '景别', value: item.shot_type },
+              { label: '运镜', value: item.camera_movement || item.camera },
+              { label: '光线色彩', value: item.lighting },
+              { label: '构图', value: item.composition },
+              { label: '字幕/声音', value: item.subtitle_or_audio },
+              { label: '片段作用', value: item.purpose },
+              { label: '复刻 PMT', value: item.recreate_prompt },
+              { label: '拍摄要点', value: item.production_notes || item.recreate_notes || item.notes },
+              { label: '复刻建议', value: item.replication_notes },
+            ]}
+          />
+          <SectionFallbackView value={Object.fromEntries(visibleEntries(item, ['time_range', 'scene', 'title', 'visual_content', 'visual', 'content', 'character', 'product', 'action', 'shot_type', 'camera_movement', 'camera', 'lighting', 'composition', 'subtitle_or_audio', 'purpose', 'recreate_prompt', 'production_notes', 'recreate_notes', 'notes', 'replication_notes']))} />
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function VideoPromptView({ value }: { value: unknown }) {
+  if (!isRecord(value)) return <SectionFallbackView value={value} />;
+  const segmentPrompts = asRecordArray(value.segment_prompts);
+  const globalStyle = isRecord(value.global_style_prompt) ? value.global_style_prompt : null;
+  const legacyPrompt = isRecord(value.video_prompt) ? value.video_prompt : value;
+  const full = firstText(legacyPrompt, ['full_prompt', 'prompt', 'video_prompt']);
+  return (
+    <div className="space-y-4">
+      {segmentPrompts.length > 0 && (
+        <div className="space-y-3">
+          {segmentPrompts.map((item, index) => {
+            const promptText = firstText(item, ['prompt', 'recreate_prompt', 'full_prompt']);
+            return (
+              <div key={`${textify(item.shot_id) || index}`} className="rounded-xl border border-[#E5E5EA] bg-white p-4">
+                <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="rounded-full bg-[#1D1D1F] px-3 py-1 text-[11px] font-black text-white">{textify(item.time_range) || `分镜 ${index + 1}`}</span>
+                    <span className="text-[13px] font-black text-[#1D1D1F]">{textify(item.shot_id) || `S${String(index + 1).padStart(2, '0')}`}</span>
+                  </div>
+                  {promptText && (
+                    <button
+                      type="button"
+                      onClick={() => void navigator.clipboard.writeText(promptText)}
+                      className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-[#E1E1E6] bg-white px-3 text-[11px] font-bold text-[#333333]"
+                    >
+                      <i className={ri('ri-file-copy-line', 'text-[13px]')} aria-hidden />
+                      复制本段
+                    </button>
+                  )}
+                </div>
+                {promptText && (
+                  <div className="rounded-xl bg-[#1D1D1F] p-4 text-white">
+                    <div className="mb-2 text-[11px] font-black text-white/58">单段生成 PMT</div>
+                    <p className="whitespace-pre-wrap text-[13px] leading-7 text-white/88">{promptText}</p>
+                  </div>
+                )}
+                <div className="mt-3">
+                  <FactGrid
+                    items={[
+                      { label: '负面词', value: item.negative_prompt },
+                      { label: '衔接说明', value: item.continuity_note },
+                    ]}
+                  />
+                </div>
+                <SectionFallbackView value={Object.fromEntries(visibleEntries(item, ['shot_id', 'time_range', 'prompt', 'recreate_prompt', 'full_prompt', 'negative_prompt', 'continuity_note']))} />
+              </div>
+            );
+          })}
+        </div>
+      )}
+      {globalStyle && (
+        <HighlightPanel title="全局风格设定">
+          <DetailList value={globalStyle} />
+        </HighlightPanel>
+      )}
+      {!segmentPrompts.length && full && (
+        <div className="rounded-xl bg-[#1D1D1F] p-5 text-white">
+          <div className="mb-3 text-[12px] font-black text-white/58">完整提示词</div>
+          <p className="whitespace-pre-wrap text-[13px] leading-7 text-white/88">{full}</p>
+        </div>
+      )}
+      {!segmentPrompts.length && (
+        <FactGrid
+          items={[
+            { label: '精简 Prompt', value: legacyPrompt.short_prompt },
+            { label: 'Negative Prompt', value: legacyPrompt.negative_prompt },
+            { label: '风格关键词', value: legacyPrompt.style_keywords },
+          ]}
+        />
+      )}
+      <SectionFallbackView value={Object.fromEntries(visibleEntries(value, ['segment_prompts', 'global_style_prompt', 'video_prompt', 'full_prompt', 'prompt', 'short_prompt', 'negative_prompt', 'style_keywords']))} />
+    </div>
+  );
+}
+
+function AnalysisSectionView({ section, value }: { section: SectionKey; value: unknown }) {
+  if (section === 'script_reading') return <ScriptReadingView value={value} />;
+  if (section === 'shooting_method') return <ShootingMethodView value={value} />;
+  if (section === 'actual_script_structure') return <ScriptStructureView value={value} />;
+  if (section === 'characters') return <CharactersView value={value} />;
+  if (section === 'product_presentation') return <ProductPresentationView value={value} />;
+  if (section === 'shot_breakdown') return <ShotBreakdownView value={value} />;
+  if (section === 'video_prompt') return <VideoPromptView value={value} />;
+  return <SectionFallbackView value={value} />;
 }
 
 function sectionValue(analysis: ReferenceVideoAnalysisJson | null | undefined, key: SectionKey): unknown {
   if (!analysis) return null;
+  if (key === 'video_prompt') {
+    if (Array.isArray(analysis.segment_prompts) || isRecord(analysis.global_style_prompt)) {
+      return {
+        segment_prompts: analysis.segment_prompts,
+        global_style_prompt: analysis.global_style_prompt,
+        video_prompt: analysis.video_prompt,
+      };
+    }
+  }
   return analysis[key];
 }
 
@@ -142,6 +489,7 @@ export function ShortDramaVideoAnalysisPage() {
   const [error, setError] = useState<string | null>(null);
   const [copied, setCopied] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const contentScrollRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     const rawId = Number(searchParams.get('video_id') || 0);
@@ -162,9 +510,14 @@ export function ShortDramaVideoAnalysisPage() {
     };
   }, [searchParams]);
 
+  useEffect(() => {
+    contentScrollRef.current?.scrollTo({ top: 0, behavior: 'smooth' });
+  }, [active]);
+
   const analysis = video?.analysis_json || null;
   const canAnalyze = video != null && !uploading && !analyzing;
   const currentValue = sectionValue(analysis, active);
+  const currentSection = SECTIONS.find((s) => s.key === active) || SECTIONS[0];
   const statusText = uploading
     ? '上传中'
     : analyzing || video?.analysis_status === 'processing'
@@ -234,18 +587,19 @@ export function ShortDramaVideoAnalysisPage() {
   return (
     <div className="min-h-screen bg-[#F7F8FA] text-[#1D1D1F]">
       <Navbar />
-      <main className="mx-auto max-w-[1440px] px-5 pb-8 pt-20 lg:px-8">
-        <div className="mb-5 flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
+      <main className="mx-auto flex h-screen max-w-[1440px] flex-col px-5 pb-5 pt-20 lg:px-8">
+        <div className="mb-4 shrink-0">
+          <div className="flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
           <div>
             <Link to="/" className="mb-3 inline-flex items-center gap-1 text-[12px] font-semibold text-[#6E6E73]">
               <i className={ri('ri-arrow-left-line', 'text-[14px]')} aria-hidden />
               返回首页
             </Link>
-            <h1 style={sdFontHeading} className="text-[30px] font-black leading-tight md:text-[42px]">
+            <h1 style={sdFontHeading} className="text-[28px] font-black leading-tight md:text-[40px]">
               视频解构
             </h1>
             <p className="mt-2 text-[13px] text-[#6E6E73]">
-              上传参考视频，拆出它真实的剧本结构、拍摄方法、人物、产品露出、分镜和视频 PMT。
+              上传参考视频，拆出它真实的剧本结构、拍摄方法、人物、产品露出、分镜和分镜 PMT。
             </p>
           </div>
           <div className="flex items-center gap-2">
@@ -268,6 +622,7 @@ export function ShortDramaVideoAnalysisPage() {
               </button>
             )}
           </div>
+          </div>
         </div>
 
         <input
@@ -284,8 +639,8 @@ export function ShortDramaVideoAnalysisPage() {
           </div>
         )}
 
-        <div className="grid min-h-[calc(100vh-190px)] gap-5 lg:grid-cols-[minmax(420px,0.95fr)_minmax(520px,1.05fr)]">
-          <section className="flex min-h-[520px] flex-col overflow-hidden rounded-xl border border-[#E5E5EA] bg-[#111111]">
+        <div className="grid min-h-0 flex-1 gap-5 lg:grid-cols-[minmax(420px,0.92fr)_minmax(560px,1.08fr)]">
+          <section className="flex min-h-0 flex-col overflow-hidden rounded-xl border border-[#E5E5EA] bg-[#111111]">
             <div className="flex h-11 items-center justify-between border-b border-white/10 px-4 text-white">
               <div className="flex items-center gap-2 text-[13px] font-bold">
                 <i className={ri('ri-video-line', 'text-[16px]')} aria-hidden />
@@ -293,9 +648,9 @@ export function ShortDramaVideoAnalysisPage() {
               </div>
               <span className="text-[12px] text-white/58">{statusText}</span>
             </div>
-            <div className="relative flex flex-1 items-center justify-center bg-black">
+            <div className="relative flex min-h-0 flex-1 items-center justify-center bg-black">
               {localPreviewUrl || video?.public_url ? (
-                <video src={localPreviewUrl || video?.public_url} controls className="h-full max-h-[calc(100vh-270px)] w-full object-contain" />
+                <video src={localPreviewUrl || video?.public_url} controls className="h-full w-full object-contain" />
               ) : (
                 <button
                   type="button"
@@ -325,8 +680,8 @@ export function ShortDramaVideoAnalysisPage() {
             )}
           </section>
 
-          <section className="grid min-h-[520px] overflow-hidden rounded-xl border border-[#E5E5EA] bg-white lg:grid-cols-[196px_minmax(0,1fr)]">
-            <aside className="border-b border-[#EAEAEA] bg-[#FAFAFA] p-3 lg:border-b-0 lg:border-r">
+          <section className="grid min-h-0 overflow-hidden rounded-xl border border-[#E5E5EA] bg-white lg:grid-cols-[196px_minmax(0,1fr)]">
+            <aside className="min-h-0 overflow-y-auto border-b border-[#EAEAEA] bg-[#FAFAFA] p-3 lg:border-b-0 lg:border-r">
               <div className="mb-3 px-2 text-[11px] font-bold uppercase tracking-wider text-[#8E8E93]">解析内容</div>
               <div className="space-y-1.5">
                 {SECTIONS.map((item) => {
@@ -353,12 +708,12 @@ export function ShortDramaVideoAnalysisPage() {
             </aside>
 
             <div className="flex min-h-0 flex-col">
-              <div className="flex h-14 shrink-0 items-center justify-between border-b border-[#EAEAEA] px-5">
+              <div className="flex h-16 shrink-0 items-center justify-between border-b border-[#EAEAEA] bg-white px-5">
                 <div>
                   <h2 className="text-[16px] font-black" style={sdFontHeading}>
-                    {SECTIONS.find((s) => s.key === active)?.label}
+                    {currentSection.label}
                   </h2>
-                  <p className="text-[11px] text-[#8E8E93]">{SECTIONS.find((s) => s.key === active)?.desc}</p>
+                  <p className="text-[11px] text-[#8E8E93]">{currentSection.desc}</p>
                 </div>
                 <button
                   type="button"
@@ -370,7 +725,7 @@ export function ShortDramaVideoAnalysisPage() {
                   {copied === active ? '已复制' : '复制'}
                 </button>
               </div>
-              <div className="min-h-0 flex-1 overflow-y-auto p-5">
+              <div ref={contentScrollRef} className="min-h-0 flex-1 overflow-y-auto bg-[#F7F8FA] p-5">
                 {uploading ? (
                   <div className="flex h-full min-h-[360px] flex-col items-center justify-center text-center">
                     <i className={ri('ri-loader-4-line', 'animate-spin text-[28px] text-[#1D1D1F]')} aria-hidden />
@@ -394,7 +749,7 @@ export function ShortDramaVideoAnalysisPage() {
                     <p className="mt-2 text-[12px] text-[#8E8E93]">请稍候，解析结果很快就会展示在这里。</p>
                   </div>
                 ) : analysis ? (
-                  currentValue ? <ValueBlock value={currentValue} /> : <p className="text-[13px] text-[#8E8E93]">该模块暂无解析内容。</p>
+                  currentValue ? <AnalysisSectionView section={active} value={currentValue} /> : <p className="text-[13px] text-[#8E8E93]">该模块暂无解析内容。</p>
                 ) : (
                   <div className="flex h-full min-h-[360px] flex-col items-center justify-center text-center">
                     <p className="text-[14px] font-bold">{video.analysis_status === 'failed' ? '解析失败' : '等待解析'}</p>

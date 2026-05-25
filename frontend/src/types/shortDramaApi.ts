@@ -690,12 +690,15 @@ export type CreateAssetFromImageBody = {
 };
 
 export type ReferenceVideoAnalysisJson = {
+  video_recreation_overview?: Record<string, unknown>;
   script_reading?: Record<string, unknown>;
   shooting_method?: Record<string, unknown>;
   actual_script_structure?: Record<string, unknown>;
   characters?: Array<Record<string, unknown>>;
   product_presentation?: Array<Record<string, unknown>>;
   shot_breakdown?: Array<Record<string, unknown>>;
+  segment_prompts?: Array<Record<string, unknown>>;
+  global_style_prompt?: Record<string, unknown>;
   video_prompt?: Record<string, unknown>;
   uncertainty_notes?: string[];
   copyright_safety_notes?: string[];
