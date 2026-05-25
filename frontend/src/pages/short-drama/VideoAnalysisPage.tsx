@@ -18,7 +18,7 @@ type SectionKey =
 const SECTIONS: { key: SectionKey; label: string; desc: string; icon: string }[] = [
   { key: 'script_reading', label: '剧本解读', desc: '这个视频在讲什么', icon: 'ri-file-text-line' },
   { key: 'shooting_method', label: '拍摄方法', desc: '视频是怎么拍的', icon: 'ri-camera-lens-line' },
-  { key: 'actual_script_structure', label: '剧本结构', desc: '按原视频真实结构拆', icon: 'ri-node-tree' },
+  { key: 'actual_script_structure', label: '剧本结构', desc: '视频内容的叙事层次', icon: 'ri-node-tree' },
   { key: 'characters', label: '人物设定', desc: '人物身份、动作与情绪', icon: 'ri-user-voice-line' },
   { key: 'product_presentation', label: '产品呈现', desc: '产品出现和展示方式', icon: 'ri-box-3-line' },
   { key: 'shot_breakdown', label: '分镜拆解', desc: '逐镜头拆解拍摄要点', icon: 'ri-film-line' },
@@ -299,7 +299,7 @@ export function ShortDramaVideoAnalysisPage() {
               {(uploading || analyzing) && (
                 <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/68 text-white backdrop-blur-sm">
                   <i className={ri('ri-loader-4-line', 'animate-spin text-[28px]')} aria-hidden />
-                  <p className="mt-3 text-[13px] font-semibold">{uploading ? '正在上传到 R2…' : 'AI 正在解构视频…'}</p>
+                  <p className="mt-3 text-[13px] font-semibold">{uploading ? '正在上传视频…' : '正在解析视频…'}</p>
                 </div>
               )}
             </div>
@@ -374,7 +374,7 @@ export function ShortDramaVideoAnalysisPage() {
                   <div className="flex h-full min-h-[360px] flex-col items-center justify-center text-center">
                     <i className={ri('ri-loader-4-line', 'animate-spin text-[28px] text-[#1D1D1F]')} aria-hidden />
                     <p className="mt-4 text-[14px] font-bold">正在解析这个视频</p>
-                    <p className="mt-2 text-[12px] text-[#8E8E93]">会按原视频真实结构拆解，不套固定营销模板。</p>
+                    <p className="mt-2 text-[12px] text-[#8E8E93]">请稍候，解析结果很快就会展示在这里。</p>
                   </div>
                 ) : analysis ? (
                   currentValue ? <ValueBlock value={currentValue} /> : <p className="text-[13px] text-[#8E8E93]">该模块暂无解析内容。</p>
