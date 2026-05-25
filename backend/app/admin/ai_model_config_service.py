@@ -27,8 +27,8 @@ class ActiveAIStageConfig:
 def seed_default_ai_model_configs(db: Session) -> None:
     """Insert idempotent AI model/prompt/stage defaults.
 
-    This is intentionally side-effect-light: it creates missing rows only and does
-    not overwrite administrator edits.
+    This is intentionally side-effect-light: it creates missing rows and refreshes
+    seeded defaults only. It does not overwrite administrator-created prompts.
     """
     model_by_key: dict[tuple[str, str, str], AIModelCatalog] = {}
     for row in DEFAULT_AI_MODELS:
@@ -82,6 +82,15 @@ def seed_default_ai_model_configs(db: Session) -> None:
             )
             db.add(existing)
             db.flush()
+        else:
+            meta = existing.metadata_json if isinstance(existing.metadata_json, dict) else {}
+            if meta.get("seeded") is True:
+                existing.name = row["name"]
+                existing.system_prompt = row["system_prompt"]
+                existing.user_prompt_template = row.get("user_prompt_template")
+                existing.variables_schema = row.get("variables_schema")
+                existing.metadata_json = {**meta, "seeded": True}
+                db.add(existing)
         prompt_by_stage[row["stage_key"]] = existing
 
     default_model_for_stage = {

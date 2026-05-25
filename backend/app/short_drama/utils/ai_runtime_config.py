@@ -31,10 +31,12 @@ class AIRuntimeConfig:
     stage_config: dict[str, Any] | None = None
 
 
-def _admin_prompt_is_runtime_override(prompt: AIPromptTemplate | None) -> bool:
+def _admin_prompt_is_runtime_override(stage_key: str, prompt: AIPromptTemplate | None) -> bool:
     if prompt is None:
         return False
     meta = prompt.metadata_json if isinstance(prompt.metadata_json, dict) else {}
+    if stage_key == STAGE_SCRIPT_IMPORT_PARSE:
+        return True
     # Seed prompts document the fields for the admin UI. They must not replace
     # the existing production prompts until an admin publishes a new version.
     return meta.get("seeded") is not True
@@ -90,7 +92,7 @@ def get_ai_runtime_config(stage_key: str) -> AIRuntimeConfig:
             if stage.active_prompt_template_id
             else None
         )
-        use_prompt = _admin_prompt_is_runtime_override(prompt)
+        use_prompt = _admin_prompt_is_runtime_override(stage_key, prompt)
         return AIRuntimeConfig(
             stage_key=stage_key,
             provider=(model.provider if model else None),

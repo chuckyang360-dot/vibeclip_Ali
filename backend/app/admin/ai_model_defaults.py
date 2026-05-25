@@ -214,6 +214,72 @@ DEFAULT_AI_MODELS: list[dict[str, Any]] = [
     },
 ]
 
+DEFAULT_SCRIPT_IMPORT_SYSTEM_PROMPT = """You parse a user-provided video script/prompt/template into executable short-video production units.
+Output ONLY one JSON object. No markdown, no code fences, no commentary.
+
+The user input can be a prompt template, full script, storyboard, outline, or mixed notes.
+Preserve the user's own structure and strong constraints. Improve missing operational detail only when needed for video generation.
+Do not invent product claims, certifications, prices, or facts.
+Do not impose a fixed number of segments or shots. If the input has explicit Segment/Scene/Shot labels, keep that natural structure.
+If the input does not have explicit labels, split only on natural production boundaries inferred from the content.
+The production_prompt for each segment is the exact prompt that will be sent to the video model unless the user edits it later.
+It must preserve the user script's scene, action, style, important constraints, negative constraints, and any relevant voiceover/subtitle reference.
+
+Required JSON shape:
+{
+  "analysis": {
+    "input_type": "full_script | storyboard | prompt_template | outline | mixed | invalid",
+    "confidence": 0.0,
+    "detected_language": "string",
+    "structure_basis": "string",
+    "warnings": ["string"],
+    "missing_fields": ["string"],
+    "global_style": "string",
+    "constraints": ["string"],
+    "summary": "string"
+  },
+  "segments": [
+    {
+      "segment_id": "1",
+      "source_label": "string",
+      "title": "string",
+      "goal": "string",
+      "duration_limit": 6,
+      "production_prompt": "complete video generation prompt for this segment",
+      "source_excerpt": "the source text this segment came from",
+      "negative_prompt": "string",
+      "voiceover_reference": "string",
+      "subtitle_reference": "string",
+      "shots": [
+        {
+          "shot_id": "shot_1",
+          "shot_role": "string",
+          "visual_action": "string",
+          "action_description": "string",
+          "scene_description": "string",
+          "camera_description": "string",
+          "spoken_text": "string",
+          "voiceover_text": "string",
+          "subtitle_text": "string",
+          "audio_intent": "string",
+          "duration_seconds": 6,
+          "video_prompt": "complete visual generation prompt for this shot/segment",
+          "must_show": ["string"],
+          "must_avoid": ["string"]
+        }
+      ]
+    }
+  ]
+}
+
+Rules:
+- Segment and shot counts must come from the uploaded script itself, not from an artificial target.
+- If a user-provided segment is already a complete generation prompt, keep it as one segment and put it in production_prompt.
+- If a segment naturally contains multiple shots, you may include shots for inspection, but do not let shots replace production_prompt.
+- If dialogue/voiceover/subtitles are absent, use empty strings.
+- Keep JSON keys in English. Use the user's language for user-facing values.
+"""
+
 
 DEFAULT_AI_PROMPTS: list[dict[str, Any]] = [
     {
@@ -247,13 +313,7 @@ DEFAULT_AI_PROMPTS: list[dict[str, Any]] = [
     {
         "stage_key": "script_import_parse",
         "name": "剧本导入解析默认 Prompt",
-        "system_prompt": """Parse the uploaded script, storyboard, or prompt template into executable video production segments.
-Preserve the user's own structure and constraints. Do not impose a fixed number of segments or shots.
-If the input has explicit Segment/Scene/Shot labels, keep that natural structure. If not, split only on natural production boundaries.
-For every segment, output production_prompt as the exact prompt that should be sent to the video generation model unless the user edits it later.
-production_prompt must preserve scene, action, visual style, important constraints, negative constraints, and relevant voiceover/subtitle references from the source.
-Shots may be included for inspection when they naturally exist, but they must not replace production_prompt.
-Output strict JSON only.""",
+        "system_prompt": DEFAULT_SCRIPT_IMPORT_SYSTEM_PROMPT,
         "user_prompt_template": "{script_import_payload}",
         "variables_schema": {"required": ["script_import_payload"], "optional": ["project_id", "file_name"]},
     },
