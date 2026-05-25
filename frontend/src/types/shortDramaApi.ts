@@ -531,6 +531,8 @@ export type UpdateSegmentShotBody = {
   segment_title?: string;
   segment_goal?: string;
   duration_limit?: number;
+  production_prompt?: string;
+  source_excerpt?: string;
   action_description?: string;
   dialogue?: string;
   spoken_text?: string;

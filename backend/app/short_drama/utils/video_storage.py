@@ -166,6 +166,33 @@ def is_short_drama_r2_video_url(public_url: str) -> bool:
     return bool(parsed.netloc) and _SHORT_DRAMA_R2_VIDEO_PATH_MARKER in path and path.lower().endswith(".mp4")
 
 
+def short_drama_r2_public_base_from_url(public_url: str | None) -> str | None:
+    u = (public_url or "").strip()
+    if not (u.startswith("http://") or u.startswith("https://")):
+        return None
+    parsed = urlparse(u)
+    path = parsed.path or ""
+    marker_index = path.find(_SHORT_DRAMA_R2_VIDEO_PATH_MARKER)
+    if marker_index < 0:
+        return None
+    return f"{parsed.scheme}://{parsed.netloc}{path[:marker_index]}".rstrip("/")
+
+
+def rewrite_short_drama_r2_video_base(public_url: str | None, public_base: str | None) -> str | None:
+    u = (public_url or "").strip()
+    base = (public_base or "").strip().rstrip("/")
+    if not u or not base:
+        return u or None
+    if not (u.startswith("http://") or u.startswith("https://")):
+        return u
+    parsed = urlparse(u)
+    path = parsed.path or ""
+    marker_index = path.find(_SHORT_DRAMA_R2_VIDEO_PATH_MARKER)
+    if marker_index < 0:
+        return u
+    return f"{base}{path[marker_index:]}"
+
+
 def is_short_drama_video_url(public_url: str) -> bool:
     return is_short_drama_static_video_url(public_url) or is_short_drama_r2_video_url(public_url)
 

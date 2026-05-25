@@ -123,6 +123,27 @@ def _public_video_url(u: str | None) -> str | None:
     return resolve_short_drama_video_public_url(u)
 
 
+def _rewrite_final_video_url_from_segments(final_url: str | None, seg_payload: list[dict]) -> str | None:
+    from ..utils.video_storage import rewrite_short_drama_r2_video_base, short_drama_r2_public_base_from_url
+
+    if not final_url:
+        return final_url
+    for row in seg_payload:
+        base = short_drama_r2_public_base_from_url(str(row.get("video_url") or ""))
+        if base:
+            rewritten = rewrite_short_drama_r2_video_base(final_url, base)
+            if rewritten and rewritten != final_url:
+                logger.warning(
+                    "[FINAL_VIDEO_PUBLIC_BASE_REWRITTEN_FOR_PIPELINE] original_url=%s rewritten_url=%s canonical_base=%s",
+                    final_url,
+                    rewritten,
+                    base,
+                )
+                return rewritten
+            return final_url
+    return final_url
+
+
 def _script_with_public_video_url(script: dict, video_url_public: str | None) -> dict:
     if not video_url_public or not isinstance(script, dict):
         return script
@@ -693,6 +714,7 @@ async def get_pipeline(project_id: int, lightweight: bool = Query(default=False)
 
         final_raw = latest_final_video_url(db, project_id)
         final_u = _public_video_url(final_raw)
+        final_u = _rewrite_final_video_url_from_segments(final_u, seg_payload)
         final_job = latest_final_render_job(db, project_id)
         if not lightweight:
             logger.info(

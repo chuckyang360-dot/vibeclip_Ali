@@ -69,6 +69,13 @@ def _render_template(template: str, values: dict[str, Any]) -> str:
     return out
 
 
+def _script_import_production_prompt(seg: SegmentScriptSchema) -> str:
+    meta = seg.meta if isinstance(seg.meta, dict) else {}
+    if not (meta.get("workflow_mode") == "script_import" or meta.get("assetless_video_generation")):
+        return ""
+    return str(getattr(seg, "production_prompt", "") or "").strip()
+
+
 def _apply_s4_runtime_prompt_config(
     *,
     base_prompt: str,
@@ -459,6 +466,33 @@ class RenderExecutorService:
                 resolved_character_assets=resolved_character_assets,
                 project_id=project_id,
             )
+            script_import_prompt = _script_import_production_prompt(seg)
+            if script_import_prompt:
+                plan.segment_video_prompt = script_import_prompt
+                plan.execution_input = {
+                    **(plan.execution_input or {}),
+                    "video_prompt": script_import_prompt,
+                    "production_prompt": script_import_prompt,
+                    "prompt_source": "script_import.production_prompt",
+                    "source_excerpt": str(getattr(seg, "source_excerpt", "") or ""),
+                }
+                plan.prompt_budget = {
+                    **(plan.prompt_budget or {}),
+                    "before_chars": len(script_import_prompt),
+                    "after_chars": len(script_import_prompt),
+                    "truncated": False,
+                    "dropped_sections": [],
+                    "final_prompt_preview": script_import_prompt[:500],
+                    "script_import_direct_prompt": True,
+                }
+                logger.info(
+                    "[SCRIPT_IMPORT_VIDEO_PROMPT_SELECTED] project_id=%s segment_id=%s source_field=%s prompt_chars=%s prompt_preview=%s",
+                    project_id,
+                    segment_id,
+                    "production_prompt",
+                    len(script_import_prompt),
+                    script_import_prompt[:300],
+                )
             logger.info("[S4_EXECUTION_INPUT] project_id=%s input=%s", project_id, plan.execution_input)
             logger.info(
                 "[VIDEO_RENDER_ASSET_REFS] project_id=%s segment_id=%s character_asset_ids=%s character_names=%s reference_image_urls=%s scene_asset_id=%s product_asset_id=%s",
@@ -582,15 +616,22 @@ class RenderExecutorService:
                 db.refresh(job)
 
             model_name = self._video_model_name()
-            final_prompt, runtime_prompt_meta = _apply_s4_runtime_prompt_config(
-                base_prompt=plan.segment_video_prompt or "",
-                project_id=project_id,
-                segment_id=segment_id,
-                reference_image_urls=ref_for_api,
-                duration_seconds=plan.duration_seconds,
-                aspect_ratio=plan.aspect_ratio,
-                resolution=plan.resolution,
-            )
+            if script_import_prompt:
+                final_prompt = script_import_prompt
+                runtime_prompt_meta = {
+                    "prompt_source": "script_import.production_prompt",
+                    "runtime_prompt_config_skipped": True,
+                }
+            else:
+                final_prompt, runtime_prompt_meta = _apply_s4_runtime_prompt_config(
+                    base_prompt=plan.segment_video_prompt or "",
+                    project_id=project_id,
+                    segment_id=segment_id,
+                    reference_image_urls=ref_for_api,
+                    duration_seconds=plan.duration_seconds,
+                    aspect_ratio=plan.aspect_ratio,
+                    resolution=plan.resolution,
+                )
             final_prompt_len = len(final_prompt)
             logger.info("[VIDEO_PROMPT] %s", final_prompt)
             if final_prompt_len > _HARD_VIDEO_PROMPT_CHARS:
@@ -654,7 +695,7 @@ class RenderExecutorService:
                     "project_id": project_id,
                     "segment_id": segment_id,
                     "final_prompt": final_prompt,
-                    "prompt_source": "ai_shot_video_prompt",
+                    "prompt_source": "script_import.production_prompt" if script_import_prompt else "ai_shot_video_prompt",
                     "runtime_prompt_config": runtime_prompt_meta,
                     "reference_image_urls": ref_for_api,
                     "provider": self._provider_label(),

@@ -25,12 +25,16 @@ from .creative_brief_service import update_s0_s1_state
 
 logger = logging.getLogger(__name__)
 
-SCRIPT_IMPORT_SYSTEM_PROMPT = """You parse a user-provided video script/prompt/template into executable short-video segments.
+SCRIPT_IMPORT_SYSTEM_PROMPT = """You parse a user-provided video script/prompt/template into executable short-video production units.
 Output ONLY one JSON object. No markdown, no code fences, no commentary.
 
 The user input can be a prompt template, full script, storyboard, outline, or mixed notes.
-Preserve strong user constraints. Improve missing operational detail only when needed for video generation.
+Preserve the user's own structure and strong constraints. Improve missing operational detail only when needed for video generation.
 Do not invent product claims, certifications, prices, or facts.
+Do not impose a fixed number of segments or shots. If the input has explicit Segment/Scene/Shot labels, keep that natural structure.
+If the input does not have explicit labels, split only on natural production boundaries inferred from the content.
+The production_prompt for each segment is the exact prompt that will be sent to the video model unless the user edits it later.
+It must preserve the user script's scene, action, style, important constraints, negative constraints, and any relevant voiceover/subtitle reference.
 
 Required JSON shape:
 {
@@ -38,6 +42,8 @@ Required JSON shape:
     "input_type": "full_script | storyboard | prompt_template | outline | mixed | invalid",
     "confidence": 0.0,
     "detected_language": "string",
+    "structure_basis": "string",
+    "warnings": ["string"],
     "missing_fields": ["string"],
     "global_style": "string",
     "constraints": ["string"],
@@ -46,9 +52,15 @@ Required JSON shape:
   "segments": [
     {
       "segment_id": "1",
+      "source_label": "string",
       "title": "string",
       "goal": "string",
       "duration_limit": 6,
+      "production_prompt": "complete video generation prompt for this segment",
+      "source_excerpt": "the source text this segment came from",
+      "negative_prompt": "string",
+      "voiceover_reference": "string",
+      "subtitle_reference": "string",
       "shots": [
         {
           "shot_id": "shot_1",
@@ -72,13 +84,15 @@ Required JSON shape:
 }
 
 Rules:
-- Create 1-8 segments.
-- Each segment duration_limit must be between 1 and 10 seconds.
-- Each segment should contain 1-3 shots.
-- Every shot must have non-empty video_prompt and action_description.
-- If dialogue/voiceover is absent, use empty string.
+- Segment and shot counts must come from the uploaded script itself, not from an artificial target.
+- If a user-provided segment is already a complete generation prompt, keep it as one segment and put it in production_prompt.
+- If a segment naturally contains multiple shots, you may include shots for inspection, but do not let shots replace production_prompt.
+- If dialogue/voiceover/subtitles are absent, use empty strings.
 - Keep JSON keys in English. Use the user's language for user-facing values.
 """
+_LEGACY_SCRIPT_IMPORT_DEFAULT_PROMPT = (
+    "Parse an imported script, storyboard, or prompt template into strict JSON segments for direct S4 video generation."
+)
 
 
 def _clean_text(value: Any, max_chars: int = 24_000) -> str:
@@ -92,6 +106,14 @@ def _safe_list(value: Any) -> list[str]:
     if not isinstance(value, list):
         return []
     return [str(x).strip() for x in value if str(x or "").strip()]
+
+
+def _first_text(*values: Any) -> str:
+    for value in values:
+        text = str(value or "").strip()
+        if text:
+            return text
+    return ""
 
 
 def _clip_duration(value: Any, fallback: float = 6.0) -> float:
@@ -109,7 +131,6 @@ def _fallback_parse(body: ScriptImportInput) -> dict[str, Any]:
     chunks = [x.strip(" -\n\t") for x in re.split(r"(?:\n+|。|；|;)", body.raw_text) if x.strip()]
     if not chunks:
         chunks = [text]
-    chunks = chunks[:5]
     segments = []
     for idx, chunk in enumerate(chunks, start=1):
         prompt = _clean_text(chunk, max_chars=700)
@@ -119,6 +140,11 @@ def _fallback_parse(body: ScriptImportInput) -> dict[str, Any]:
                 "title": f"片段 {idx}",
                 "goal": prompt[:120],
                 "duration_limit": 6,
+                "production_prompt": prompt,
+                "source_excerpt": prompt,
+                "negative_prompt": "",
+                "voiceover_reference": "",
+                "subtitle_reference": "",
                 "shots": [
                     {
                         "shot_id": "shot_1",
@@ -200,16 +226,41 @@ def _normalize_segments(raw_segments: Any, analysis: dict[str, Any]) -> list[Seg
     if not isinstance(raw_segments, list) or not raw_segments:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="剧本解析结果没有可用片段。")
     out: list[SegmentScriptSchema] = []
-    for idx, raw in enumerate(raw_segments[:8], start=1):
+    for idx, raw in enumerate(raw_segments, start=1):
         row = raw if isinstance(raw, dict) else {}
         shots_raw = row.get("shots") if isinstance(row.get("shots"), list) else []
+        source_excerpt = _clean_text(
+            _first_text(row.get("source_excerpt"), row.get("source_text"), row.get("raw_text")),
+            max_chars=2400,
+        )
+        negative_prompt = _clean_text(_first_text(row.get("negative_prompt")), max_chars=1200)
+        voiceover_reference = _clean_text(
+            _first_text(row.get("voiceover_reference"), row.get("voiceover_text"), row.get("voiceover")),
+            max_chars=800,
+        )
+        subtitle_reference = _clean_text(
+            _first_text(row.get("subtitle_reference"), row.get("subtitle_text"), row.get("subtitle")),
+            max_chars=800,
+        )
+        production_prompt = _clean_text(
+            _first_text(
+                row.get("production_prompt"),
+                row.get("video_prompt"),
+                row.get("generation_prompt"),
+                source_excerpt,
+            ),
+            max_chars=4096,
+        )
         shots = []
-        for sidx, shot_raw in enumerate(shots_raw[:3], start=1):
+        for sidx, shot_raw in enumerate(shots_raw, start=1):
             shot = shot_raw if isinstance(shot_raw, dict) else {}
             action = str(shot.get("action_description") or shot.get("visual_action") or "").strip()
-            video_prompt = str(shot.get("video_prompt") or shot.get("generation_prompt") or action).strip()
-            if not video_prompt:
-                continue
+            video_prompt = str(
+                shot.get("video_prompt")
+                or shot.get("generation_prompt")
+                or action
+                or production_prompt
+            ).strip()
             duration = _clip_duration(shot.get("duration_seconds") or shot.get("duration_sec"), fallback=6.0)
             shots.append(
                 {
@@ -221,15 +272,29 @@ def _normalize_segments(raw_segments: Any, analysis: dict[str, Any]) -> list[Seg
                     "duration_sec": duration,
                     "video_prompt": video_prompt,
                     "generation_prompt": video_prompt,
-                    "manual_video_prompt": video_prompt,
                     "character_asset_ids": [],
                     "scene_asset_id": "",
                     "product_asset_id": "",
                     "source_visual_constraints": {"assetless_script_import": True},
                 }
             )
-        if not shots:
-            continue
+        if not shots and production_prompt:
+            shots.append(
+                {
+                    "shot_id": "shot_1",
+                    "shot_role": "script_import_segment",
+                    "action_description": production_prompt,
+                    "visual_action": production_prompt,
+                    "duration_seconds": _clip_duration(row.get("duration_limit"), fallback=6.0),
+                    "duration_sec": _clip_duration(row.get("duration_limit"), fallback=6.0),
+                    "video_prompt": production_prompt,
+                    "generation_prompt": production_prompt,
+                    "character_asset_ids": [],
+                    "scene_asset_id": "",
+                    "product_asset_id": "",
+                    "source_visual_constraints": {"assetless_script_import": True},
+                }
+            )
         seg_id = str(row.get("segment_id") or idx).strip()
         if not seg_id.startswith("seg_"):
             seg_id = f"seg_{seg_id}"
@@ -240,6 +305,11 @@ def _normalize_segments(raw_segments: Any, analysis: dict[str, Any]) -> list[Seg
                     "title": str(row.get("title") or f"片段 {idx}").strip(),
                     "goal": str(row.get("goal") or row.get("title") or "").strip(),
                     "duration_limit": _clip_duration(row.get("duration_limit"), fallback=sum(s["duration_seconds"] for s in shots)),
+                    "production_prompt": production_prompt,
+                    "source_excerpt": source_excerpt,
+                    "negative_prompt": negative_prompt,
+                    "voiceover_reference": voiceover_reference,
+                    "subtitle_reference": subtitle_reference,
                     "shots": shots,
                     "meta": {
                         "workflow_mode": "script_import",
@@ -290,7 +360,12 @@ class ScriptImportService:
             },
         }
         ai_cfg = get_ai_runtime_config(STAGE_SCRIPT_IMPORT_PARSE)
-        effective_system_prompt = ai_cfg.system_prompt or SCRIPT_IMPORT_SYSTEM_PROMPT
+        configured_system_prompt = (ai_cfg.system_prompt or "").strip()
+        effective_system_prompt = (
+            SCRIPT_IMPORT_SYSTEM_PROMPT
+            if not configured_system_prompt or configured_system_prompt == _LEGACY_SCRIPT_IMPORT_DEFAULT_PROMPT
+            else configured_system_prompt
+        )
         effective_payload = apply_runtime_user_prompt_template(
             user_payload=payload,
             template=ai_cfg.user_prompt_template,

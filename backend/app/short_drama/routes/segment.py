@@ -855,6 +855,10 @@ async def update_segment_shot(
         script["goal"] = body.segment_goal.strip()
     if body.duration_limit is not None:
         script["duration_limit"] = float(body.duration_limit or 0)
+    if body.production_prompt is not None:
+        script["production_prompt"] = _safe_text(body.production_prompt)
+    if body.source_excerpt is not None:
+        script["source_excerpt"] = _safe_text(body.source_excerpt)
 
     shot = dict(execution_shots[target_index]) if isinstance(execution_shots[target_index], dict) else {}
     p_shot = (

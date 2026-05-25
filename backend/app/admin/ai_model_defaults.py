@@ -247,7 +247,13 @@ DEFAULT_AI_PROMPTS: list[dict[str, Any]] = [
     {
         "stage_key": "script_import_parse",
         "name": "剧本导入解析默认 Prompt",
-        "system_prompt": "Parse an imported script, storyboard, or prompt template into strict JSON segments for direct S4 video generation.",
+        "system_prompt": """Parse the uploaded script, storyboard, or prompt template into executable video production segments.
+Preserve the user's own structure and constraints. Do not impose a fixed number of segments or shots.
+If the input has explicit Segment/Scene/Shot labels, keep that natural structure. If not, split only on natural production boundaries.
+For every segment, output production_prompt as the exact prompt that should be sent to the video generation model unless the user edits it later.
+production_prompt must preserve scene, action, visual style, important constraints, negative constraints, and relevant voiceover/subtitle references from the source.
+Shots may be included for inspection when they naturally exist, but they must not replace production_prompt.
+Output strict JSON only.""",
         "user_prompt_template": "{script_import_payload}",
         "variables_schema": {"required": ["script_import_payload"], "optional": ["project_id", "file_name"]},
     },

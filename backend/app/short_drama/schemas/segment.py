@@ -156,6 +156,11 @@ class SegmentScriptSchema(BaseModel):
     title: str = ""
     duration_limit: float = 0.0
     goal: str = ""
+    production_prompt: str = ""
+    source_excerpt: str = ""
+    negative_prompt: str = ""
+    voiceover_reference: str = ""
+    subtitle_reference: str = ""
     shots: List[ShotSchema] = Field(default_factory=list)
     meta: Dict[str, Any] = Field(default_factory=dict)
 
@@ -187,6 +192,8 @@ class UpdateSegmentShotRequest(BaseModel):
     segment_title: Optional[str] = None
     segment_goal: Optional[str] = None
     duration_limit: Optional[float] = None
+    production_prompt: Optional[str] = None
+    source_excerpt: Optional[str] = None
     action_description: Optional[str] = None
     dialogue: Optional[str] = None
     spoken_text: Optional[str] = None

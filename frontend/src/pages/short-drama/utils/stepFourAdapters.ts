@@ -599,6 +599,12 @@ export function segmentScriptDtoToStepSegmentViewModel(
   const title =
     (typeof script.title === 'string' && script.title.trim()) || `片段 ${uiId}`;
   const goal = (typeof script.goal === 'string' && script.goal.trim()) || '—';
+  const productionPrompt = typeof script.production_prompt === 'string' && script.production_prompt.trim()
+    ? script.production_prompt.trim()
+    : undefined;
+  const sourceExcerpt = typeof script.source_excerpt === 'string' && script.source_excerpt.trim()
+    ? script.source_excerpt.trim()
+    : undefined;
   const segmentRole = (typeof script.segment_role === 'string' && script.segment_role.trim()) || (typeof meta.function_label === 'string' && meta.function_label.trim()) || '';
   const productExposure = (typeof script.product_exposure === 'string' && script.product_exposure.trim()) || '';
   const durLimit = script.duration_limit;
@@ -641,6 +647,8 @@ export function segmentScriptDtoToStepSegmentViewModel(
           ? Number(durLimit)
           : inferredDurationLimit,
     goal,
+    productionPrompt,
+    sourceExcerpt,
     segmentRole,
     productExposure: productExposure || placement,
     characters,

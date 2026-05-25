@@ -347,6 +347,8 @@ export interface Step4SegmentItem {
   duration: string;
   durationLimit: number;
   goal: string;
+  productionPrompt?: string;
+  sourceExcerpt?: string;
   segmentRole?: string;
   productExposure?: string;
   characters: string[];

@@ -37,6 +37,8 @@ type SegmentDraft = {
   title: string;
   goal: string;
   durationLimit: number;
+  productionPrompt: string;
+  sourceExcerpt: string;
   shots: Record<number, ShotDraft>;
 };
 
@@ -71,6 +73,7 @@ interface SegmentWorkbenchProps {
     body: Omit<UpdateSegmentShotBody, "project_id">,
   ) => Promise<unknown>;
   videoGenerateDisabled?: boolean;
+  scriptImportMode?: boolean;
   videoLanguage?: string | null;
   onDirtyChange?: () => void;
 }
@@ -85,6 +88,7 @@ export function StepFourSegmentWorkbench({
   onGenerateVideo,
   onSaveSegmentShot,
   videoGenerateDisabled = false,
+  scriptImportMode = false,
   videoLanguage = null,
   onDirtyChange,
 }: SegmentWorkbenchProps) {
@@ -175,6 +179,8 @@ export function StepFourSegmentWorkbench({
           segment_title: draft.title,
           segment_goal: draft.goal,
           duration_limit: draft.durationLimit,
+          production_prompt: draft.productionPrompt,
+          source_excerpt: draft.sourceExcerpt,
           action_description: sd.action,
           spoken_text: sd.spokenText,
           voiceover_text: sd.voiceoverText,
@@ -285,6 +291,26 @@ export function StepFourSegmentWorkbench({
                     <Field label="片段目标" value={draft.goal} editing={isEditing} onChange={(v) => updateSegmentDraft(seg, { goal: v })} />
                     <NumberField label="片段时长" value={draft.durationLimit} editing={isEditing} onChange={(v) => updateSegmentDraft(seg, { durationLimit: v })} />
                   </div>
+                  {scriptImportMode && (
+                    <div className="rounded-xl p-3 space-y-3" style={{ background: "#FAFAFB", border: "1px solid #EAEAEA" }}>
+                      <Field
+                        label="视频生成 PMT"
+                        value={draft.productionPrompt}
+                        editing={isEditing}
+                        multiline
+                        onChange={(v) => updateSegmentDraft(seg, { productionPrompt: v })}
+                      />
+                      {(isEditing || draft.sourceExcerpt.trim()) && (
+                        <Field
+                          label="原文片段"
+                          value={draft.sourceExcerpt}
+                          editing={isEditing}
+                          multiline
+                          onChange={(v) => updateSegmentDraft(seg, { sourceExcerpt: v })}
+                        />
+                      )}
+                    </div>
+                  )}
 
                   <div className="space-y-2">
                     {seg.shots.map((shot) => {
@@ -385,6 +411,8 @@ function makeSegmentDraft(seg: Step4SegmentItem): SegmentDraft {
     title: seg.name,
     goal: seg.goal,
     durationLimit: seg.durationLimit,
+    productionPrompt: seg.productionPrompt ?? "",
+    sourceExcerpt: seg.sourceExcerpt ?? "",
     shots: Object.fromEntries(seg.shots.map((shot) => [shot.id, makeShotDraft(shot)])),
   };
 }

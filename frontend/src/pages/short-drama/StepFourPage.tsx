@@ -396,6 +396,7 @@ export function ShortDramaStepFourPage() {
               videoLanguage={stepFourVideoLanguage}
               onSegmentChange={setActiveSegment}
               videoGenerateDisabled={videoActionsDisabled}
+              scriptImportMode={isScriptImportMode}
               assetLibrary={assetLibraryVm}
               onSaveSegmentShot={handleSaveSegmentShot}
               onDirtyChange={markDirty}

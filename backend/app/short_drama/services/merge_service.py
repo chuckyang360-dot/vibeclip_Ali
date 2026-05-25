@@ -22,6 +22,8 @@ from ..utils.video_storage import (
     is_short_drama_r2_video_url,
     is_short_drama_static_video_url,
     local_path_from_public_video_url,
+    rewrite_short_drama_r2_video_base,
+    short_drama_r2_public_base_from_url,
 )
 from .read_models import list_segment_scripts
 from .workflow_orchestrator import orchestrator
@@ -41,6 +43,7 @@ class MergeService:
         segment_count = 0
         resolved_inputs_count = 0
         downloaded_temp_inputs: list[Path] = []
+        canonical_r2_public_base = ""
         project = orchestrator.get_project(db, project_id)
         orchestrator.assert_step_allowed(db, project, WorkflowStep.MERGE)
 
@@ -78,6 +81,8 @@ class MergeService:
                         str(local_path),
                     )
                 elif is_short_drama_r2_video_url(source_video_url):
+                    if not canonical_r2_public_base:
+                        canonical_r2_public_base = short_drama_r2_public_base_from_url(source_video_url) or ""
                     logger.info(
                         "[FINAL_MERGE_INPUT_DOWNLOAD_START] project_id=%s segment_id=%s source_video_url=%s",
                         project_id,
@@ -222,6 +227,17 @@ class MergeService:
                 db.add(job)
                 db.commit()
                 raise ShortDramaMergeError(err_msg) from e
+            if canonical_r2_public_base:
+                rewritten_final_url = rewrite_short_drama_r2_video_base(final_url, canonical_r2_public_base) or final_url
+                if rewritten_final_url != final_url:
+                    logger.warning(
+                        "[FINAL_VIDEO_PUBLIC_BASE_REWRITTEN] project_id=%s original_url=%s rewritten_url=%s canonical_base=%s",
+                        project_id,
+                        final_url,
+                        rewritten_final_url,
+                        canonical_r2_public_base,
+                    )
+                    final_url = rewritten_final_url
             logger.info(
                 "[FINAL_VIDEO_UPLOAD_SUCCESS] project_id=%s storage_key=%s public_url=%s file_size=%s",
                 project_id,
