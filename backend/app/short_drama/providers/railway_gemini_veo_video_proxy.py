@@ -31,8 +31,7 @@ logger = logging.getLogger(__name__)
 
 _SYNC_RESULT_LOCK = threading.Lock()
 _SYNC_RESULTS: dict[str, dict[str, Any]] = {}
-_GEMINI_VEO_MIN_DURATION_SECONDS = 4
-_GEMINI_VEO_MAX_DURATION_SECONDS = 8
+_GEMINI_VEO_ALLOWED_DURATIONS_SECONDS = (4, 6, 8)
 
 
 def _gemini_veo_safe_duration_seconds(duration_seconds: int) -> int:
@@ -40,7 +39,12 @@ def _gemini_veo_safe_duration_seconds(duration_seconds: int) -> int:
         duration = int(round(float(duration_seconds)))
     except (TypeError, ValueError):
         duration = 6
-    return max(_GEMINI_VEO_MIN_DURATION_SECONDS, min(_GEMINI_VEO_MAX_DURATION_SECONDS, duration))
+    if duration in _GEMINI_VEO_ALLOWED_DURATIONS_SECONDS:
+        return duration
+    return min(
+        _GEMINI_VEO_ALLOWED_DURATIONS_SECONDS,
+        key=lambda allowed: (abs(allowed - duration), -allowed),
+    )
 
 
 def request_railway_gemini_veo_video_generation(
@@ -77,8 +81,8 @@ def request_railway_gemini_veo_video_generation(
             segment_id,
             duration_seconds,
             safe_duration_seconds,
-            _GEMINI_VEO_MIN_DURATION_SECONDS,
-            _GEMINI_VEO_MAX_DURATION_SECONDS,
+            min(_GEMINI_VEO_ALLOWED_DURATIONS_SECONDS),
+            max(_GEMINI_VEO_ALLOWED_DURATIONS_SECONDS),
         )
 
     url = f"{base}/api/gemini/videos/generations"
