@@ -200,3 +200,34 @@ def test_video_prompt_missing_raises():
             project_aspect_ratio="9:16",
             project_id=3,
         )
+
+
+def test_script_import_production_prompt_is_used_when_shot_prompt_empty():
+    prompt = "视频主题：《在现代化工厂，开始一份踏实的工作》"
+    seg = SegmentScriptSchema(
+        segment_id="seg_1",
+        production_prompt=prompt,
+        duration_limit=7,
+        shots=[
+            ShotSchema(
+                shot_id="shot_1",
+                video_prompt="",
+                visual_action="员工有序进入厂区",
+                action_description="员工有序进入厂区",
+            )
+        ],
+        meta={"workflow_mode": "script_import", "assetless_video_generation": True},
+    )
+
+    plan = build_segment_video_plan(
+        seg,
+        characters=[],
+        scenes=[],
+        products=[],
+        project_aspect_ratio="9:16",
+        project_id=21,
+    )
+
+    assert plan.segment_video_prompt == prompt
+    assert plan.prompt_budget["script_import_direct_prompt"] is True
+    assert plan.execution_input["video_prompt"] == prompt

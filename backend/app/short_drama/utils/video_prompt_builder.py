@@ -445,6 +445,38 @@ def _segment_allows_assetless_video(segment: SegmentScriptSchema) -> bool:
     return False
 
 
+def _script_import_segment_prompt(segment: SegmentScriptSchema) -> str:
+    if not _segment_allows_assetless_video(segment):
+        return ""
+    return str(getattr(segment, "production_prompt", "") or "").strip()
+
+
+def _script_import_segment_prompt_budget(segment: SegmentScriptSchema) -> tuple[str, dict] | None:
+    raw = _script_import_segment_prompt(segment)
+    if not raw:
+        return None
+    text = _sanitize_prompt_text(raw)
+    before_chars = len(text)
+    truncated = before_chars > SAFE_VIDEO_PROMPT_CHARS
+    if truncated:
+        text = _compact_text(text, SAFE_VIDEO_PROMPT_CHARS)
+    if len(text) > _HARD_XAI_VIDEO_PROMPT_CHARS:
+        raise ShortDramaVideoInputError(
+            f"Segment {segment.segment_id!r} production_prompt exceeds provider limit "
+            f"{_HARD_XAI_VIDEO_PROMPT_CHARS}; shorten imported PMT."
+        )
+    return text, {
+        "before_chars": before_chars,
+        "after_chars": len(text),
+        "truncated": truncated,
+        "dropped_sections": ["safe_budget_trim"] if truncated else [],
+        "final_prompt_preview": text[:500],
+        "script_import_direct_prompt": True,
+        "safe_video_prompt_chars": SAFE_VIDEO_PROMPT_CHARS,
+        "hard_video_prompt_chars": _HARD_XAI_VIDEO_PROMPT_CHARS,
+    }
+
+
 def _v2_pass_through_segment_prompt(
     segment: SegmentScriptSchema,
     *,
@@ -624,6 +656,8 @@ def build_segment_video_plan(
         ar = "9:16"
     if _segment_v2_video_prompt_pass_through(segment):
         prompt, budget = _v2_pass_through_segment_prompt(segment, project_id=project_id)
+    elif script_import_budget := _script_import_segment_prompt_budget(segment):
+        prompt, budget = script_import_budget
     else:
         prompt, budget = _budgeted_segment_prompt(segment, aspect_ratio=ar, project_id=project_id)
     execution_shots = [s.model_dump() if hasattr(s, "model_dump") else dict(s) for s in (segment.shots or [])]
