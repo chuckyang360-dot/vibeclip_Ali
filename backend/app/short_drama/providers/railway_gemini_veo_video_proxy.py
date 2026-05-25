@@ -297,7 +297,20 @@ class RailwayGeminiVeoVideoProxyProvider:
         segment_id: str,
     ) -> str:
         ai_cfg = get_ai_runtime_config(STAGE_S4_VIDEO_GENERATION)
-        model = (ai_cfg.model_id or "").strip() or effective_gemini_video_model()
+        configured_provider = (ai_cfg.provider or "").strip().lower()
+        configured_model = (ai_cfg.model_id or "").strip()
+        model = configured_model or effective_gemini_video_model()
+        model_lower = model.lower()
+        if configured_provider and configured_provider != "gemini":
+            raise ShortDramaVideoProviderError(
+                "S4 provider mismatch: railway_gemini_veo_proxy cannot run "
+                f"{configured_provider} model {model!r}"
+            )
+        if "seedance" in model_lower or model_lower.startswith("doubao-seedance"):
+            raise ShortDramaVideoProviderError(
+                "S4 provider mismatch: railway_gemini_veo_proxy cannot run "
+                f"Seedance model {model!r}; use Seedance direct provider"
+            )
         data = request_railway_gemini_veo_video_generation(
             project_id=project_id,
             segment_id=segment_id,

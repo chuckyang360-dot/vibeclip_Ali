@@ -7,6 +7,7 @@ from typing import Any
 
 from ...config import settings
 from ..exceptions import ShortDramaVideoProviderError
+from ..utils.ai_runtime_config import STAGE_S4_VIDEO_GENERATION, get_ai_runtime_config
 from .seedance_video_client import (
     SeedanceVideoClient,
     effective_seedance_video_model,
@@ -15,6 +16,15 @@ from .seedance_video_client import (
 from .segment_video_types import SegmentVideoResult
 
 logger = logging.getLogger(__name__)
+
+
+def _active_seedance_video_model() -> str:
+    ai_cfg = get_ai_runtime_config(STAGE_S4_VIDEO_GENERATION)
+    provider = (ai_cfg.provider or "").strip().lower()
+    model = (ai_cfg.model_id or "").strip()
+    if model and (provider == "seedance" or "seedance" in model.lower() or model.lower().startswith("doubao-seedance")):
+        return model
+    return effective_seedance_video_model()
 
 
 class SeedanceVideoProvider:
@@ -33,8 +43,15 @@ class SeedanceVideoProvider:
         segment_id: str,
     ) -> str:
         _ = resolution
-        model = effective_seedance_video_model()
+        model = _active_seedance_video_model()
         ratio = (aspect_ratio or "").strip() or (settings.SEEDANCE_DEFAULT_RATIO or "9:16")
+        logger.info(
+            "[SEEDANCE_VIDEO_PROVIDER_ROUTE] project_id=%s segment_id=%s route=direct_cn api_base=%s model=%s",
+            project_id,
+            segment_id,
+            getattr(self._client, "_base", ""),
+            model,
+        )
         try:
             return self._client.create_video_task(
                 model=model,
@@ -61,7 +78,7 @@ class SeedanceVideoProvider:
         duration_seconds: int = 6,
     ) -> SegmentVideoResult:
         _ = duration_seconds
-        model = effective_seedance_video_model()
+        model = _active_seedance_video_model()
         task_id = request_id
         try:
             final = self._client.poll_video_task(

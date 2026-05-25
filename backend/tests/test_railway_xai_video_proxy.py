@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import importlib
 from unittest.mock import MagicMock, patch
 
 import httpx
@@ -21,6 +22,7 @@ from app.short_drama.providers.xai_video_provider import (
     build_xai_video_provider,
 )
 from app.short_drama.providers.seedance_video_provider import SeedanceVideoProvider
+from app.short_drama.services.render_executor_service import RenderExecutorService
 from app.short_drama.utils.ai_runtime_config import AIRuntimeConfig, STAGE_S4_VIDEO_GENERATION
 
 
@@ -84,6 +86,32 @@ def test_build_provider_uses_admin_xai_proxy(monkeypatch: pytest.MonkeyPatch) ->
     assert isinstance(provider, RailwayXAIVideoProxyProvider)
 
 
+def test_build_provider_uses_admin_seedance_direct(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("VIDEO_PROVIDER", "gemini_veo")
+    monkeypatch.setattr(settings, "SHORT_DRAMA_USE_MOCK_VIDEO_PROVIDER", True)
+    monkeypatch.setattr(settings, "ARK_API_KEY", "ark")
+    monkeypatch.setattr(settings, "RAILWAY_XAI_VIDEO_PROXY_BASE_URL", None)
+    monkeypatch.setattr(settings, "RAILWAY_XAI_VIDEO_PROXY_TOKEN", None)
+    monkeypatch.setattr(
+        "app.short_drama.utils.ai_runtime_config.get_ai_runtime_config",
+        lambda stage: _runtime("seedance", "doubao-seedance-2-0-260128"),
+    )
+    provider = build_xai_video_provider()
+    assert isinstance(provider, SeedanceVideoProvider)
+
+
+def test_build_provider_infers_seedance_from_model(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("VIDEO_PROVIDER", raising=False)
+    monkeypatch.setattr(settings, "SHORT_DRAMA_USE_MOCK_VIDEO_PROVIDER", True)
+    monkeypatch.setattr(settings, "ARK_API_KEY", "ark")
+    monkeypatch.setattr(
+        "app.short_drama.utils.ai_runtime_config.get_ai_runtime_config",
+        lambda stage: _runtime(None, "doubao-seedance-2-0-260128"),
+    )
+    provider = build_xai_video_provider()
+    assert isinstance(provider, SeedanceVideoProvider)
+
+
 def test_build_provider_railway_requires_base(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("VIDEO_PROVIDER", "railway_xai_proxy")
     monkeypatch.setattr(settings, "RAILWAY_XAI_VIDEO_PROXY_BASE_URL", None)
@@ -106,6 +134,38 @@ def test_build_provider_xai_and_seedance_unchanged(monkeypatch: pytest.MonkeyPat
 
     monkeypatch.setenv("VIDEO_PROVIDER", "mock")
     assert isinstance(build_xai_video_provider(), MockXAIVideoProvider)
+
+
+def test_railway_gemini_provider_rejects_seedance_model(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        "app.short_drama.providers.railway_gemini_veo_video_proxy.get_ai_runtime_config",
+        lambda stage: _runtime("seedance", "doubao-seedance-2-0-260128"),
+    )
+    with patch(
+        "app.short_drama.providers.railway_gemini_veo_video_proxy.request_railway_gemini_veo_video_generation"
+    ) as request_mock:
+        with pytest.raises(ShortDramaVideoProviderError, match="provider mismatch"):
+            RailwayGeminiVeoVideoProxyProvider().submit_reference_segment_video(
+                prompt="p",
+                reference_image_urls=[],
+                duration_seconds=8,
+                aspect_ratio="9:16",
+                resolution="720p",
+                project_id=1,
+                segment_id="seg_1",
+            )
+    request_mock.assert_not_called()
+
+
+def test_render_executor_resolves_provider_at_runtime(monkeypatch: pytest.MonkeyPatch) -> None:
+    first = MagicMock(spec=RailwayGeminiVeoVideoProxyProvider)
+    second = MagicMock(spec=SeedanceVideoProvider)
+    providers = iter([first, second])
+    module = importlib.import_module("app.short_drama.services.render_executor_service")
+    monkeypatch.setattr(module, "build_xai_video_provider", lambda: next(providers))
+    service = RenderExecutorService()
+    assert service._current_provider() is first
+    assert service._current_provider() is second
 
 
 def test_request_proxy_ok_false_raises(monkeypatch: pytest.MonkeyPatch) -> None:

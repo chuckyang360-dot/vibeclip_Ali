@@ -23,6 +23,11 @@ from app.short_drama.providers.xai_video_provider import (
     XAIVideoProvider,
     build_xai_video_provider,
 )
+from app.short_drama.utils.ai_runtime_config import AIRuntimeConfig, STAGE_S4_VIDEO_GENERATION
+
+
+def _runtime(provider: str | None = None, model_id: str | None = None) -> AIRuntimeConfig:
+    return AIRuntimeConfig(stage_key=STAGE_S4_VIDEO_GENERATION, provider=provider, model_id=model_id)
 
 
 def test_build_seedance_task_payload_text_and_reference_images() -> None:
@@ -106,6 +111,7 @@ def test_extract_video_url(body: dict[str, Any], expected: str) -> None:
 
 
 def test_build_provider_seedance(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("app.short_drama.utils.ai_runtime_config.get_ai_runtime_config", lambda stage: _runtime())
     monkeypatch.setenv("VIDEO_PROVIDER", "seedance")
     monkeypatch.setenv("ARK_API_KEY", "test-ark-key")
     monkeypatch.setenv("SHORT_DRAMA_USE_MOCK_VIDEO_PROVIDER", "true")
@@ -115,6 +121,7 @@ def test_build_provider_seedance(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def test_build_provider_seedance_requires_ark_key(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("app.short_drama.utils.ai_runtime_config.get_ai_runtime_config", lambda stage: _runtime())
     monkeypatch.setenv("VIDEO_PROVIDER", "seedance")
     monkeypatch.delenv("ARK_API_KEY", raising=False)
     monkeypatch.setattr(settings, "ARK_API_KEY", None)
@@ -123,6 +130,7 @@ def test_build_provider_seedance_requires_ark_key(monkeypatch: pytest.MonkeyPatc
 
 
 def test_build_provider_xai_when_explicit(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("app.short_drama.utils.ai_runtime_config.get_ai_runtime_config", lambda stage: _runtime())
     monkeypatch.setenv("VIDEO_PROVIDER", "xai")
     monkeypatch.setenv("XAI_API_KEY", "xai-test")
     monkeypatch.setenv("SHORT_DRAMA_USE_MOCK_VIDEO_PROVIDER", "true")
@@ -247,6 +255,10 @@ def test_seedance_provider_submit_and_complete(monkeypatch: pytest.MonkeyPatch) 
     mock_client.download_video_bytes.return_value = b"mp4-bytes"
 
     provider = SeedanceVideoProvider(client=mock_client)
+    monkeypatch.setattr(
+        "app.short_drama.providers.seedance_video_provider.get_ai_runtime_config",
+        lambda stage: _runtime("seedance", "doubao-seedance-2-0-260128"),
+    )
     monkeypatch.setattr(settings, "SEEDANCE_GENERATE_AUDIO", True)
     monkeypatch.setattr(settings, "SEEDANCE_WATERMARK", False)
 
@@ -273,6 +285,7 @@ def test_seedance_provider_submit_and_complete(monkeypatch: pytest.MonkeyPatch) 
 
     mock_client.create_video_task.assert_called_once()
     kwargs = mock_client.create_video_task.call_args.kwargs
+    assert kwargs["model"] == "doubao-seedance-2-0-260128"
     assert kwargs["duration_seconds"] == 6
     assert kwargs["ratio"] == "9:16"
 

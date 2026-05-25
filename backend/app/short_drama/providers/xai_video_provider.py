@@ -441,9 +441,25 @@ class MockXAIVideoProvider:
 def build_xai_video_provider() -> SegmentVideoProvider:
     is_prod = _is_production_env()
     provider_env = str(os.getenv("VIDEO_PROVIDER") or "").strip().lower()
+
+    from ..utils.ai_runtime_config import STAGE_S4_VIDEO_GENERATION, get_ai_runtime_config
+
+    ai_cfg = get_ai_runtime_config(STAGE_S4_VIDEO_GENERATION)
+    runtime_provider = (ai_cfg.provider or "").strip().lower()
+    runtime_model = (ai_cfg.model_id or "").strip()
+    runtime_model_lower = runtime_model.lower()
+    inferred_provider = ""
+    if "seedance" in runtime_model_lower or runtime_model_lower.startswith("doubao-seedance"):
+        inferred_provider = "seedance"
+    elif runtime_model_lower.startswith("veo-") or "gemini" in runtime_model_lower:
+        inferred_provider = "gemini"
+    elif runtime_model_lower.startswith("grok"):
+        inferred_provider = "xai"
+    provider_choice = runtime_provider or inferred_provider or provider_env
+
     explicit_mock = provider_env == "mock" or _is_truthy(os.getenv("MOCK_VIDEO_PROVIDER"))
     legacy_mock = bool(settings.SHORT_DRAMA_USE_MOCK_VIDEO_PROVIDER)
-    use_mock = explicit_mock or (provider_env == "" and legacy_mock)
+    use_mock = explicit_mock or (provider_env == "" and provider_choice == "" and legacy_mock)
 
     if is_prod and use_mock:
         raise ShortDramaVideoProviderError(_PRODUCTION_VIDEO_PROVIDER_ERROR)
@@ -451,13 +467,6 @@ def build_xai_video_provider() -> SegmentVideoProvider:
     if use_mock:
         logger.warning("[VIDEO_PROVIDER] MOCK provider ENABLED")
         return MockXAIVideoProvider()
-
-    from ..utils.ai_runtime_config import STAGE_S4_VIDEO_GENERATION, get_ai_runtime_config
-
-    ai_cfg = get_ai_runtime_config(STAGE_S4_VIDEO_GENERATION)
-    runtime_provider = (ai_cfg.provider or "").strip().lower()
-    runtime_model = (ai_cfg.model_id or "").strip()
-    provider_choice = runtime_provider or provider_env
 
     if provider_choice == "gemini":
         from .railway_gemini_veo_video_proxy import RailwayGeminiVeoVideoProxyProvider
@@ -520,7 +529,10 @@ def build_xai_video_provider() -> SegmentVideoProvider:
         ark_key = (settings.ARK_API_KEY or "").strip()
         if not ark_key:
             raise ShortDramaVideoProviderError("ARK_API_KEY is required when VIDEO_PROVIDER=seedance")
-        logger.info("[VIDEO_PROVIDER] SEEDANCE provider ENABLED by admin/env config")
+        logger.info(
+            "[VIDEO_PROVIDER] SEEDANCE provider ENABLED by admin/env config route=direct_cn model=%s",
+            runtime_model or settings.SEEDANCE_VIDEO_MODEL or "",
+        )
         return SeedanceVideoProvider()
 
     if is_prod and not (settings.XAI_API_KEY or "").strip():

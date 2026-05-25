@@ -346,25 +346,32 @@ class VideoBatchResult:
 
 class RenderExecutorService:
     def __init__(self, provider: SegmentVideoProvider | None = None):
-        self._provider = provider if provider is not None else build_xai_video_provider()
-        logger.info("[VIDEO_PROVIDER] Using provider: %s", self._provider.__class__.__name__)
+        self._provider = provider
+        if provider is not None:
+            logger.info("[VIDEO_PROVIDER] Using injected provider: %s", provider.__class__.__name__)
+        else:
+            logger.info("[VIDEO_PROVIDER] Using runtime provider resolution for each video task")
 
     def _max_workers(self) -> int:
         return max(1, int(settings.SHORT_DRAMA_VIDEO_MAX_CONCURRENT))
 
-    def _provider_label(self) -> str:
-        if isinstance(self._provider, MockXAIVideoProvider):
+    def _current_provider(self) -> SegmentVideoProvider:
+        return self._provider if self._provider is not None else build_xai_video_provider()
+
+    def _provider_label(self, provider: SegmentVideoProvider | None = None) -> str:
+        p = provider or self._current_provider()
+        if isinstance(p, MockXAIVideoProvider):
             return "mock"
-        if isinstance(self._provider, SeedanceVideoProvider):
+        if isinstance(p, SeedanceVideoProvider):
             return "seedance"
-        if isinstance(self._provider, RailwayGeminiVeoVideoProxyProvider):
+        if isinstance(p, RailwayGeminiVeoVideoProxyProvider):
             return "railway_gemini_veo_proxy"
-        if isinstance(self._provider, RailwayXAIVideoProxyProvider):
+        if isinstance(p, RailwayXAIVideoProxyProvider):
             return "railway_xai_proxy"
         return "xai"
 
-    def _video_model_name(self) -> str:
-        return effective_video_model_for_provider(self._provider_label())
+    def _video_model_name(self, provider: SegmentVideoProvider | None = None) -> str:
+        return effective_video_model_for_provider(self._provider_label(provider))
 
     def _utc_now_iso(self) -> str:
         return datetime.now(timezone.utc).isoformat()
@@ -434,6 +441,8 @@ class RenderExecutorService:
     ) -> SegmentVideoAttemptResult:
         segment_id = rec.segment_id
         job: RenderJob | None = None
+        provider_label = "unknown"
+        model_name = ""
         trace: dict[str, Any] = {
             "reference_prepare_ok": False,
             "reference_check_ok": False,
@@ -448,6 +457,17 @@ class RenderExecutorService:
             "final_error": "",
         }
         try:
+            provider = self._current_provider()
+            provider_label = self._provider_label(provider)
+            model_name = self._video_model_name(provider)
+            logger.info(
+                "[VIDEO_PROVIDER_RUNTIME_SELECTED] project_id=%s segment_id=%s provider=%s model=%s provider_class=%s",
+                project_id,
+                segment_id,
+                provider_label,
+                model_name,
+                provider.__class__.__name__,
+            )
             seg = SegmentScriptSchema.model_validate(rec.script_json)
             rec_script_json_snapshot = dict(rec.script_json) if isinstance(rec.script_json, dict) else {}
             raw_character_asset_ids = _extract_raw_character_asset_ids(seg)
@@ -522,8 +542,8 @@ class RenderExecutorService:
                 job = db.query(RenderJob).filter(RenderJob.id == existing_job_id).first()
                 if not job:
                     raise ShortDramaVideoInputError(f"Render job {existing_job_id} not found")
-                job.provider = self._provider_label()
-                job.model = self._video_model_name()
+                job.provider = provider_label
+                job.model = model_name
                 self._set_job_status(
                     db,
                     job,
@@ -606,8 +626,8 @@ class RenderExecutorService:
                     project_id=project_id,
                     target_type=RenderTargetType.SEGMENT.value,
                     target_id=segment_id,
-                    provider=self._provider_label(),
-                    model=self._video_model_name(),
+                    provider=provider_label,
+                    model=model_name,
                     status=RenderJobStatus.QUEUED.value,
                     input_payload_json=payload,
                 )
@@ -615,7 +635,6 @@ class RenderExecutorService:
                 db.commit()
                 db.refresh(job)
 
-            model_name = self._video_model_name()
             if script_import_prompt:
                 final_prompt = script_import_prompt
                 runtime_prompt_meta = {
@@ -677,7 +696,7 @@ class RenderExecutorService:
                     bool(voiceover_text and voiceover_text in final_prompt),
                     voiceover_text[:40],
                     final_prompt_len,
-                    self._provider_label(),
+                    provider_label,
                     model_name,
                 )
 
@@ -698,11 +717,11 @@ class RenderExecutorService:
                     "prompt_source": "script_import.production_prompt" if script_import_prompt else "ai_shot_video_prompt",
                     "runtime_prompt_config": runtime_prompt_meta,
                     "reference_image_urls": ref_for_api,
-                    "provider": self._provider_label(),
+                    "provider": provider_label,
                     "model": model_name,
                 },
             )
-            rid = self._provider.submit_reference_segment_video(
+            rid = provider.submit_reference_segment_video(
                 prompt=final_prompt,
                 reference_image_urls=ref_for_api,
                 duration_seconds=plan.duration_seconds,
@@ -726,7 +745,7 @@ class RenderExecutorService:
                 rid,
             )
             db.close()
-            result = self._provider.complete_segment_video(
+            result = provider.complete_segment_video(
                 request_id=rid,
                 project_id=project_id,
                 segment_id=segment_id,
@@ -819,7 +838,7 @@ class RenderExecutorService:
             base["video_render"] = {
                 "video_url": url,
                 "render_job_id": job.id,
-                "provider": meta.get("provider", self._provider_label()),
+                "provider": meta.get("provider", provider_label),
                 "model": job.model,
                 "provider_request_id": rid,
                 "meta": meta,
@@ -928,8 +947,8 @@ class RenderExecutorService:
                 project_id,
                 segment_id,
                 jid,
-                self._provider_label(),
-                self._video_model_name(),
+                provider_label,
+                model_name,
                 getattr(job, "provider_request_id", None) if job else None,
                 err_msg,
             )
@@ -987,12 +1006,15 @@ class RenderExecutorService:
         if not rec:
             raise ShortDramaVideoInputError(f"Segment {segment_id!r} not found for project {project_id}")
 
+        provider = self._current_provider()
+        provider_label = self._provider_label(provider)
+        model_name = self._video_model_name(provider)
         job = RenderJob(
             project_id=project_id,
             target_type=RenderTargetType.SEGMENT.value,
             target_id=segment_id,
-            provider=self._provider_label(),
-            model=self._video_model_name(),
+            provider=provider_label,
+            model=model_name,
             status=RenderJobStatus.QUEUED.value,
             input_payload_json={"project_id": project_id, "segment_id": segment_id},
             meta_json={"progress": 0, "status": RenderJobStatus.QUEUED.value, "created_at": self._utc_now_iso()},
