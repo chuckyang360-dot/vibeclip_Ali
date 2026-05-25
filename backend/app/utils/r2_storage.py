@@ -56,3 +56,22 @@ def upload_file(file_path: str, key: str) -> str:
         raise
 
     return f"{base_url.rstrip('/')}/{key.lstrip('/')}"
+
+
+def build_presigned_get_url(key: str, *, expires_seconds: int | None = None) -> str:
+    bucket = os.getenv("R2_BUCKET_NAME")
+    if not bucket:
+        raise RuntimeError("R2_BUCKET_NAME is not configured")
+    ttl = expires_seconds
+    if ttl is None:
+        raw = os.getenv("R2_PRESIGNED_GET_EXPIRES_SECONDS", "3600")
+        try:
+            ttl = int(raw)
+        except ValueError:
+            ttl = 3600
+    ttl = max(60, min(int(ttl), 24 * 60 * 60))
+    return s3.generate_presigned_url(
+        "get_object",
+        Params={"Bucket": bucket, "Key": key.lstrip("/")},
+        ExpiresIn=ttl,
+    )

@@ -12,7 +12,7 @@ from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, s
 from sqlalchemy.orm import Session
 
 from ...database import get_db
-from ...utils.r2_storage import upload_file
+from ...utils.r2_storage import build_presigned_get_url, upload_file
 from ..exceptions import ShortDramaInvalidModelOutputError, ShortDramaProviderError
 from ..models import ReferenceVideoAnalysis
 from ..providers.railway_video_understanding_proxy import analyze_reference_video_via_railway_proxy
@@ -205,7 +205,15 @@ async def analyze_reference_video(video_id: int, db: Session = Depends(get_db)):
     db.refresh(record)
 
     started = time.monotonic()
-    payload = build_reference_video_understanding_payload(record.public_url)
+    analysis_video_url = record.public_url
+    if record.storage_key:
+        try:
+            analysis_video_url = build_presigned_get_url(record.storage_key)
+        except Exception:
+            logger.exception("[REFERENCE_VIDEO_PRESIGNED_URL_FAILED] video_id=%s storage_key=%s", record.id, record.storage_key)
+            analysis_video_url = record.public_url
+
+    payload = build_reference_video_understanding_payload(analysis_video_url)
     ai_cfg = get_ai_runtime_config(STAGE_REFERENCE_VIDEO_UNDERSTANDING)
     effective_system_prompt = ai_cfg.system_prompt or REFERENCE_VIDEO_UNDERSTANDING_SYSTEM_PROMPT
     effective_payload = apply_runtime_user_prompt_template(
@@ -213,7 +221,7 @@ async def analyze_reference_video(video_id: int, db: Session = Depends(get_db)):
         template=ai_cfg.user_prompt_template,
         payload_placeholder="reference_video_payload",
         values={
-            "video_url": record.public_url,
+            "video_url": analysis_video_url,
             "mime_type": record.mime_type,
             "video_id": record.id,
         },
@@ -221,7 +229,7 @@ async def analyze_reference_video(video_id: int, db: Session = Depends(get_db)):
     try:
         analysis_json = analyze_reference_video_via_railway_proxy(
             video_id=record.id,
-            video_url=record.public_url,
+            video_url=analysis_video_url,
             mime_type=record.mime_type,
             system_prompt=effective_system_prompt,
             user_payload=effective_payload,
