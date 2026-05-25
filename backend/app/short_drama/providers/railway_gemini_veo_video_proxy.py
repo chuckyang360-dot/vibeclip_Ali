@@ -31,6 +31,16 @@ logger = logging.getLogger(__name__)
 
 _SYNC_RESULT_LOCK = threading.Lock()
 _SYNC_RESULTS: dict[str, dict[str, Any]] = {}
+_GEMINI_VEO_MIN_DURATION_SECONDS = 4
+_GEMINI_VEO_MAX_DURATION_SECONDS = 8
+
+
+def _gemini_veo_safe_duration_seconds(duration_seconds: int) -> int:
+    try:
+        duration = int(round(float(duration_seconds)))
+    except (TypeError, ValueError):
+        duration = 6
+    return max(_GEMINI_VEO_MIN_DURATION_SECONDS, min(_GEMINI_VEO_MAX_DURATION_SECONDS, duration))
 
 
 def request_railway_gemini_veo_video_generation(
@@ -58,13 +68,26 @@ def request_railway_gemini_veo_video_generation(
             "(or set RAILWAY_XAI_VIDEO_PROXY_TOKEN)"
         )
 
+    safe_duration_seconds = _gemini_veo_safe_duration_seconds(duration_seconds)
+    if safe_duration_seconds != int(duration_seconds):
+        logger.info(
+            "[RAILWAY_GEMINI_VEO_DURATION_NORMALIZED] project_id=%s segment_id=%s requested_duration_seconds=%s "
+            "normalized_duration_seconds=%s min_seconds=%s max_seconds=%s",
+            project_id,
+            segment_id,
+            duration_seconds,
+            safe_duration_seconds,
+            _GEMINI_VEO_MIN_DURATION_SECONDS,
+            _GEMINI_VEO_MAX_DURATION_SECONDS,
+        )
+
     url = f"{base}/api/gemini/videos/generations"
     payload = build_railway_xai_video_proxy_payload(
         project_id=project_id,
         segment_id=segment_id,
         prompt=prompt,
         reference_image_urls=reference_image_urls,
-        duration_seconds=duration_seconds,
+        duration_seconds=safe_duration_seconds,
         aspect_ratio=aspect_ratio,
         resolution=resolution,
         model=model,
@@ -82,7 +105,7 @@ def request_railway_gemini_veo_video_generation(
         base,
         len(prompt or ""),
         len(payload.get("reference_image_urls") or []),
-        int(duration_seconds),
+        int(safe_duration_seconds),
         aspect_ratio,
         resolution or "",
         model,
