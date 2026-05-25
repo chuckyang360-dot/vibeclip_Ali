@@ -22,6 +22,7 @@ from ..utils.video_storage import (
     is_short_drama_r2_video_url,
     is_short_drama_static_video_url,
     local_path_from_public_video_url,
+    resolve_short_drama_video_public_url,
     rewrite_short_drama_r2_video_base,
     short_drama_r2_public_base_from_url,
 )
@@ -33,6 +34,12 @@ logger = logging.getLogger(__name__)
 
 def _natural_segment_sort_key(segment_id: str) -> list:
     return [int(p) if p.isdigit() else p.lower() for p in re.split(r"(\d+)", segment_id)]
+
+
+def _downloadable_merge_video_url(source_video_url: str) -> str:
+    if is_short_drama_r2_video_url(source_video_url):
+        return resolve_short_drama_video_public_url(source_video_url) or source_video_url
+    return source_video_url
 
 
 class MergeService:
@@ -83,21 +90,22 @@ class MergeService:
                 elif is_short_drama_r2_video_url(source_video_url):
                     if not canonical_r2_public_base:
                         canonical_r2_public_base = short_drama_r2_public_base_from_url(source_video_url) or ""
+                    download_url = _downloadable_merge_video_url(source_video_url)
                     logger.info(
                         "[FINAL_MERGE_INPUT_DOWNLOAD_START] project_id=%s segment_id=%s source_video_url=%s",
                         project_id,
                         s.segment_id,
-                        source_video_url,
+                        download_url,
                     )
                     try:
-                        local_path = download_public_video_to_temp_mp4(source_video_url)
+                        local_path = download_public_video_to_temp_mp4(download_url)
                         downloaded_temp_inputs.append(local_path)
                         file_size = local_path.stat().st_size if local_path.is_file() else 0
                         logger.info(
                             "[FINAL_MERGE_INPUT_DOWNLOAD_SUCCESS] project_id=%s segment_id=%s source_video_url=%s local_path=%s file_size=%s",
                             project_id,
                             s.segment_id,
-                            source_video_url,
+                            download_url,
                             str(local_path),
                             file_size,
                         )
@@ -106,7 +114,7 @@ class MergeService:
                             "[FINAL_MERGE_INPUT_DOWNLOAD_FAIL] project_id=%s segment_id=%s source_video_url=%s exception_class=%s err=%s",
                             project_id,
                             s.segment_id,
-                            source_video_url,
+                            download_url,
                             type(e).__name__,
                             str(e),
                         )
