@@ -33,10 +33,14 @@ def analyze_reference_video_via_railway_proxy(
     if not token:
         raise ShortDramaProviderError("AI_PROXY_TOKEN is required for video understanding")
 
-    proxy_path = (os.getenv("RAILWAY_VIDEO_UNDERSTANDING_PATH") or "/video/understanding").strip()
-    if not proxy_path.startswith("/"):
-        proxy_path = f"/{proxy_path}"
-    url = f"{base}{proxy_path}"
+    explicit_path = (os.getenv("RAILWAY_VIDEO_UNDERSTANDING_PATH") or "").strip()
+    proxy_paths = [explicit_path] if explicit_path else [
+        "/video/understanding",
+        "/api/gemini/video-understanding",
+        "/api/gemini/videos/understanding",
+        "/api/video/understanding",
+    ]
+    proxy_paths = [p if p.startswith("/") else f"/{p}" for p in proxy_paths if p]
     headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
     body = {
         "video_url": video_url,
@@ -49,21 +53,44 @@ def analyze_reference_video_via_railway_proxy(
         body["provider"] = str(provider).strip()
     if model:
         body["model"] = str(model).strip()
-    logger.info(
-        "[RAILWAY_VIDEO_UNDERSTANDING_REQUEST] video_id=%s proxy_base_url=%s proxy_path=%s mime_type=%s provider=%s model=%s payload_chars=%s",
-        video_id,
-        base,
-        proxy_path,
-        mime_type,
-        provider or "",
-        model or "",
-        len(json.dumps(user_payload, ensure_ascii=False, default=str)),
-    )
+    payload_chars = len(json.dumps(user_payload, ensure_ascii=False, default=str))
 
     timeout = httpx.Timeout(timeout_sec, connect=min(30.0, float(timeout_sec)))
+    last_status = ""
+    last_snippet = ""
     try:
         with httpx.Client(timeout=timeout, follow_redirects=True) as client:
-            resp = client.post(url, headers=headers, json=body)
+            for proxy_path in proxy_paths:
+                url = f"{base}{proxy_path}"
+                logger.info(
+                    "[RAILWAY_VIDEO_UNDERSTANDING_REQUEST] video_id=%s proxy_base_url=%s proxy_path=%s "
+                    "mime_type=%s provider=%s model=%s payload_chars=%s",
+                    video_id,
+                    base,
+                    proxy_path,
+                    mime_type,
+                    provider or "",
+                    model or "",
+                    payload_chars,
+                )
+                resp = client.post(url, headers=headers, json=body)
+                snippet = _trunc_log_message(resp.text or "", 1500)
+                if resp.status_code in (404, 405) and not explicit_path:
+                    logger.warning(
+                        "[RAILWAY_VIDEO_UNDERSTANDING_PATH_MISS] video_id=%s proxy_path=%s status_code=%s body=%s",
+                        video_id,
+                        proxy_path,
+                        resp.status_code,
+                        snippet,
+                    )
+                    last_status = str(resp.status_code)
+                    last_snippet = snippet
+                    continue
+                break
+            else:
+                raise ShortDramaProviderError(
+                    f"railway_video_understanding_no_supported_path: last_http_{last_status}: {last_snippet}"
+                )
     except httpx.TimeoutException as e:
         raise ShortDramaProviderError(f"railway_video_understanding_timeout: {e}") from e
     except httpx.HTTPError as e:

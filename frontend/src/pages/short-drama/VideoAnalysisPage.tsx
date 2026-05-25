@@ -382,7 +382,7 @@ export function ShortDramaVideoAnalysisPage() {
                   <div className="flex h-full min-h-[360px] flex-col items-center justify-center text-center">
                     <p className="text-[14px] font-bold">{video.analysis_status === 'failed' ? '解析失败' : '等待解析'}</p>
                     <p className="mt-2 max-w-sm text-[12px] leading-relaxed text-[#8E8E93]">
-                      {video.error_message || '点击重新解析后会再次请求 Railway proxy。'}
+                      {video.error_message || '点击重新解析后会再次尝试解析该视频。'}
                     </p>
                     <button
                       type="button"
