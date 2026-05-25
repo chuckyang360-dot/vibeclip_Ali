@@ -16,6 +16,8 @@ logger = logging.getLogger(__name__)
 
 _STORY_LONG_TIMEOUT_STAGES = frozenset({"STORY_GENERATION", "STORY_GENERATION_REPAIR"})
 _STORY_LONG_TIMEOUT_SERVICES = frozenset({"story_planner", "story_planner_repair"})
+_SCRIPT_IMPORT_LONG_TIMEOUT_STAGES = frozenset({"SCRIPT_IMPORT_PARSE"})
+_SCRIPT_IMPORT_LONG_TIMEOUT_SERVICES = frozenset({"script_import"})
 
 
 def effective_railway_text_proxy_timeout_seconds(
@@ -35,6 +37,11 @@ def effective_railway_text_proxy_timeout_seconds(
         if raw is not None and int(raw) > 0:
             return max(5, int(raw))
         return max(5, int(settings.SHORT_DRAMA_XAI_TEXT_TIMEOUT_SECONDS or 180))
+    if stage_key in _SCRIPT_IMPORT_LONG_TIMEOUT_STAGES or svc_key in _SCRIPT_IMPORT_LONG_TIMEOUT_SERVICES:
+        raw = settings.SCRIPT_IMPORT_PROXY_TIMEOUT_SECONDS
+        if raw is not None and int(raw) > 0:
+            return max(5, int(raw))
+        return max(5, int(settings.AI_PROXY_TIMEOUT_SECONDS or 120))
     return max(5, int(settings.AI_PROXY_TIMEOUT_SECONDS or 120))
 
 
