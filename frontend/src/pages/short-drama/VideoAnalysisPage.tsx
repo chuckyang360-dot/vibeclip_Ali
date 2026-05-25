@@ -165,7 +165,17 @@ export function ShortDramaVideoAnalysisPage() {
   const analysis = video?.analysis_json || null;
   const canAnalyze = video != null && !uploading && !analyzing;
   const currentValue = sectionValue(analysis, active);
-  const statusText = video?.analysis_status === 'success' ? '解析完成' : video?.analysis_status === 'failed' ? '解析失败' : video ? '待解析' : '等待上传';
+  const statusText = uploading
+    ? '上传中'
+    : analyzing || video?.analysis_status === 'processing'
+      ? '解析中'
+      : video?.analysis_status === 'success'
+        ? '解析完成'
+        : video?.analysis_status === 'failed'
+          ? '解析失败'
+          : video
+            ? '待解析'
+            : '等待上传';
 
   const handleFile = async (file?: File) => {
     if (!file) return;
@@ -183,6 +193,7 @@ export function ShortDramaVideoAnalysisPage() {
     try {
       const uploaded = await uploadReferenceVideo(file, user?.id ?? null);
       setVideo(uploaded);
+      setUploading(false);
       setAnalyzing(true);
       const analyzed = await analyzeReferenceVideo(uploaded.id);
       setVideo(analyzed.video);
@@ -360,7 +371,13 @@ export function ShortDramaVideoAnalysisPage() {
                 </button>
               </div>
               <div className="min-h-0 flex-1 overflow-y-auto p-5">
-                {!video ? (
+                {uploading ? (
+                  <div className="flex h-full min-h-[360px] flex-col items-center justify-center text-center">
+                    <i className={ri('ri-loader-4-line', 'animate-spin text-[28px] text-[#1D1D1F]')} aria-hidden />
+                    <p className="mt-4 text-[14px] font-bold">正在上传视频</p>
+                    <p className="mt-2 text-[12px] text-[#8E8E93]">上传完成后会自动开始解析。</p>
+                  </div>
+                ) : !video ? (
                   <div className="flex h-full min-h-[360px] flex-col items-center justify-center text-center">
                     <div className="flex h-14 w-14 items-center justify-center rounded-xl bg-[#F5F5F7]" style={{ color: sdColors.ink }}>
                       <i className={ri('ri-movie-2-line', 'text-[26px]')} aria-hidden />
