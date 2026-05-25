@@ -1,6 +1,7 @@
 import logging
 import json
 import time
+from urllib.parse import parse_qs, urlparse
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
@@ -123,13 +124,29 @@ def _public_video_url(u: str | None) -> str | None:
     return resolve_short_drama_video_public_url(u)
 
 
+def _is_presigned_object_url(u: str | None) -> bool:
+    if not u:
+        return False
+    query = parse_qs(urlparse(str(u)).query)
+    keys = {k.lower() for k in query}
+    return bool(
+        {"x-amz-algorithm", "x-amz-signature", "x-amz-credential", "awsaccesskeyid", "signature"}
+        & keys
+    )
+
+
 def _rewrite_final_video_url_from_segments(final_url: str | None, seg_payload: list[dict]) -> str | None:
     from ..utils.video_storage import rewrite_short_drama_r2_video_base, short_drama_r2_public_base_from_url
 
     if not final_url:
         return final_url
+    if _is_presigned_object_url(final_url):
+        return final_url
     for row in seg_payload:
-        base = short_drama_r2_public_base_from_url(str(row.get("video_url") or ""))
+        segment_url = str(row.get("video_url") or "")
+        if _is_presigned_object_url(segment_url):
+            continue
+        base = short_drama_r2_public_base_from_url(segment_url)
         if base:
             rewritten = rewrite_short_drama_r2_video_base(final_url, base)
             if rewritten and rewritten != final_url:
