@@ -193,6 +193,37 @@ def rewrite_short_drama_r2_video_base(public_url: str | None, public_base: str |
     return f"{base}{path[marker_index:]}"
 
 
+def short_drama_r2_video_key_from_url(public_url: str | None) -> str | None:
+    u = (public_url or "").strip()
+    if not u:
+        return None
+    if u.startswith("short-drama/videos/"):
+        return u
+    if not (u.startswith("http://") or u.startswith("https://")):
+        return None
+    parsed = urlparse(u)
+    path = unquote(parsed.path or "")
+    marker_index = path.find(_SHORT_DRAMA_R2_VIDEO_PATH_MARKER)
+    if marker_index < 0:
+        return None
+    return path[marker_index:].lstrip("/")
+
+
+def _maybe_presign_short_drama_r2_video_url(public_url: str) -> str:
+    key = short_drama_r2_video_key_from_url(public_url)
+    if not key:
+        return public_url
+    if not (os.getenv("R2_BUCKET_NAME") or "").strip():
+        return public_url
+    try:
+        from ...utils.r2_storage import build_presigned_get_url
+
+        return build_presigned_get_url(key)
+    except Exception:
+        logger.exception("[SHORT_DRAMA_VIDEO_PRESIGN_FAILED] key=%s", key[:240])
+        return public_url
+
+
 def is_short_drama_video_url(public_url: str) -> bool:
     return is_short_drama_static_video_url(public_url) or is_short_drama_r2_video_url(public_url)
 
@@ -232,10 +263,14 @@ def resolve_short_drama_video_public_url(url: str | None) -> str | None:
     if not s:
         return None
     if s.startswith("http://") or s.startswith("https://"):
-        return _rewrite_misconfigured_api_r2_video_url(s)
+        rewritten = _rewrite_misconfigured_api_r2_video_url(s)
+        return _maybe_presign_short_drama_r2_video_url(rewritten)
     if s.startswith(_SHORT_DRAMA_STATIC_VIDEO_PREFIX):
         return build_public_static_url(s)
     if s.startswith("short-drama/videos/"):
+        signed = _maybe_presign_short_drama_r2_video_url(s)
+        if signed != s:
+            return signed
         base = (os.getenv("R2_PUBLIC_BASE_URL") or "").strip().rstrip("/")
         if base:
             return f"{base}/{s.lstrip('/')}"

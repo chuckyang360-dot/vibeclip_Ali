@@ -38,6 +38,7 @@ from ..utils.enums import RenderTargetType, WorkflowStep
 from ..utils.credit_guards import require_segment_video_credits
 from ...services.credit_service import count_segments_pending_video
 from ..utils.flow_logging import log_api_error, log_api_request, log_api_success
+from ..utils.video_storage import resolve_short_drama_video_public_url
 
 logger = logging.getLogger(__name__)
 
@@ -448,7 +449,7 @@ async def get_render_job_status(job_id: int, db: Session = Depends(get_db)):
         segment_id=str(job.target_id),
         status=status,
         progress=progress,
-        video_url=job.output_url,
+        video_url=resolve_short_drama_video_public_url(job.output_url),
         error=job.error_message,
         request_id=job.provider_request_id,
     )
