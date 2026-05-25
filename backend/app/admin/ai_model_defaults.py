@@ -29,6 +29,11 @@ AI_STAGE_DEFINITIONS: list[dict[str, str]] = [
         "stage_name": "视频解构",
         "capability": "vision_text",
     },
+    {
+        "stage_key": "script_import_parse",
+        "stage_name": "剧本导入解析",
+        "capability": "text",
+    },
 ]
 
 
@@ -238,6 +243,13 @@ DEFAULT_AI_PROMPTS: list[dict[str, Any]] = [
         "system_prompt": "Generate a video prompt that follows the segment script, reference assets, duration, and aspect ratio.",
         "user_prompt_template": "{video_payload}",
         "variables_schema": {"required": ["video_payload"], "optional": ["reference_image_urls", "duration_seconds", "aspect_ratio"]},
+    },
+    {
+        "stage_key": "script_import_parse",
+        "name": "剧本导入解析默认 Prompt",
+        "system_prompt": "Parse an imported script, storyboard, or prompt template into strict JSON segments for direct S4 video generation.",
+        "user_prompt_template": "{script_import_payload}",
+        "variables_schema": {"required": ["script_import_payload"], "optional": ["project_id", "file_name"]},
     },
     {
         "stage_key": "reference_video_understanding",

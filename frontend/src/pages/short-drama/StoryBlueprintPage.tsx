@@ -29,7 +29,7 @@ import {
 } from './utils/storyBlueprintDerived';
 import { SHORT_DRAMA_UI } from './utils/shortDramaUiCopy';
 import { workflowNavProjectName } from './utils/workflowProjectName';
-import { withProjectQuery } from './utils/shortDramaRoutes';
+import { isScriptImportWorkflowLike, withProjectQuery } from './utils/shortDramaRoutes';
 import { workflowFooterNextButtonClass, workflowFooterPrevButtonClass } from './utils/workflowFooterNav';
 import { ri, sdColors, sdFontHeading } from './utils/shortDramaHelpers';
 import { touchShortDramaProjectStep } from '@/services/shortDramaApi';
@@ -108,6 +108,13 @@ export function ShortDramaStoryBlueprintPage() {
   useEffect(() => {
     refreshSession();
   }, [refreshSession]);
+
+  useEffect(() => {
+    if (projectId == null || !pipeline) return;
+    if (isScriptImportWorkflowLike(pipeline)) {
+      navigate(withProjectQuery('/short-drama/step4', projectId), { replace: true });
+    }
+  }, [navigate, pipeline, projectId]);
 
   useEffect(() => {
     const raw = pipeline?.story_blueprint?.blueprint;

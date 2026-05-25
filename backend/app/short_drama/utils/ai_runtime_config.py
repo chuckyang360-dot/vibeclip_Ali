@@ -15,6 +15,7 @@ STAGE_S2_STORY_GENERATION = "s2_story_generation"
 STAGE_S3_ASSET_MANAGEMENT = "s3_asset_management"
 STAGE_S4_VIDEO_GENERATION = "s4_video_generation"
 STAGE_REFERENCE_VIDEO_UNDERSTANDING = "reference_video_understanding"
+STAGE_SCRIPT_IMPORT_PARSE = "script_import_parse"
 
 
 @dataclass(frozen=True)

@@ -13,6 +13,11 @@ const STEPS = [
   { label: '视频生成', path: '/short-drama/step4', step: 4 },
 ] as const;
 
+const SCRIPT_IMPORT_STEPS = [
+  { label: '剧本导入', path: '/short-drama/create', step: 0 },
+  { label: '视频生成', path: '/short-drama/step4', step: 4 },
+] as const;
+
 export type SDWorkflowNavProps = {
   /** Framer：无 currentStep 时不渲染中部步骤条（如创建项目页） */
   currentStep?: number;
@@ -23,6 +28,7 @@ export type SDWorkflowNavProps = {
   onSaveDraft?: (intent: 'save_draft' | 'before_exit') => Promise<boolean>;
   /** S0 创建页可关闭保存/离开动作，防止链路串线 */
   allowSaveAndLeave?: boolean;
+  workflowMode?: 'standard' | 'script_import' | string | null;
 };
 
 /**
@@ -35,9 +41,12 @@ export function SDWorkflowNav({
   isDirty = false,
   onSaveDraft,
   allowSaveAndLeave = true,
+  workflowMode = 'standard',
 }: SDWorkflowNavProps) {
   const navigate = useNavigate();
   const [dialog, setDialog] = useState<null | 'leave' | 'save'>(null);
+  const isScriptImport = workflowMode === 'script_import';
+  const steps = isScriptImport ? SCRIPT_IMPORT_STEPS : STEPS;
 
   const handleLeaveHomeClick = () => {
     if (!isDirty) {
@@ -110,7 +119,7 @@ export function SDWorkflowNav({
 
         {currentStep !== undefined ? (
           <div className="hidden items-center gap-1 md:flex">
-            {STEPS.map((s, idx) => {
+            {steps.map((s, idx) => {
               const isActive = s.step === currentStep;
               const isDone = s.step < currentStep;
               return (
@@ -142,7 +151,7 @@ export function SDWorkflowNav({
                     </span>
                     {s.label}
                   </button>
-                  {idx < STEPS.length - 1 ? (
+                  {idx < steps.length - 1 ? (
                     <i className={ri('ri-arrow-right-s-line', 'mx-0.5 text-[14px] text-[#D1D1D6]')} aria-hidden />
                   ) : null}
                 </div>
@@ -188,7 +197,7 @@ export function SDWorkflowNav({
           </button>
         </div>
       </div>
-      {currentStep !== undefined ? <MobileWorkflowStepBar currentStep={currentStep} /> : null}
+      {currentStep !== undefined ? <MobileWorkflowStepBar currentStep={currentStep} workflowMode={workflowMode} /> : null}
       {dialog ? (
         <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/35 px-4">
           <div className="w-full max-w-md rounded-2xl border border-[#EAEAEA] bg-white p-5 shadow-xl">

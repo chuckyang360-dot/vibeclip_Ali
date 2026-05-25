@@ -42,6 +42,8 @@ export type ShortDramaProjectDto = {
     image_url: string | null;
     status: 'ready' | 'missing';
   };
+  workflow_mode?: 'standard' | 'script_import' | string | null;
+  script_import?: ScriptImportStateDto | null;
   creative_intent_input?: CreativeIntentInputDto | null;
   product_input?: ProductInputDto | null;
   product_understanding?: Record<string, unknown> | null;
@@ -69,6 +71,46 @@ export type CreativeIntentInputDto = {
   platform_hints: string[];
   duration_hint: string;
   aspect_ratio_hint: string;
+};
+
+export type ScriptImportInputDto = {
+  raw_text: string;
+  file_name?: string;
+  platform_hints?: string[];
+  duration_hint?: string;
+  aspect_ratio_hint?: string;
+  strict_mode?: boolean;
+};
+
+export type ScriptImportAnalysisDto = {
+  input_type?: string;
+  confidence?: number;
+  detected_language?: string;
+  missing_fields?: string[];
+  global_style?: string;
+  constraints?: string[];
+  summary?: string;
+};
+
+export type ScriptImportStateDto = {
+  source?: {
+    file_name?: string;
+    raw_text?: string;
+    content_hash?: string;
+  };
+  analysis?: ScriptImportAnalysisDto;
+  parse_status?: string;
+  segment_count?: number;
+};
+
+export type ScriptImportPrepareResponseDto = {
+  project_id: number;
+  workflow_mode: 'script_import';
+  parse_status: 'completed';
+  analysis: ScriptImportAnalysisDto;
+  segment_count: number;
+  record_ids: number[];
+  redirect_to: string;
 };
 
 export type ProductInputImageDto = {
@@ -439,6 +481,8 @@ export type PipelineSummaryDto = {
   segment_render_statuses?: SegmentScriptPipelineRowDto[];
   image_url_filled?: number;
   asset_rows_total?: number;
+  workflow_mode?: 'standard' | 'script_import' | string | null;
+  script_import?: ScriptImportStateDto | null;
 };
 
 export type VideoBatchSummaryResponseDto = {

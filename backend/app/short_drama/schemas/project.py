@@ -28,6 +28,35 @@ class CreativeIntentInput(BaseModel):
     aspect_ratio_hint: str = ""
 
 
+class ScriptImportInput(BaseModel):
+    raw_text: str = Field(..., min_length=1)
+    file_name: str = ""
+    platform_hints: List[str] = Field(default_factory=list)
+    duration_hint: str = ""
+    aspect_ratio_hint: str = ""
+    strict_mode: bool = False
+
+
+class ScriptImportAnalysis(BaseModel):
+    input_type: str = "mixed"
+    confidence: float = 0.0
+    detected_language: str = ""
+    missing_fields: List[str] = Field(default_factory=list)
+    global_style: str = ""
+    constraints: List[str] = Field(default_factory=list)
+    summary: str = ""
+
+
+class ScriptImportPrepareResponse(BaseModel):
+    project_id: int
+    workflow_mode: Literal["script_import"] = "script_import"
+    parse_status: Literal["completed"] = "completed"
+    analysis: ScriptImportAnalysis = Field(default_factory=ScriptImportAnalysis)
+    segment_count: int = 0
+    record_ids: List[int] = Field(default_factory=list)
+    redirect_to: str
+
+
 class ProductImageInput(BaseModel):
     url: str = ""
     image_url: str = ""
@@ -101,6 +130,8 @@ class ShortDramaProjectResponse(BaseModel):
     segment_video_count: Optional[int] = None
     segment_video_total: Optional[int] = None
     cover_asset: ProjectCoverAsset = Field(default_factory=ProjectCoverAsset)
+    workflow_mode: Optional[str] = None
+    script_import: Optional[Dict[str, Any]] = None
     creative_intent_input: Optional[Dict[str, Any]] = None
     product_input: Optional[Dict[str, Any]] = None
     product_understanding: Optional[Dict[str, Any]] = None
@@ -164,3 +195,5 @@ class PipelineSummaryResponse(BaseModel):
     asset_generation_specs_count: int = 0
     asset_counts: Optional[Dict[str, int]] = None
     segment_scripts_count: Optional[int] = None
+    workflow_mode: Optional[str] = None
+    script_import: Optional[Dict[str, Any]] = None

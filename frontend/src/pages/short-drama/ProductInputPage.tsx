@@ -12,7 +12,7 @@ import {
 } from '@/services/shortDramaApi';
 import type { CreativeBriefDto, ProductInputDto, ProductInputImageDto } from '@/types/shortDramaApi';
 import { ri, sdColors, sdFontHeading } from './utils/shortDramaHelpers';
-import { withProjectQuery } from './utils/shortDramaRoutes';
+import { isScriptImportWorkflowLike, withProjectQuery } from './utils/shortDramaRoutes';
 import { touchProjectNameFromPipeline } from './utils/shortDramaStorage';
 import { workflowNavProjectName } from './utils/workflowProjectName';
 import { handleApiInsufficientCredits } from '@/utils/insufficientCredits';
@@ -168,6 +168,10 @@ export function ShortDramaProductInputPage() {
       try {
         const p = await getShortDramaProject(projectId);
         if (cancelled) return;
+        if (isScriptImportWorkflowLike(p)) {
+          navigate(withProjectQuery('/short-drama/step4', projectId), { replace: true });
+          return;
+        }
         setNavTitle(p.project_name);
         touchProjectNameFromPipeline(projectId, p.project_name);
         if (p.product_input) {
@@ -184,6 +188,10 @@ export function ShortDramaProductInputPage() {
       try {
         const pipe = await getShortDramaPipeline(projectId);
         if (cancelled) return;
+        if (isScriptImportWorkflowLike(pipe)) {
+          navigate(withProjectQuery('/short-drama/step4', projectId), { replace: true });
+          return;
+        }
         if (pipe.product_input) {
           setInput(pipe.product_input);
           lastSavedProductInputRef.current = serializeProductInput(pipe.product_input);
@@ -199,7 +207,7 @@ export function ShortDramaProductInputPage() {
     return () => {
       cancelled = true;
     };
-  }, [projectId]);
+  }, [navigate, projectId]);
 
   const displayName = workflowNavProjectName({ fetchedProjectName: navTitle, sessionProjectName: projectName });
   const hasProductInput = useMemo(

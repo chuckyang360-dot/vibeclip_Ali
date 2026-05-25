@@ -16,3 +16,17 @@ export function withProjectQuery(path: string, projectId: number | null | undefi
   const sep = path.includes('?') ? '&' : '?';
   return `${path}${sep}projectId=${encodeURIComponent(String(id))}`;
 }
+
+export function isScriptImportWorkflowLike(source: unknown): boolean {
+  const row = source && typeof source === 'object' ? (source as Record<string, unknown>) : {};
+  if (row.workflow_mode === 'script_import' || row.script_import) return true;
+  const project = row.project && typeof row.project === 'object' ? (row.project as Record<string, unknown>) : {};
+  if (project.workflow_mode === 'script_import' || project.script_import) return true;
+  const step =
+    project.step_status && typeof project.step_status === 'object'
+      ? (project.step_status as Record<string, unknown>)
+      : row.step_status && typeof row.step_status === 'object'
+        ? (row.step_status as Record<string, unknown>)
+        : {};
+  return step.step_2 === 'skipped' && step.step_3 === 'skipped';
+}

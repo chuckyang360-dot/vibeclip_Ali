@@ -38,6 +38,7 @@ from ..utils.video_prompt_builder import build_segment_video_plan
 from ..utils.ai_runtime_config import STAGE_S4_VIDEO_GENERATION, get_ai_runtime_config
 from ..utils.video_storage import (
     absolutize_media_url_for_provider,
+    save_segment_video_file,
 )
 from ..utils.xai_reference_image import (
     build_xai_ready_reference_image,
@@ -732,22 +733,6 @@ class RenderExecutorService:
                         str(disk_path.resolve()),
                         disk_path.stat().st_size,
                     )
-                ts = int(time.time() * 1000)
-                safe_seg = "".join(c if c.isalnum() or c in "-_" else "_" for c in segment_id)[:120]
-                r2_key = f"short-drama/videos/{project_id}/segment_{safe_seg}_{ts}.mp4"
-                url = upload_file(str(disk_path.resolve()), r2_key)
-                trace["save_ok"] = True
-                trace["final_video_url"] = url
-                self._set_job_status(db, job, status=RenderJobStatus.RUNNING.value, progress=90)
-                logger.info(
-                    "[SEGMENT_VIDEO_SAVED] project_id=%s segment_id=%s absolute_file_path=%s public_video_url=%s file_exists=%s file_size=%s",
-                    project_id,
-                    segment_id,
-                    str(disk_path.resolve()),
-                    url,
-                    disk_path.is_file(),
-                    disk_path.stat().st_size if disk_path.is_file() else 0,
-                )
                 try:
                     validate_segment_mp4_path(disk_path, segment_id=segment_id)
                 except ShortDramaInvalidSegmentVideoError:
@@ -756,6 +741,33 @@ class RenderExecutorService:
                     except OSError:
                         pass
                     raise
+                if (os.getenv("R2_BUCKET_NAME") or "").strip():
+                    ts = int(time.time() * 1000)
+                    safe_seg = "".join(c if c.isalnum() or c in "-_" else "_" for c in segment_id)[:120]
+                    r2_key = f"short-drama/videos/{project_id}/segment_{safe_seg}_{ts}.mp4"
+                    url = upload_file(str(disk_path.resolve()), r2_key)
+                    storage_mode = "r2"
+                else:
+                    url = save_segment_video_file(
+                        project_id=project_id,
+                        segment_id=segment_id,
+                        source_path=disk_path,
+                    )
+                    storage_mode = "local_static"
+                trace["save_ok"] = True
+                trace["final_video_url"] = url
+                self._set_job_status(db, job, status=RenderJobStatus.RUNNING.value, progress=90)
+                logger.info(
+                    "[SEGMENT_VIDEO_SAVED] project_id=%s segment_id=%s absolute_file_path=%s public_video_url=%s "
+                    "file_exists=%s file_size=%s storage=%s",
+                    project_id,
+                    segment_id,
+                    str(disk_path.resolve()),
+                    url,
+                    disk_path.is_file(),
+                    disk_path.stat().st_size if disk_path.is_file() else 0,
+                    storage_mode,
+                )
             job_meta = self._job_meta(job)
             job_meta.update(meta)
             job.meta_json = job_meta

@@ -1,24 +1,30 @@
 import { ri } from '../utils/shortDramaHelpers';
 
 const STEP_LABELS = ['创作意图', '商品理解', '剧本生成', '资产管理', '视频生成'];
+const SCRIPT_IMPORT_LABELS = ['剧本导入', '视频生成'];
 
 type MobileWorkflowStepBarProps = {
   currentStep: number;
+  workflowMode?: 'standard' | 'script_import' | string | null;
 };
 
-export function MobileWorkflowStepBar({ currentStep }: MobileWorkflowStepBarProps) {
+export function MobileWorkflowStepBar({ currentStep, workflowMode }: MobileWorkflowStepBarProps) {
+  const isScriptImport = workflowMode === 'script_import';
+  const labels = isScriptImport ? SCRIPT_IMPORT_LABELS : STEP_LABELS;
+  const activeIndex = isScriptImport ? (currentStep >= 4 ? 1 : 0) : currentStep;
+
   return (
     <div className="md:hidden border-b border-[#EAEAEA] bg-white px-4 py-3">
       <div className="mb-2 flex items-center justify-between">
         <span className="text-[11px] font-bold uppercase tracking-[0.18em] text-[#8E8E93]">
-          STEP {String(currentStep).padStart(2, '0')}
+          {isScriptImport ? 'SCRIPT IMPORT' : `STEP ${String(currentStep).padStart(2, '0')}`}
         </span>
-        <span className="text-[12px] font-semibold text-[#1D1D1F]">{STEP_LABELS[currentStep] || '工作流'}</span>
+        <span className="text-[12px] font-semibold text-[#1D1D1F]">{labels[activeIndex] || '工作流'}</span>
       </div>
-      <div className="grid grid-cols-5 gap-1">
-        {STEP_LABELS.map((label, index) => {
-          const active = index === currentStep;
-          const done = index < currentStep;
+      <div className="grid gap-1" style={{ gridTemplateColumns: `repeat(${labels.length}, minmax(0, 1fr))` }}>
+        {labels.map((label, index) => {
+          const active = index === activeIndex;
+          const done = index < activeIndex;
           return (
             <div
               key={label}

@@ -7,6 +7,7 @@ from .product import router as product_router
 from .project import router as project_router
 from .reference_video import router as reference_video_router
 from .segment import router as segment_router
+from .script_import import router as script_import_router
 from .story import router as story_router
 from .video import router as video_router
 
@@ -18,6 +19,7 @@ router.include_router(story_router, prefix="/story", tags=["Short Drama — Stor
 router.include_router(asset_router, prefix="/assets/specs", tags=["Short Drama — Assets"])
 router.include_router(asset_images_router, prefix="/assets/images", tags=["Short Drama — Asset Images"])
 router.include_router(segment_router, prefix="/segment", tags=["Short Drama — Segments"])
+router.include_router(script_import_router, prefix="/script-import", tags=["Short Drama — Script Import"])
 router.include_router(video_router, prefix="/videos", tags=["Short Drama — Video"])
 router.include_router(reference_video_router, prefix="/reference-videos", tags=["Short Drama — Reference Videos"])
 

@@ -434,6 +434,17 @@ def _segment_v2_video_prompt_pass_through(segment: SegmentScriptSchema) -> bool:
     return False
 
 
+def _segment_allows_assetless_video(segment: SegmentScriptSchema) -> bool:
+    meta = segment.meta if isinstance(segment.meta, dict) else {}
+    if meta.get("workflow_mode") == "script_import" or meta.get("assetless_video_generation"):
+        return True
+    for shot in segment.shots or []:
+        sc = _get_shot_value(shot, "source_visual_constraints", {}) or {}
+        if isinstance(sc, dict) and sc.get("assetless_script_import"):
+            return True
+    return False
+
+
 def _v2_pass_through_segment_prompt(
     segment: SegmentScriptSchema,
     *,
@@ -706,7 +717,7 @@ def build_segment_video_plan(
 
     ref_urls = _dedupe_preserve(character_ref_urls + scene_ref_urls + product_ref_urls)
     selected_character_names = _dedupe_preserve(selected_character_names)
-    if not ref_urls:
+    if not ref_urls and not _segment_allows_assetless_video(segment):
         raise ShortDramaVideoInputError(
             f"Segment {segment.segment_id!r} has no reference images "
             "(character/scene/product image_url required for reference-to-video)"

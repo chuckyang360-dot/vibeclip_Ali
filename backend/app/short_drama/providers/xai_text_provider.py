@@ -102,9 +102,12 @@ class XAITextProvider:
         max_output_tokens: int = 8192,
         model: str | None = None,
         provider: str | None = None,
+        use_proxy_default_model: bool = False,
     ) -> dict[str, Any]:
-        model = model or effective_xai_text_model()
         provider = (provider or "xai").strip().lower()
+        model = (model or "").strip()
+        if not model and provider in {"", "xai", "grok"}:
+            model = effective_xai_text_model()
         user_text = json.dumps(user_payload, ensure_ascii=False)
         user_content = _build_user_content_parts(user_text, image_urls)
         system_prompt_len = len(system_prompt or "")
@@ -115,6 +118,7 @@ class XAITextProvider:
         log_provider = "railway_proxy" if use_railway_proxy else "grok"
         try:
             if use_railway_proxy:
+                proxy_model = None if use_proxy_default_model else model
                 extra_ctx = ai_log_extra_from_context(
                     {
                         "project_id": project_id,
@@ -130,7 +134,7 @@ class XAITextProvider:
                 log_ai_request(
                     logger,
                     "railway_proxy",
-                    model,
+                    proxy_model or "(proxy_default)",
                     timeout_seconds=proxy_timeout,
                     system_prompt_len=len(system_prompt),
                     user_content_kind="text_chat_proxy",
@@ -151,7 +155,7 @@ class XAITextProvider:
                     image_urls=urls or None,
                     max_output_tokens=max_output_tokens,
                     provider=provider,
-                    model=model,
+                    model=proxy_model,
                 )
                 request_id = client_rid
                 raw: dict[str, Any] = {}

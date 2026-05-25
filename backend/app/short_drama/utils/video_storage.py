@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import os
+import shutil
 import tempfile
 import time
 from pathlib import Path
@@ -64,6 +65,44 @@ def save_segment_video_bytes(*, project_id: int, segment_id: str, data: bytes) -
         project_id,
         segment_id,
         abs_path,
+        public,
+        exists,
+        fsize,
+    )
+    return public
+
+
+def save_segment_video_file(*, project_id: int, segment_id: str, source_path: str | Path) -> str:
+    ts = int(time.time() * 1000)
+    safe_seg = "".join(c if c.isalnum() or c in "-_" else "_" for c in segment_id)[:120]
+    fname = f"segment_{safe_seg}_{ts}.mp4"
+    proj = ensure_video_project_dir(project_id)
+    path = proj / fname
+    src = Path(source_path)
+    try:
+        shutil.copyfile(src, path)
+    except OSError as e:
+        logger.error(
+            "[SEGMENT_VIDEO_SAVE_FAIL] project_id=%s segment_id=%s source_file_path=%s absolute_file_path=%s "
+            "exception_class=%s err=%s",
+            project_id,
+            segment_id,
+            str(src.resolve()),
+            str(path.resolve()),
+            type(e).__name__,
+            str(e),
+        )
+        logger.exception("SHORT_DRAMA_VIDEO_SAVE_FAIL project_id=%s path=%s", project_id, path)
+        raise ShortDramaVideoSaveError(f"Failed to save segment video: {e}") from e
+    public = public_video_url_path(project_id, fname)
+    exists = path.is_file()
+    fsize = path.stat().st_size if exists else 0
+    logger.info(
+        "[SEGMENT_VIDEO_SAVED] project_id=%s segment_id=%s absolute_file_path=%s public_video_url=%s "
+        "file_exists=%s file_size=%s storage=local_static",
+        project_id,
+        segment_id,
+        str(path.resolve()),
         public,
         exists,
         fsize,

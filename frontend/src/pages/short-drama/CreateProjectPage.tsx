@@ -6,6 +6,7 @@ import {
   ShortDramaApiError,
   createShortDramaProject,
   getShortDramaProject,
+  prepareShortDramaScriptImport,
   saveShortDramaCreativeIntent,
 } from '@/services/shortDramaApi';
 import type { CreativeIntentInputDto } from '@/types/shortDramaApi';
@@ -73,13 +74,22 @@ export function ShortDramaCreateProjectPage() {
   const routedProjectId = useMemo(() => parseProjectId(searchParams), [searchParams]);
   const [projectId, setProjectId] = useState<number | null>(routedProjectId);
   const [intent, setIntent] = useState<CreativeIntentInputDto>(emptyIntent);
+  const [inputMode, setInputMode] = useState<'intent' | 'script_import'>('intent');
+  const [scriptText, setScriptText] = useState('');
+  const [scriptFileName, setScriptFileName] = useState('');
+  const [strictScriptMode, setStrictScriptMode] = useState(false);
   const [optionalOpen, setOptionalOpen] = useState(false);
   const [intentFocused, setIntentFocused] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
 
   const user = getUser();
-  const canSubmit = Boolean(intent.intent_text.trim() && user && !submitting);
+  const canSubmit = Boolean(
+    user &&
+    !submitting &&
+    (inputMode === 'script_import' ? scriptText.trim().length >= 4 : intent.intent_text.trim()),
+  );
+  const canSaveDraft = inputMode === 'intent' && canSubmit;
   const hasHints = Boolean(
     intent.platform_hints.length > 0 ||
     intent.duration_hint ||
@@ -102,6 +112,11 @@ export function ShortDramaCreateProjectPage() {
             aspect_ratio_hint: project.creative_intent_input.aspect_ratio_hint || '',
           });
         }
+        if (project.workflow_mode === 'script_import' && project.script_import) {
+          setInputMode('script_import');
+          setScriptText(project.script_import.source?.raw_text || '');
+          setScriptFileName(project.script_import.source?.file_name || '');
+        }
         setSession(project.id, project.project_name);
       } catch {
         if (!cancelled) setProjectId(null);
@@ -115,12 +130,13 @@ export function ShortDramaCreateProjectPage() {
   const ensureProject = async (): Promise<number> => {
     if (projectId) return projectId;
     if (!user) throw new Error('请先登录后再创建项目。');
+    const seedText = inputMode === 'script_import' ? scriptText.trim().slice(0, 280) : intent.intent_text.trim();
     const res = await createShortDramaProject({
       user_id: user.id,
-      project_name: projectNameFromIntent(intent.intent_text),
+      project_name: projectNameFromIntent(seedText),
       duration: intent.duration_hint || undefined,
       aspect_ratio: intent.aspect_ratio_hint || undefined,
-      creative_intent: intent.intent_text.trim(),
+      creative_intent: seedText,
     });
     const p = res.project;
     setProjectId(p.id);
@@ -145,9 +161,27 @@ export function ShortDramaCreateProjectPage() {
     setSubmitting(true);
     setSubmitError(null);
     try {
-      const id = await persistIntent();
-      const nextPath = withProjectQuery('/short-drama/product-input', id);
-      navigate(nextPath);
+      if (inputMode === 'script_import') {
+        const effectiveIntent = scriptText.trim().slice(0, 240) || '剧本导入项目';
+        const id = await ensureProject();
+        await saveShortDramaCreativeIntent(id, {
+          ...intent,
+          intent_text: intent.intent_text.trim() || effectiveIntent,
+        });
+        await prepareShortDramaScriptImport(id, {
+          raw_text: scriptText.trim(),
+          file_name: scriptFileName,
+          platform_hints: intent.platform_hints,
+          duration_hint: intent.duration_hint,
+          aspect_ratio_hint: intent.aspect_ratio_hint,
+          strict_mode: strictScriptMode,
+        });
+        navigate(withProjectQuery('/short-drama/step4', id));
+      } else {
+        const id = await persistIntent();
+        const nextPath = withProjectQuery('/short-drama/product-input', id);
+        navigate(nextPath);
+      }
     } catch (e) {
       const msg = e instanceof ShortDramaApiError ? e.message : e instanceof Error ? e.message : '创建失败';
       setSubmitError(msg);
@@ -156,8 +190,20 @@ export function ShortDramaCreateProjectPage() {
     }
   };
 
+  const handleScriptFile = async (file: File | null) => {
+    if (!file) return;
+    setSubmitError(null);
+    setScriptFileName(file.name);
+    try {
+      const text = await file.text();
+      setScriptText(text);
+    } catch {
+      setSubmitError('文件读取失败，请改用粘贴剧本内容。');
+    }
+  };
+
   const saveDraft = async () => {
-    if (!canSubmit) return;
+    if (!canSaveDraft) return;
     setSubmitting(true);
     setSubmitError(null);
     try {
@@ -171,7 +217,12 @@ export function ShortDramaCreateProjectPage() {
 
   return (
     <div className="min-h-screen bg-[#F7F8FA]" style={{ fontFamily: "'Inter', sans-serif" }}>
-      <SDWorkflowNav currentStep={0} projectId={projectId} allowSaveAndLeave={false} />
+      <SDWorkflowNav
+        currentStep={0}
+        projectId={projectId}
+        allowSaveAndLeave={false}
+        workflowMode={inputMode === 'script_import' ? 'script_import' : 'standard'}
+      />
       <div className="pt-[112px] md:pt-14">
         <main className="mx-auto max-w-2xl px-4 pb-28 pt-7 md:px-5 md:py-10">
           <header className="mb-5 text-left md:mb-6 md:text-center">
@@ -208,6 +259,34 @@ export function ShortDramaCreateProjectPage() {
             </div>
           </section>
 
+          <div className="mb-4 grid grid-cols-2 gap-2 rounded-2xl border border-[#E5E5EA] bg-white p-1">
+            <button
+              type="button"
+              onClick={() => setInputMode('intent')}
+              className="flex h-9 items-center justify-center gap-1.5 rounded-xl text-[12.5px] font-semibold transition-colors"
+              style={{
+                background: inputMode === 'intent' ? '#1D1D1F' : 'transparent',
+                color: inputMode === 'intent' ? '#fff' : '#6E6E73',
+              }}
+            >
+              <i className={ri('ri-quill-pen-line', 'text-[13px]')} aria-hidden />
+              描述想法
+            </button>
+            <button
+              type="button"
+              onClick={() => setInputMode('script_import')}
+              className="flex h-9 items-center justify-center gap-1.5 rounded-xl text-[12.5px] font-semibold transition-colors"
+              style={{
+                background: inputMode === 'script_import' ? '#1D1D1F' : 'transparent',
+                color: inputMode === 'script_import' ? '#fff' : '#6E6E73',
+              }}
+            >
+              <i className={ri('ri-file-upload-line', 'text-[13px]')} aria-hidden />
+              导入剧本
+            </button>
+          </div>
+
+          {inputMode === 'intent' ? (
           <section
             className="mb-3 overflow-hidden rounded-2xl transition-all duration-300"
             style={{
@@ -248,6 +327,64 @@ export function ShortDramaCreateProjectPage() {
               ) : null}
             </div>
           </section>
+          ) : (
+            <section
+              className="mb-3 overflow-hidden rounded-2xl transition-all duration-300"
+              style={{
+                background: '#ffffff',
+                border: `1.5px solid ${intentFocused ? '#1D1D1F' : '#E5E5EA'}`,
+              }}
+            >
+              <div className="flex flex-wrap items-center justify-between gap-2 px-5 pb-2 pt-4">
+                <div className="flex min-w-0 items-center gap-2">
+                  <label className="text-[13px] font-bold" style={{ color: '#444444' }}>
+                    剧本导入
+                  </label>
+                  {scriptFileName ? (
+                    <span className="truncate text-[11px]" style={{ color: '#8E8E93' }}>
+                      {scriptFileName}
+                    </span>
+                  ) : null}
+                </div>
+                <label
+                  className="flex cursor-pointer items-center gap-1.5 rounded-lg border border-[#E5E5EA] bg-[#F7F8FA] px-3 py-1.5 text-[11.5px] font-semibold text-[#444444]"
+                >
+                  <i className={ri('ri-upload-2-line', 'text-[12px]')} aria-hidden />
+                  上传 pmt
+                  <input
+                    type="file"
+                    accept=".pmt,.txt,.md,.json"
+                    className="hidden"
+                    onChange={(e) => void handleScriptFile(e.target.files?.[0] ?? null)}
+                  />
+                </label>
+              </div>
+              <textarea
+                value={scriptText}
+                onChange={(e) => setScriptText(e.target.value)}
+                onFocus={() => setIntentFocused(true)}
+                onBlur={() => setIntentFocused(false)}
+                rows={9}
+                placeholder="粘贴你的剧本、分镜、口播稿或 prompt 模板。AI 会先解析并补足可生成视频所需的片段结构，然后直接进入视频生成页。"
+                className="w-full resize-none px-5 pb-4 pt-2 text-[14px] leading-relaxed outline-none"
+                style={{ color: '#1D1D1F', background: 'transparent' }}
+              />
+              <div className="flex items-center justify-between gap-3 px-5 py-2.5" style={{ borderTop: '1px solid #F0F0F0' }}>
+                <label className="flex cursor-pointer items-center gap-2 text-[11.5px]" style={{ color: '#6E6E73' }}>
+                  <input
+                    type="checkbox"
+                    checked={strictScriptMode}
+                    onChange={(e) => setStrictScriptMode(e.target.checked)}
+                    className="h-3.5 w-3.5 accent-[#1D1D1F]"
+                  />
+                  尽量严格按原文
+                </label>
+                <span className="text-[11px]" style={{ color: '#C7C7CC' }}>
+                  {scriptText.length} 字
+                </span>
+              </div>
+            </section>
+          )}
 
           <section
             className="mb-5 overflow-hidden rounded-2xl"
@@ -378,11 +515,11 @@ export function ShortDramaCreateProjectPage() {
             <button
               type="button"
               onClick={() => void saveDraft()}
-              disabled={!canSubmit}
+              disabled={!canSaveDraft}
               className="flex cursor-pointer items-center gap-2 whitespace-nowrap rounded-xl px-5 py-2.5 text-[13px] font-medium transition-all duration-200 disabled:cursor-not-allowed"
-              style={{ background: '#ffffff', color: canSubmit ? '#6E6E73' : '#AEAEB2', border: '1px solid #E5E5EA' }}
+              style={{ background: '#ffffff', color: canSaveDraft ? '#6E6E73' : '#AEAEB2', border: '1px solid #E5E5EA' }}
               onMouseEnter={(e) => {
-                if (canSubmit) e.currentTarget.style.background = '#F5F5F7';
+                if (canSaveDraft) e.currentTarget.style.background = '#F5F5F7';
               }}
               onMouseLeave={(e) => {
                 e.currentTarget.style.background = '#ffffff';
@@ -411,11 +548,11 @@ export function ShortDramaCreateProjectPage() {
               {submitting ? (
                 <>
                   <i className={ri('ri-loader-4-line', 'animate-spin text-[13px]')} aria-hidden />
-                  创建项目中…
+                  {inputMode === 'script_import' ? '解析剧本中…' : '创建项目中…'}
                 </>
               ) : (
                 <>
-                  下一步：上传商品
+                  {inputMode === 'script_import' ? '解析剧本并生成视频' : '下一步：上传商品'}
                   <i className={ri('ri-arrow-right-line', 'text-[13px]')} aria-hidden />
                 </>
               )}
@@ -425,7 +562,7 @@ export function ShortDramaCreateProjectPage() {
             <button
               type="button"
               onClick={() => void saveDraft()}
-              disabled={!canSubmit}
+              disabled={!canSaveDraft}
               className="flex h-11 shrink-0 cursor-pointer items-center justify-center rounded-xl border border-[#E5E5EA] bg-white px-4 text-[13px] font-medium text-[#6E6E73] disabled:cursor-not-allowed disabled:text-[#AEAEB2]"
               aria-label="保存草稿"
             >
@@ -444,11 +581,11 @@ export function ShortDramaCreateProjectPage() {
               {submitting ? (
                 <>
                   <i className={ri('ri-loader-4-line', 'animate-spin text-[13px]')} aria-hidden />
-                  创建中…
+                  {inputMode === 'script_import' ? '解析中…' : '创建中…'}
                 </>
               ) : (
                 <>
-                  下一步
+                  {inputMode === 'script_import' ? '解析并进入 S4' : '下一步'}
                   <i className={ri('ri-arrow-right-line', 'text-[13px]')} aria-hidden />
                 </>
               )}

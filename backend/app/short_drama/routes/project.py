@@ -185,6 +185,7 @@ def _project_to_response(
     final_video = latest_final_video_url(db, p.id)
     step_status = {k: v for k, v in normalize_step_status(p.step_status).items() if isinstance(v, str)}
     s0_s1_state = get_s0_s1_state(p)
+    workflow_mode = str(s0_s1_state.get("workflow_mode") or "").strip() or None
     inferred_policy = build_language_policy(
         workflow_source={
             "project_name": p.project_name,
@@ -228,6 +229,8 @@ def _project_to_response(
         segment_video_count=segment_video_count,
         segment_video_total=segment_video_total,
         cover_asset=_project_cover_asset(db, p.id),
+        workflow_mode=workflow_mode,
+        script_import=s0_s1_state.get("script_import") if isinstance(s0_s1_state.get("script_import"), dict) else None,
         creative_intent_input=s0_s1_state.get("creative_intent_input"),
         product_input=s0_s1_state.get("product_input"),
         product_understanding=s0_s1_state.get("product_understanding"),
@@ -252,6 +255,8 @@ def _project_to_lightweight_response(
     segment_video_total: int,
 ) -> ShortDramaProjectResponse:
     step_status = {k: v for k, v in normalize_step_status(p.step_status).items() if isinstance(v, str)}
+    s0_s1_state = get_s0_s1_state(p)
+    workflow_mode = str(s0_s1_state.get("workflow_mode") or "").strip() or None
     final_video = latest_final_video_url(db, p.id)
     return ShortDramaProjectResponse(
         id=p.id,
@@ -283,6 +288,8 @@ def _project_to_lightweight_response(
         segment_video_count=segment_video_count,
         segment_video_total=segment_video_total,
         cover_asset=ProjectCoverAsset(asset_type=None, name=None, image_url=None, status="missing"),
+        workflow_mode=workflow_mode,
+        script_import=s0_s1_state.get("script_import") if isinstance(s0_s1_state.get("script_import"), dict) else None,
         created_at=p.created_at,
         updated_at=p.updated_at,
     )
@@ -871,6 +878,8 @@ async def get_pipeline(project_id: int, lightweight: bool = Query(default=False)
                 video_render_task_running=video_render_task_running,
                 segment_render_statuses=minimal_segment_statuses,
                 segment_scripts=minimal_segment_statuses,
+                workflow_mode=str(s0_s1_state.get("workflow_mode") or "").strip() or None,
+                script_import=s0_s1_state.get("script_import") if isinstance(s0_s1_state.get("script_import"), dict) else None,
             )
             elapsed_ms = int((time.perf_counter() - started_at) * 1000)
             logger.debug(
@@ -902,6 +911,8 @@ async def get_pipeline(project_id: int, lightweight: bool = Query(default=False)
             asset_generation_specs_count=asset_generation_specs_count,
             asset_counts=asset_counts,
             segment_scripts_count=len(segs),
+            workflow_mode=str(s0_s1_state.get("workflow_mode") or "").strip() or None,
+            script_import=s0_s1_state.get("script_import") if isinstance(s0_s1_state.get("script_import"), dict) else None,
             product_context=(
                 {
                     "id": pc.id,

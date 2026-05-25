@@ -9,8 +9,17 @@ import { MobileBottomActionBar } from './components/MobileBottomActionBar';
 import { useStepFourPage } from './hooks/useStepFourPage';
 import { NEUTRAL_VERTICAL_POSTER, resolvePublicMediaUrl } from './utils/shortDramaMedia';
 import { SHORT_DRAMA_UI } from './utils/shortDramaUiCopy';
-import { withProjectQuery } from './utils/shortDramaRoutes';
+import { isScriptImportWorkflowLike, withProjectQuery } from './utils/shortDramaRoutes';
 import type { Step4SegmentItem, Step4VideoStatusMap } from '@/types/shortDrama';
+import type { PipelineSummaryDto, ScriptImportStateDto } from '@/types/shortDramaApi';
+
+function isScriptImportPipeline(pipeline: PipelineSummaryDto | null): boolean {
+  if (!pipeline) return false;
+  if (isScriptImportWorkflowLike(pipeline)) return true;
+  const assetTotal = Number(pipeline.asset_rows_total ?? 0);
+  const segmentCount = Number(pipeline.segment_scripts_count ?? pipeline.segment_scripts?.length ?? 0);
+  return segmentCount > 0 && assetTotal === 0 && pipeline.has_product_context === false && pipeline.has_story_blueprint === false;
+}
 
 export function ShortDramaStepFourPage() {
   const navigate = useNavigate();
@@ -67,6 +76,8 @@ export function ShortDramaStepFourPage() {
   const videoSrc = active ? resolvePublicMediaUrl(active.videoUrl) : null;
   const finalVideoResolved = resolvePublicMediaUrl(pipeline?.final_video_url);
   const finalErrorDisplay = pipeline?.final_render_error || mergeError || null;
+  const isScriptImportMode = isScriptImportPipeline(pipeline);
+  const scriptImport = pipeline?.script_import || pipeline?.project?.script_import || null;
 
   const projectVideoHeadline = useMemo(() => {
     if (pipeline?.final_render_status === 'failed') {
@@ -101,7 +112,7 @@ export function ShortDramaStepFourPage() {
   if (phase === 'no_project' || projectId == null) {
     return (
       <div className="min-h-screen flex flex-col items-center justify-center px-6" style={{ background: '#ffffff', fontFamily: "'Inter', sans-serif" }}>
-        <SDWorkflowNav currentStep={4} projectId={projectId} isDirty={isDirty} onSaveDraft={saveDraft} />
+        <SDWorkflowNav currentStep={4} projectId={projectId} isDirty={isDirty} onSaveDraft={saveDraft} workflowMode={isScriptImportMode ? 'script_import' : 'standard'} />
         <div className="mt-24 max-w-md text-center space-y-4">
           <h1 className="text-xl font-bold" style={{ fontFamily: "'Syne', sans-serif", color: '#1D1D1F' }}>
             {SHORT_DRAMA_UI.noProject.title}
@@ -125,7 +136,7 @@ export function ShortDramaStepFourPage() {
   if (phase === 'loading' || phase === 'generating_segments') {
     return (
       <div className="min-h-screen flex flex-col" style={{ background: '#ffffff', fontFamily: "'Inter', sans-serif" }}>
-        <SDWorkflowNav currentStep={4} projectName={navProjectName} projectId={projectId} isDirty={isDirty} onSaveDraft={saveDraft} />
+        <SDWorkflowNav currentStep={4} projectName={navProjectName} projectId={projectId} isDirty={isDirty} onSaveDraft={saveDraft} workflowMode={isScriptImportMode ? 'script_import' : 'standard'} />
         <div className="flex flex-1 items-center justify-center pt-14">
           <div className="flex flex-col items-center gap-3">
             <i className="ri-loader-4-line text-2xl animate-spin" style={{ color: '#1D1D1F' }} />
@@ -146,7 +157,7 @@ export function ShortDramaStepFourPage() {
   if (phase === 'error' && loadError) {
     return (
       <div className="min-h-screen flex flex-col" style={{ background: '#ffffff', fontFamily: "'Inter', sans-serif" }}>
-        <SDWorkflowNav currentStep={4} projectName={navProjectName} projectId={projectId} isDirty={isDirty} onSaveDraft={saveDraft} />
+        <SDWorkflowNav currentStep={4} projectName={navProjectName} projectId={projectId} isDirty={isDirty} onSaveDraft={saveDraft} workflowMode={isScriptImportMode ? 'script_import' : 'standard'} />
         <div className="flex flex-1 flex-col items-center justify-center pt-14 px-6 gap-4">
           <p className="text-[14px] text-center max-w-lg" style={{ color: '#DC2626' }}>
             生成失败，请稍后重试。
@@ -166,7 +177,7 @@ export function ShortDramaStepFourPage() {
 
   return (
     <div className="min-h-screen flex flex-col" style={{ background: '#ffffff', fontFamily: "'Inter', sans-serif" }}>
-      <SDWorkflowNav currentStep={4} projectName={navProjectName} projectId={projectId} isDirty={isDirty} onSaveDraft={saveDraft} />
+      <SDWorkflowNav currentStep={4} projectName={navProjectName} projectId={projectId} isDirty={isDirty} onSaveDraft={saveDraft} workflowMode={isScriptImportMode ? 'script_import' : 'standard'} />
 
       {step4Stale ? (
         <div className="hidden px-5 pt-16 md:block">
@@ -212,12 +223,16 @@ export function ShortDramaStepFourPage() {
         onRegenerate={handleRegenerate}
         onRetryGenerateSegments={handleRetryGenerateSegments}
         onMergeFinalVideo={() => mergeFinalVideo({ buttonType: 'merge_only', navigateOnSuccess: false })}
-        onBack={() => navigate(withProjectQuery('/short-drama/assets', projectId))}
+        onBack={() => navigate(withProjectQuery(isScriptImportMode ? '/short-drama/create' : '/short-drama/assets', projectId))}
         onGoOverview={goOverview}
       />
 
       <div className="hidden flex-1 pt-14 md:flex" style={{ minHeight: 'calc(100vh - 56px)' }}>
-        <StepFourAssetLibrary library={assetLibraryVm} />
+        {isScriptImportMode ? (
+          <StepFourScriptImportPanel scriptImport={scriptImport} segmentCount={segments.length} />
+        ) : (
+          <StepFourAssetLibrary library={assetLibraryVm} />
+        )}
 
         <div className="flex flex-col flex-1 overflow-hidden">
           {(segmentScriptsBlocked ||
@@ -356,7 +371,10 @@ export function ShortDramaStepFourPage() {
                   ? '正在同步 S2 已生成的片段脚本，完成后会自动展示。'
                   : segmentScriptsError
                   ? '本次生成未完成，项目内容已保存。'
-                  : segmentScriptsBlocked || '请先完成前置流程，或返回「角色场景」页确认资产规范已生成。'}
+                  : segmentScriptsBlocked ||
+                    (isScriptImportMode
+                      ? '剧本解析还没有生成可用片段，请返回创作意图页重新导入。'
+                      : '请先完成前置流程，或返回「角色场景」页确认资产规范已生成。')}
               </p>
               {segmentScriptsError ? (
                 <button
@@ -430,7 +448,7 @@ export function ShortDramaStepFourPage() {
       <div className="hidden px-6 py-3 md:flex items-center justify-between" style={{ background: '#F7F8FA', borderTop: '1px solid #EAEAEA' }}>
         <button
           type="button"
-          onClick={() => navigate(withProjectQuery('/short-drama/assets', projectId))}
+          onClick={() => navigate(withProjectQuery(isScriptImportMode ? '/short-drama/create' : '/short-drama/assets', projectId))}
           className="flex items-center gap-2 px-5 py-2.5 rounded-xl text-[13px] cursor-pointer whitespace-nowrap transition-all duration-200"
           style={{ background: '#ffffff', color: '#444444', border: '1px solid #EAEAEA' }}
           onMouseEnter={(e) => {
@@ -441,7 +459,7 @@ export function ShortDramaStepFourPage() {
           }}
         >
           <i className="ri-arrow-left-line text-[12px]" />
-          上一步
+          {isScriptImportMode ? '返回导入' : '上一步'}
         </button>
         <div className="flex items-center gap-2">
           {mergeReadyByRequirement ? (
@@ -488,6 +506,97 @@ export function ShortDramaStepFourPage() {
         </div>
       </div>
     </div>
+  );
+}
+
+function StepFourScriptImportPanel({
+  scriptImport,
+  segmentCount,
+}: {
+  scriptImport: ScriptImportStateDto | null;
+  segmentCount: number;
+}) {
+  const analysis = scriptImport?.analysis || {};
+  const confidence = typeof analysis.confidence === 'number' ? Math.round(analysis.confidence * 100) : null;
+  const missing = Array.isArray(analysis.missing_fields) ? analysis.missing_fields.filter(Boolean) : [];
+  const constraints = Array.isArray(analysis.constraints) ? analysis.constraints.filter(Boolean) : [];
+  const rawText = scriptImport?.source?.raw_text || '';
+  const fileName = scriptImport?.source?.file_name || '粘贴内容';
+
+  return (
+    <aside
+      className="hidden w-64 shrink-0 flex-col overflow-y-auto md:flex"
+      style={{ background: '#F7F8FA', borderRight: '1px solid #EAEAEA' }}
+    >
+      <div className="space-y-4 p-4">
+        <div>
+          <p className="text-[11px] font-bold uppercase tracking-widest" style={{ color: '#8E8E93' }}>
+            剧本导入
+          </p>
+          <h3 className="mt-1 truncate text-[15px] font-bold" style={{ color: '#1D1D1F' }}>
+            {fileName}
+          </h3>
+        </div>
+
+        <div className="rounded-xl border border-[#E5E5EA] bg-white p-3">
+          <div className="mb-2 flex items-center justify-between">
+            <span className="text-[11px] font-semibold" style={{ color: '#6E6E73' }}>
+              AI 解析
+            </span>
+            {confidence != null ? (
+              <span className="rounded-full bg-[#F0F0F0] px-2 py-0.5 text-[10px] font-semibold text-[#444444]">
+                {confidence}%
+              </span>
+            ) : null}
+          </div>
+          <div className="space-y-2 text-[11.5px] leading-relaxed" style={{ color: '#444444' }}>
+            <p>类型：{analysis.input_type || 'mixed'}</p>
+            <p>片段：{scriptImport?.segment_count || segmentCount}</p>
+            {analysis.global_style ? <p>风格：{analysis.global_style}</p> : null}
+            {analysis.summary ? <p className="line-clamp-4">摘要：{analysis.summary}</p> : null}
+          </div>
+        </div>
+
+        {missing.length > 0 ? (
+          <div className="rounded-xl border border-amber-200 bg-amber-50 p-3">
+            <p className="mb-2 text-[11px] font-semibold text-amber-900">待确认信息</p>
+            <div className="space-y-1">
+              {missing.slice(0, 5).map((item) => (
+                <p key={item} className="text-[11px] leading-relaxed text-amber-900">
+                  {item}
+                </p>
+              ))}
+            </div>
+          </div>
+        ) : null}
+
+        {constraints.length > 0 ? (
+          <div>
+            <p className="mb-2 text-[10px] font-semibold uppercase tracking-wider" style={{ color: '#AEAEB2' }}>
+              强约束
+            </p>
+            <div className="space-y-1.5">
+              {constraints.slice(0, 6).map((item) => (
+                <div key={item} className="rounded-lg border border-[#E5E5EA] bg-white px-2.5 py-2 text-[11px] leading-relaxed text-[#444444]">
+                  {item}
+                </div>
+              ))}
+            </div>
+          </div>
+        ) : null}
+
+        {rawText ? (
+          <details className="rounded-xl border border-[#E5E5EA] bg-white p-3">
+            <summary className="cursor-pointer text-[11px] font-semibold" style={{ color: '#6E6E73' }}>
+              查看原文
+            </summary>
+            <p className="mt-2 max-h-72 overflow-y-auto whitespace-pre-wrap text-[11px] leading-relaxed" style={{ color: '#444444' }}>
+              {rawText}
+            </p>
+          </details>
+        ) : null}
+      </div>
+    </aside>
   );
 }
 

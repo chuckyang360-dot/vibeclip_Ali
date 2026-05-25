@@ -8,7 +8,7 @@ import { useEffectiveShortDramaProjectId } from './hooks/useEffectiveShortDramaP
 import { ShortDramaApiError, analyzeShortDramaAssetReferenceImage, createShortDramaAssetFromImage, createShortDramaAssetLibrary, generateShortDramaAssetImages, generateShortDramaAssetSpecs, getShortDramaAssetLibraryDetail, getShortDramaPipeline, listShortDramaAssetLibrary, regenerateShortDramaAssetLibrary, touchShortDramaProjectStep, updateShortDramaAssetLibrary } from '@/services/shortDramaApi';
 import type { AssetLibraryItemDto, PipelineSummaryDto, ShortDramaProjectDto } from '@/types/shortDramaApi';
 import { getAssetThumbnailUrl, normalizeAssetDisplayName, resolveAssetImageUrl } from './utils/assetsPageAdapters';
-import { withProjectQuery } from './utils/shortDramaRoutes';
+import { isScriptImportWorkflowLike, withProjectQuery } from './utils/shortDramaRoutes';
 import { buildRawStructureSnapshot, buildStructureSummary, resolveAssetRoleLabel, resolveAssetSourceLabel, resolveNarrativeFunctionLabel, resolveTypeFields, resolveVisualAnchorImageId } from './utils/assetSpecDisplay';
 import { getCachedShortDramaPipeline, setCachedShortDramaPipeline } from './utils/shortDramaPipelineCache';
 import { tryHandleInsufficientCreditsFromApiError } from '@/utils/insufficientCredits';
@@ -1038,6 +1038,10 @@ export function ShortDramaAssetsPage() {
   }, [effectiveProjectId]);
 
   const applyPipelineSnapshot = useCallback((p: PipelineSummaryDto) => {
+    if (isScriptImportWorkflowLike(p)) {
+      navigate(withProjectQuery('/short-drama/step4', p.project?.id ?? effectiveProjectId), { replace: true });
+      return;
+    }
     const pr = p.project;
     setPipelineEffectiveStatus(String(pr?.effective_status || pr?.suggested_status || pr?.status || ''));
     setPipelineRawStatus(String(pr?.status || ''));
@@ -1051,7 +1055,7 @@ export function ShortDramaAssetsPage() {
     setPipelineHasStoryBlueprint(Boolean(p.has_story_blueprint));
     const hasAssetGenerationSpecs = pipelineHasS2AssetGenerationSpecs(p);
     setPipelineHasAssetGenerationSpecs((prev) => prev || hasAssetGenerationSpecs);
-  }, []);
+  }, [effectiveProjectId, navigate]);
 
   useEffect(() => {
     const projectId = toPositiveInt(effectiveProjectId);

@@ -90,6 +90,7 @@ def seed_default_ai_model_configs(db: Session) -> None:
         "s3_asset_management": ("xai", "grok-imagine-image", "image"),
         "s4_video_generation": ("xai", "grok-imagine-video", "video"),
         "reference_video_understanding": ("gemini", "gemini-3-flash-preview", "vision_text"),
+        "script_import_parse": ("gemini", "gemini-3.1-pro-preview", "text"),
     }
     fallback_model_for_stage = {
         "s1_product_understanding": ("gemini", "gemini-3-flash-preview", "vision_text"),
@@ -97,6 +98,7 @@ def seed_default_ai_model_configs(db: Session) -> None:
         "s3_asset_management": ("gemini", "gemini-3.1-flash-image-preview", "image"),
         "s4_video_generation": ("gemini", "veo-3.1-generate-preview", "video"),
         "reference_video_understanding": ("gemini", "gemini-3.1-pro-preview", "vision_text"),
+        "script_import_parse": ("gemini", "gemini-3-flash-preview", "text"),
     }
 
     for stage in AI_STAGE_DEFINITIONS:
@@ -115,7 +117,15 @@ def seed_default_ai_model_configs(db: Session) -> None:
                 fallback_model_id=fallback_model.id if fallback_model else None,
                 active_prompt_template_id=active_prompt.id if active_prompt else None,
                 enabled=True,
-                config_json={"capability": stage["capability"], "seeded": True},
+                config_json={
+                    "capability": stage["capability"],
+                    "seeded": True,
+                    **(
+                        {"use_proxy_default_model": True}
+                        if stage_key == "script_import_parse"
+                        else {}
+                    ),
+                },
             )
         )
     db.commit()

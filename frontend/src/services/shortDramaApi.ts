@@ -36,6 +36,8 @@ import type {
   ShortDramaProjectListResponseDto,
   SaveCreativeIntentResponseDto,
   SaveProductInputResponseDto,
+  ScriptImportInputDto,
+  ScriptImportPrepareResponseDto,
   SingleSegmentVideoResponseDto,
   UpdateProductContextResponseDto,
   UpdateAssetBody,
@@ -217,6 +219,16 @@ export async function generateShortDramaCreativeBrief(
 }
 
 export type { CreativeBriefDto, CreativeIntentInputDto, ProductInputDto };
+
+export async function prepareShortDramaScriptImport(
+  projectId: number,
+  body: ScriptImportInputDto,
+): Promise<ScriptImportPrepareResponseDto> {
+  return sdFetchJson<ScriptImportPrepareResponseDto>(`/api/short-drama/script-import/${projectId}/prepare`, {
+    method: 'POST',
+    body: JSON.stringify(body),
+  });
+}
 
 export async function listShortDramaProjects(userId: number): Promise<ShortDramaProjectListResponseDto> {
   return sdFetchJson<ShortDramaProjectListResponseDto>(`/api/short-drama/project?user_id=${encodeURIComponent(String(userId))}`);
