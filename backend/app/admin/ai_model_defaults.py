@@ -254,9 +254,14 @@ DEFAULT_AI_PROMPTS: list[dict[str, Any]] = [
 5. 剧本结构必须识别原视频实际结构，不要套用固定营销模板。
 6. 只描述视频中能观察到的事实；合理推断要标明为推断。
 7. 不要臆造看不清的品牌、字幕、功效、价格、平台信息。
-8. 所有面向用户展示的内容必须使用中文；JSON key 可以是英文，但 value 不要中英文混杂。
+8. 所有分析说明使用中文；但原视频里的旁白、字幕、屏幕文字、品牌名必须保留原始语言，不要翻译成另一种语言。
 9. 时间段格式使用 MM:SS-MM:SS；如果只能估计时间码，需要保持连续覆盖并标明为近似。
-10. 输出必须是严格 JSON，不要 Markdown，不要代码块。""",
+10. shot_breakdown 是事实拆解层，segment_prompts 是生产指令层。两者必须通过 shot_id 一一对应。
+11. segment_prompts.prompt 必须是可直接复制给视频生成模型的生产级 PMT，不是标题、摘要、风格词或一句英文视觉描述。
+12. 每条 segment_prompts.prompt 必须整合同 shot_id 的完整拆解字段，写清：时间段、片段目标、场景、人物、产品/可替换产品、动作、镜头景别、机位、运镜、光线色彩、构图、画面质感、字幕原文、旁白原文、音乐/环境声、与前后镜头的衔接、必须保留的风格结构、可以替换的内容。
+13. 如果原片有英文旁白和中文字幕，PMT 中必须同时保留英文旁白原文和中文字幕原文，不能互相翻译或省略。
+14. 输出 prompt 时不要只写 "cinematic close-up..." 这类单句摘要；要写成完整的分镜生产指令，让用户替换产品/人物/场景后仍能生成同结构片段。
+15. 输出必须是严格 JSON，不要 Markdown，不要代码块。""",
         "user_prompt_template": "{reference_video_payload}",
         "variables_schema": {"required": ["reference_video_payload"], "optional": ["video_url", "mime_type"]},
     },

@@ -126,6 +126,9 @@ function labelFor(key: string): string {
     character: '人物',
     shot_type: '景别',
     subtitle_or_audio: '字幕/声音',
+    spoken_audio: '旁白/人声',
+    subtitle_text: '字幕/屏幕文字',
+    music_or_sound: '音乐/环境声',
     camera_movement: '运镜',
     visual_content: '画面内容',
     production_notes: '拍摄要点',
@@ -149,6 +152,60 @@ function labelFor(key: string): string {
   return labels[key] || key.replace(/_/g, ' ');
 }
 
+function displayTextify(value: unknown): string {
+  if (value == null || value === '') return '';
+  if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') return String(value);
+  if (Array.isArray(value)) return value.map(displayTextify).filter(Boolean).join('\n');
+  if (isRecord(value)) {
+    return Object.entries(value)
+      .map(([key, v]) => {
+        const body = displayTextify(v);
+        return body ? `${labelFor(key)}：${body}` : '';
+      })
+      .filter(Boolean)
+      .join('\n');
+  }
+  return String(value);
+}
+
+function cleanText(value: unknown): string {
+  return displayTextify(value).trim();
+}
+
+function joinTextParts(parts: unknown[], separator = '\n'): string {
+  return parts.map(cleanText).filter(Boolean).join(separator);
+}
+
+function productionPromptText(
+  item: Record<string, unknown>,
+  shot: Record<string, unknown> | null,
+  globalStyle: Record<string, unknown> | null,
+  index: number,
+): string {
+  const shotId = cleanText(item.shot_id || shot?.shot_id) || `S${String(index + 1).padStart(2, '0')}`;
+  const timeRange = cleanText(item.time_range || shot?.time_range);
+  const rawPrompt = firstText(item, ['prompt', 'recreate_prompt', 'full_prompt']);
+  const lines = [
+    `分镜：${shotId}${timeRange ? ` ${timeRange}` : ''}`,
+    joinTextParts(['片段目标：', shot?.purpose], ''),
+    rawPrompt ? `基础画面：${rawPrompt}` : '',
+    joinTextParts(['场景：', shot?.scene], ''),
+    joinTextParts(['人物：', shot?.character], ''),
+    joinTextParts(['产品/替换对象：', shot?.product], ''),
+    joinTextParts(['动作与情绪：', shot?.action], ''),
+    joinTextParts(['镜头设计：', shot?.camera || shot?.camera_movement], ''),
+    joinTextParts(['光线色彩：', shot?.lighting], ''),
+    joinTextParts(['构图与画面质感：', joinTextParts([shot?.composition, shot?.visual || shot?.visual_content || shot?.content], '；')], ''),
+    joinTextParts(['字幕/旁白/声音：', shot?.subtitle_or_audio], ''),
+    joinTextParts(['可替换内容：', shot?.replaceable_parts], ''),
+    joinTextParts(['衔接要求：', item.continuity_note], ''),
+    joinTextParts(['负面词：', item.negative_prompt], ''),
+    joinTextParts(['全局风格：', globalStyle?.style_bible || globalStyle?.overall_style], ''),
+    '生成要求：按上述分镜复刻原片的镜头结构、节奏、光线、构图、声音和字幕关系；替换产品、人物或场景时，只替换指定对象，保留原片的叙事作用和视听风格。',
+  ];
+  return lines.filter((line) => line.trim()).join('\n');
+}
+
 function HighlightPanel({ title, children }: { title: string; children: ReactNode }) {
   return (
     <div className="rounded-xl border border-[#E5E5EA] bg-white p-5 shadow-[0_8px_24px_rgba(0,0,0,0.03)]">
@@ -159,7 +216,7 @@ function HighlightPanel({ title, children }: { title: string; children: ReactNod
 }
 
 function FactGrid({ items }: { items: { label: string; value: unknown }[] }) {
-  const visible = items.map((item) => ({ ...item, text: textify(item.value).trim() })).filter((item) => item.text);
+  const visible = items.map((item) => ({ ...item, text: displayTextify(item.value).trim() })).filter((item) => item.text);
   if (!visible.length) return null;
   return (
     <div className="grid gap-3 sm:grid-cols-2">
@@ -361,12 +418,11 @@ function ShotBreakdownView({ value }: { value: unknown }) {
               { label: '构图', value: item.composition },
               { label: '字幕/声音', value: item.subtitle_or_audio },
               { label: '片段作用', value: item.purpose },
-              { label: '复刻 PMT', value: item.recreate_prompt },
               { label: '拍摄要点', value: item.production_notes || item.recreate_notes || item.notes },
               { label: '复刻建议', value: item.replication_notes },
             ]}
           />
-          <SectionFallbackView value={Object.fromEntries(visibleEntries(item, ['time_range', 'scene', 'title', 'visual_content', 'visual', 'content', 'character', 'product', 'action', 'shot_type', 'camera_movement', 'camera', 'lighting', 'composition', 'subtitle_or_audio', 'purpose', 'recreate_prompt', 'production_notes', 'recreate_notes', 'notes', 'replication_notes']))} />
+          <SectionFallbackView value={Object.fromEntries(visibleEntries(item, ['shot_id', 'time_range', 'scene', 'title', 'visual_content', 'visual', 'content', 'character', 'product', 'action', 'shot_type', 'camera_movement', 'camera', 'lighting', 'composition', 'subtitle_or_audio', 'purpose', 'recreate_prompt', 'production_notes', 'recreate_notes', 'notes', 'replication_notes']))} />
         </div>
       ))}
     </div>
@@ -375,22 +431,27 @@ function ShotBreakdownView({ value }: { value: unknown }) {
 
 function VideoPromptView({ value }: { value: unknown }) {
   if (!isRecord(value)) return <SectionFallbackView value={value} />;
+  const shotRows = asRecordArray(value.shot_breakdown);
   const segmentPrompts = asRecordArray(value.segment_prompts);
+  const promptRows = segmentPrompts.length > 0 ? segmentPrompts : shotRows;
+  const shotById = new Map(shotRows.map((shot, index) => [textify(shot.shot_id) || `S${String(index + 1).padStart(2, '0')}`, shot]));
   const globalStyle = isRecord(value.global_style_prompt) ? value.global_style_prompt : null;
   const legacyPrompt = isRecord(value.video_prompt) ? value.video_prompt : value;
   const full = firstText(legacyPrompt, ['full_prompt', 'prompt', 'video_prompt']);
   return (
     <div className="space-y-4">
-      {segmentPrompts.length > 0 && (
+      {promptRows.length > 0 && (
         <div className="space-y-3">
-          {segmentPrompts.map((item, index) => {
-            const promptText = firstText(item, ['prompt', 'recreate_prompt', 'full_prompt']);
+          {promptRows.map((item, index) => {
+            const shotId = textify(item.shot_id) || `S${String(index + 1).padStart(2, '0')}`;
+            const shot = shotById.get(shotId) || shotRows[index] || null;
+            const promptText = productionPromptText(item, shot, globalStyle, index);
             return (
-              <div key={`${textify(item.shot_id) || index}`} className="rounded-xl border border-[#E5E5EA] bg-white p-4">
+              <div key={`${shotId}-${index}`} className="rounded-xl border border-[#E5E5EA] bg-white p-4">
                 <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
                   <div className="flex flex-wrap items-center gap-2">
                     <span className="rounded-full bg-[#1D1D1F] px-3 py-1 text-[11px] font-black text-white">{textify(item.time_range) || `分镜 ${index + 1}`}</span>
-                    <span className="text-[13px] font-black text-[#1D1D1F]">{textify(item.shot_id) || `S${String(index + 1).padStart(2, '0')}`}</span>
+                    <span className="text-[13px] font-black text-[#1D1D1F]">{shotId}</span>
                   </div>
                   {promptText && (
                     <button
@@ -405,13 +466,19 @@ function VideoPromptView({ value }: { value: unknown }) {
                 </div>
                 {promptText && (
                   <div className="rounded-xl bg-[#1D1D1F] p-4 text-white">
-                    <div className="mb-2 text-[11px] font-black text-white/58">单段生成 PMT</div>
+                    <div className="mb-2 text-[11px] font-black text-white/58">生产级单段 PMT</div>
                     <p className="whitespace-pre-wrap text-[13px] leading-7 text-white/88">{promptText}</p>
                   </div>
                 )}
                 <div className="mt-3">
                   <FactGrid
                     items={[
+                      { label: '对应场景', value: shot?.scene },
+                      { label: '人物/产品', value: [shot?.character, shot?.product].filter(Boolean).join(' / ') },
+                      { label: '动作', value: shot?.action },
+                      { label: '镜头/运镜', value: shot?.camera || shot?.camera_movement },
+                      { label: '光线构图', value: [shot?.lighting, shot?.composition].filter(Boolean).join('\n') },
+                      { label: '字幕/声音', value: shot?.subtitle_or_audio },
                       { label: '负面词', value: item.negative_prompt },
                       { label: '衔接说明', value: item.continuity_note },
                     ]}
@@ -428,13 +495,13 @@ function VideoPromptView({ value }: { value: unknown }) {
           <DetailList value={globalStyle} />
         </HighlightPanel>
       )}
-      {!segmentPrompts.length && full && (
+      {!promptRows.length && full && (
         <div className="rounded-xl bg-[#1D1D1F] p-5 text-white">
           <div className="mb-3 text-[12px] font-black text-white/58">完整提示词</div>
           <p className="whitespace-pre-wrap text-[13px] leading-7 text-white/88">{full}</p>
         </div>
       )}
-      {!segmentPrompts.length && (
+      {!promptRows.length && (
         <FactGrid
           items={[
             { label: '精简 Prompt', value: legacyPrompt.short_prompt },
@@ -443,7 +510,7 @@ function VideoPromptView({ value }: { value: unknown }) {
           ]}
         />
       )}
-      <SectionFallbackView value={Object.fromEntries(visibleEntries(value, ['segment_prompts', 'global_style_prompt', 'video_prompt', 'full_prompt', 'prompt', 'short_prompt', 'negative_prompt', 'style_keywords']))} />
+      <SectionFallbackView value={Object.fromEntries(visibleEntries(value, ['segment_prompts', 'shot_breakdown', 'global_style_prompt', 'video_prompt', 'full_prompt', 'prompt', 'short_prompt', 'negative_prompt', 'style_keywords']))} />
     </div>
   );
 }
@@ -465,6 +532,7 @@ function sectionValue(analysis: ReferenceVideoAnalysisJson | null | undefined, k
     if (Array.isArray(analysis.segment_prompts) || isRecord(analysis.global_style_prompt)) {
       return {
         segment_prompts: analysis.segment_prompts,
+        shot_breakdown: analysis.shot_breakdown,
         global_style_prompt: analysis.global_style_prompt,
         video_prompt: analysis.video_prompt,
       };
@@ -473,9 +541,31 @@ function sectionValue(analysis: ReferenceVideoAnalysisJson | null | undefined, k
   return analysis[key];
 }
 
+function videoPromptCopyText(value: unknown): string {
+  if (!isRecord(value)) return textify(value);
+  const shotRows = asRecordArray(value.shot_breakdown);
+  const segmentPrompts = asRecordArray(value.segment_prompts);
+  const promptRows = segmentPrompts.length > 0 ? segmentPrompts : shotRows;
+  const shotById = new Map(shotRows.map((shot, index) => [textify(shot.shot_id) || `S${String(index + 1).padStart(2, '0')}`, shot]));
+  const globalStyle = isRecord(value.global_style_prompt) ? value.global_style_prompt : null;
+  if (!promptRows.length) return textify(value);
+  const promptText = promptRows
+    .map((item, index) => {
+      const shotId = textify(item.shot_id) || `S${String(index + 1).padStart(2, '0')}`;
+      const shot = shotById.get(shotId) || shotRows[index] || null;
+      return productionPromptText(item, shot, globalStyle, index);
+    })
+    .filter(Boolean)
+    .join('\n\n---\n\n');
+  const globalText = globalStyle ? `\n\n# 全局风格\n${displayTextify(globalStyle)}` : '';
+  return `${promptText}${globalText}`;
+}
+
 function sectionCopyText(analysis: ReferenceVideoAnalysisJson | null | undefined, key: SectionKey): string {
   const section = SECTIONS.find((x) => x.key === key);
-  return [`# ${section?.label || key}`, textify(sectionValue(analysis, key))].filter(Boolean).join('\n\n');
+  const value = sectionValue(analysis, key);
+  const body = key === 'video_prompt' ? videoPromptCopyText(value) : textify(value);
+  return [`# ${section?.label || key}`, body].filter(Boolean).join('\n\n');
 }
 
 export function ShortDramaVideoAnalysisPage() {
