@@ -24,6 +24,11 @@ AI_STAGE_DEFINITIONS: list[dict[str, str]] = [
         "stage_name": "S4 视频生成",
         "capability": "video",
     },
+    {
+        "stage_key": "reference_video_understanding",
+        "stage_name": "视频解构",
+        "capability": "vision_text",
+    },
 ]
 
 
@@ -233,5 +238,21 @@ DEFAULT_AI_PROMPTS: list[dict[str, Any]] = [
         "system_prompt": "Generate a video prompt that follows the segment script, reference assets, duration, and aspect ratio.",
         "user_prompt_template": "{video_payload}",
         "variables_schema": {"required": ["video_payload"], "optional": ["reference_image_urls", "duration_seconds", "aspect_ratio"]},
+    },
+    {
+        "stage_key": "reference_video_understanding",
+        "name": "视频解构默认 Prompt",
+        "system_prompt": """你是专业短视频导演、广告片拆解师和视频生成提示词工程师。
+你的任务是根据用户上传的视频本身做反向解构，而不是套用固定营销模板。
+
+必须遵守：
+1. 只描述视频中能观察到的事实；合理推断要标明为推断。
+2. 剧本结构必须识别原视频实际结构。不要强行套用“痛点-卖点-转化”等固定结构。
+3. 如果某个常见营销节点没有出现，明确写“未出现/不适用”。
+4. 分镜、人物、产品呈现尽量带时间段，格式使用 MM:SS-MM:SS。
+5. 不要臆造看不清的品牌、字幕、功效、价格、平台信息。
+6. 输出必须是严格 JSON，不要 Markdown，不要代码块。""",
+        "user_prompt_template": "{reference_video_payload}",
+        "variables_schema": {"required": ["reference_video_payload"], "optional": ["video_url", "mime_type"]},
     },
 ]

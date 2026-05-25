@@ -10,6 +10,13 @@ const QUICK_ACTIONS = [
     primary: true,
   },
   {
+    title: '视频解构',
+    desc: '上传参考视频，拆剧本、拍法、分镜和 PMT',
+    icon: 'ri-movie-2-line',
+    to: '/short-drama/video-analysis',
+    primary: false,
+  },
+  {
     title: '继续已有项目',
     desc: '查看生成进度，处理失败或继续下一步',
     icon: 'ri-folder-3-line',

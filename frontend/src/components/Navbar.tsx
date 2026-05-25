@@ -9,7 +9,7 @@ export function Navbar() {
 
   return (
     <header className="fixed top-0 left-0 right-0 z-50 h-14 border-b border-[#E5E5EA] bg-[rgba(255,255,255,0.96)] backdrop-blur-md">
-      <div className="mx-auto flex h-full max-w-[1280px] items-center justify-between px-6 lg:px-10">
+      <div className="flex h-full w-full items-center justify-between px-6 lg:px-10">
         <div className="flex min-w-0 shrink-0 items-center gap-2">
           <Link to="/" className="flex items-center gap-2 group">
             <VibeClipLogo />
@@ -45,6 +45,16 @@ export function Navbar() {
             }`}
           >
             项目管理
+          </Link>
+          <Link
+            to="/short-drama/video-analysis"
+            className={`rounded-lg px-3.5 py-1.5 text-[13.5px] font-medium ${
+              location.pathname === '/short-drama/video-analysis'
+                ? 'bg-[#F5F5F7] text-[#1D1D1F]'
+                : 'text-[#8E8E93] hover:bg-[#F5F5F7] hover:text-[#1D1D1F]'
+            }`}
+          >
+            视频解构
           </Link>
         </nav>
 

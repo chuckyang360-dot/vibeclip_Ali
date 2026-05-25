@@ -27,8 +27,11 @@ import type {
   AssetLibrarySummaryListResponseDto,
   AnalyzeAssetReferenceImageBody,
   AnalyzeAssetReferenceImageResponseDto,
+  AnalyzeReferenceVideoResponseDto,
   CreateAssetFromImageBody,
   CreateAssetLibraryBody,
+  ReferenceVideoDto,
+  ReferenceVideoListResponseDto,
   ShortDramaProjectDto,
   ShortDramaProjectListResponseDto,
   SaveCreativeIntentResponseDto,
@@ -130,6 +133,22 @@ async function sdFetchJson<T>(path: string, init?: RequestInit): Promise<T> {
     ...init,
     headers: {
       'Content-Type': 'application/json',
+      ...init?.headers,
+    },
+  });
+  if (!res.ok) {
+    const parsed = await parseErrorDetail(res);
+    throw new ShortDramaApiError(parsed.message, res.status, parsed.detail, parsed.response);
+  }
+  return res.json() as Promise<T>;
+}
+
+async function sdFetchMultipartJson<T>(path: string, formData: FormData, init?: RequestInit): Promise<T> {
+  const res = await fetch(joinUrl(path), {
+    ...init,
+    method: init?.method || 'POST',
+    body: formData,
+    headers: {
       ...init?.headers,
     },
   });
@@ -265,6 +284,34 @@ export async function updateShortDramaProductContext(
   return sdFetchJson<UpdateProductContextResponseDto>('/api/short-drama/product/context', {
     method: 'PATCH',
     body: JSON.stringify({ project_id: projectId, product_context: productContext }),
+  });
+}
+
+export async function uploadReferenceVideo(file: File, userId?: number | null): Promise<ReferenceVideoDto> {
+  const form = new FormData();
+  form.append('file', file);
+  if (userId != null) form.append('user_id', String(userId));
+  return sdFetchMultipartJson<ReferenceVideoDto>('/api/short-drama/reference-videos', form);
+}
+
+export async function analyzeReferenceVideo(videoId: number): Promise<AnalyzeReferenceVideoResponseDto> {
+  return sdFetchJson<AnalyzeReferenceVideoResponseDto>(`/api/short-drama/reference-videos/${videoId}/analyze`, {
+    method: 'POST',
+  });
+}
+
+export async function getReferenceVideo(videoId: number): Promise<ReferenceVideoDto> {
+  return sdFetchJson<ReferenceVideoDto>(`/api/short-drama/reference-videos/${videoId}`);
+}
+
+export async function listReferenceVideos(userId: number): Promise<ReferenceVideoListResponseDto> {
+  return sdFetchJson<ReferenceVideoListResponseDto>(`/api/short-drama/reference-videos?user_id=${encodeURIComponent(String(userId))}`);
+}
+
+export async function deleteReferenceVideo(videoId: number, userId?: number | null): Promise<{ ok: boolean; video_id: number }> {
+  const q = userId != null ? `?user_id=${encodeURIComponent(String(userId))}` : '';
+  return sdFetchJson<{ ok: boolean; video_id: number }>(`/api/short-drama/reference-videos/${videoId}${q}`, {
+    method: 'DELETE',
   });
 }
 

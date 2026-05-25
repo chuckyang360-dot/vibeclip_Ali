@@ -4,6 +4,7 @@ from .story_blueprint import StoryBlueprintRecord
 from .asset import AssetEntity, AssetImage, AssetReferenceImage, CharacterAsset, SceneAsset, ProductAsset
 from .segment_script import SegmentScriptRecord
 from .render_job import RenderJob
+from .reference_video import ReferenceVideoAnalysis
 
 __all__ = [
     "ShortDramaProject",
@@ -17,4 +18,5 @@ __all__ = [
     "ProductAsset",
     "SegmentScriptRecord",
     "RenderJob",
+    "ReferenceVideoAnalysis",
 ]

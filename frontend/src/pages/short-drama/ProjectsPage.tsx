@@ -3,15 +3,22 @@ import { useNavigate, useLocation } from 'react-router-dom';
 import { getUser } from '../../services/api';
 import { ProjectCoverImage } from './components/ProjectCoverImage';
 import { ShortDramaLayout } from './components/ShortDramaLayout';
-import { listShortDramaAssetLibrary, listShortDramaProjects, ShortDramaApiError } from '@/services/shortDramaApi';
-import type { AssetLibraryItemDto, AssetLibrarySummaryDto, ShortDramaProjectDto } from '@/types/shortDramaApi';
+import {
+  deleteReferenceVideo,
+  listReferenceVideos,
+  listShortDramaAssetLibrary,
+  listShortDramaProjects,
+  ShortDramaApiError,
+} from '@/services/shortDramaApi';
+import type { AssetLibraryItemDto, AssetLibrarySummaryDto, ReferenceVideoDto, ShortDramaProjectDto } from '@/types/shortDramaApi';
 import { resolveAssetImageUrl } from './utils/assetsPageAdapters';
 
 const PAGE_SIZE = 6;
 
 type ProjectStatusFilter = 'all' | 'draft' | 'generating' | 'stale' | 'completed' | 'failed';
-type ManagementModule = 'projects' | 'characters' | 'scenes' | 'products';
-type AssetModule = Exclude<ManagementModule, 'projects'>;
+type ManagementModule = 'projects' | 'characters' | 'scenes' | 'products' | 'videos';
+type AssetModule = 'characters' | 'scenes' | 'products';
+type VideoStatusFilter = 'all' | 'uploaded' | 'processing' | 'success' | 'failed';
 type AssetImageFilter = 'all' | 'with_image' | 'without_image';
 type AssetSortKey = 'recent' | 'oldest' | 'name_az';
 
@@ -65,6 +72,13 @@ const MANAGEMENT_MODULES: {
     shortTitle: '产品资产',
     icon: 'ri-archive-line',
     description: '管理商品/产品资产，包括产品图、产品描述、卖点信息、使用记录。',
+  },
+  {
+    key: 'videos',
+    title: '视频解析',
+    shortTitle: '视频解析',
+    icon: 'ri-movie-2-line',
+    description: '管理上传解析过的参考视频，查看剧本结构、拍摄方法、分镜和视频 PMT。',
   },
 ];
 
@@ -252,6 +266,46 @@ function moduleToAssetType(module: AssetModule): 'character' | 'scene' | 'produc
   if (module === 'characters') return 'character';
   if (module === 'scenes') return 'scene';
   return 'product';
+}
+
+function isAssetModule(module: ManagementModule): module is AssetModule {
+  return module === 'characters' || module === 'scenes' || module === 'products';
+}
+
+function videoStatusLabel(status: ReferenceVideoDto['analysis_status']): string {
+  if (status === 'success') return '已完成';
+  if (status === 'processing') return '解析中';
+  if (status === 'failed') return '解析失败';
+  return '待解析';
+}
+
+function videoStatusTone(status: ReferenceVideoDto['analysis_status']): { bg: string; color: string; border: string } {
+  if (status === 'success') return { bg: 'rgba(4,120,87,0.08)', color: '#047857', border: 'rgba(4,120,87,0.18)' };
+  if (status === 'processing') return { bg: 'rgba(180,83,9,0.08)', color: '#B45309', border: 'rgba(180,83,9,0.18)' };
+  if (status === 'failed') return { bg: 'rgba(220,38,38,0.08)', color: '#B91C1C', border: 'rgba(220,38,38,0.2)' };
+  return { bg: '#F5F5F7', color: '#444444', border: '#EAEAEA' };
+}
+
+function videoTitle(video: ReferenceVideoDto): string {
+  return video.original_filename?.trim() || `视频解析 ${video.id}`;
+}
+
+function videoSummary(video: ReferenceVideoDto): string {
+  const reading = video.analysis_json?.script_reading;
+  if (reading && typeof reading === 'object') {
+    const summary = String((reading as Record<string, unknown>).summary || '').trim();
+    if (summary) return summary;
+  }
+  if (video.analysis_status === 'success') return '已完成视频结构化拆解';
+  if (video.analysis_status === 'failed') return video.error_message || '解析失败，可打开后重试';
+  return '上传后可解析剧本、拍摄方法、分镜和视频 PMT';
+}
+
+function videoTimeMs(video: ReferenceVideoDto): number {
+  const updated = video.updated_at ? new Date(video.updated_at).getTime() : NaN;
+  if (!Number.isNaN(updated)) return updated;
+  const created = video.created_at ? new Date(video.created_at).getTime() : NaN;
+  return Number.isNaN(created) ? 0 : created;
 }
 
 function assetLibraryItemToSummary(asset: AssetLibraryItemDto, projectName: string): AssetLibrarySummaryDto {
@@ -524,6 +578,161 @@ function AssetModulePanel({
   );
 }
 
+function VideoAnalysisPanel({
+  loading,
+  error,
+  videos,
+  filter,
+  onFilterChange,
+  onOpen,
+  onCreate,
+  onDelete,
+}: {
+  loading: boolean;
+  error: string | null;
+  videos: ReferenceVideoDto[];
+  filter: VideoStatusFilter;
+  onFilterChange: (filter: VideoStatusFilter) => void;
+  onOpen: (videoId: number) => void;
+  onCreate: () => void;
+  onDelete: (videoId: number) => void;
+}) {
+  const counts = videos.reduce<Record<VideoStatusFilter, number>>(
+    (acc, video) => {
+      acc.all += 1;
+      acc[video.analysis_status] += 1;
+      return acc;
+    },
+    { all: 0, uploaded: 0, processing: 0, success: 0, failed: 0 },
+  );
+  const filters: { key: VideoStatusFilter; label: string }[] = [
+    { key: 'all', label: '全部' },
+    { key: 'success', label: '已完成' },
+    { key: 'uploaded', label: '待解析' },
+    { key: 'processing', label: '解析中' },
+    { key: 'failed', label: '失败' },
+  ];
+  const filtered = (filter === 'all' ? videos : videos.filter((video) => video.analysis_status === filter))
+    .sort((a, b) => videoTimeMs(b) - videoTimeMs(a) || b.id - a.id);
+
+  return (
+    <>
+      <div className="mb-5 flex flex-col gap-3 rounded-2xl border border-[#EAEAEA] bg-white p-4 shadow-[0_8px_28px_rgba(15,23,42,0.04)] lg:flex-row lg:items-center lg:justify-between">
+        <div>
+          <h2 className="text-[18px] font-black text-[#1D1D1F]">视频解析项目</h2>
+          <p className="mt-1 text-[12px] text-[#8E8E93]">上传并解析过的视频会作为独立项目沉淀在这里。</p>
+        </div>
+        <button
+          type="button"
+          onClick={onCreate}
+          className="inline-flex h-10 items-center justify-center gap-2 rounded-xl bg-[#1D1D1F] px-4 text-[13px] font-bold text-white"
+        >
+          <i className="ri-upload-cloud-2-line text-[15px]" aria-hidden />
+          新建视频解析
+        </button>
+      </div>
+      {loading ? <div className="text-[13px] text-[#8E8E93]">加载视频解析项目中...</div> : null}
+      {error ? <div className="rounded-xl border border-red-200 bg-red-50 p-4 text-[13px] text-red-800">{error}</div> : null}
+      {!loading && !error && videos.length > 0 ? (
+        <div className="mb-5 flex gap-2 overflow-x-auto pb-1 md:flex-wrap md:overflow-visible">
+          {filters.map((item) => {
+            const active = filter === item.key;
+            return (
+              <button
+                key={item.key}
+                type="button"
+                onClick={() => onFilterChange(item.key)}
+                className="shrink-0 rounded-full px-3 py-1.5 text-[12px] font-semibold transition-colors duration-150"
+                style={{
+                  background: active ? '#1D1D1F' : '#ffffff',
+                  color: active ? '#ffffff' : '#444444',
+                  border: `1px solid ${active ? '#1D1D1F' : '#EAEAEA'}`,
+                }}
+              >
+                {item.label} <span style={{ opacity: active ? 0.82 : 0.62 }}>{counts[item.key]}</span>
+              </button>
+            );
+          })}
+        </div>
+      ) : null}
+      {!loading && !error && videos.length === 0 ? (
+        <div className="rounded-3xl border border-dashed border-[#D1D1D6] bg-white px-6 py-12 text-center">
+          <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl bg-[#F5F5F7] text-[#6E6E73]">
+            <i className="ri-movie-2-line text-[24px]" aria-hidden />
+          </div>
+          <p className="mt-4 text-[15px] font-bold text-[#1D1D1F]">暂无视频解析项目</p>
+          <p className="mx-auto mt-2 max-w-lg text-[13px] leading-relaxed text-[#8E8E93]">上传一个参考视频后，解析结果会出现在这里。</p>
+          <button type="button" onClick={onCreate} className="mt-5 rounded-xl bg-[#1D1D1F] px-5 py-2.5 text-[13px] font-semibold text-white">
+            上传视频
+          </button>
+        </div>
+      ) : null}
+      {!loading && !error && videos.length > 0 && filtered.length === 0 ? (
+        <div className="rounded-3xl border border-dashed border-[#D1D1D6] bg-white px-6 py-12 text-center">
+          <p className="text-[15px] font-bold text-[#1D1D1F]">暂无该状态的视频解析</p>
+          <p className="mt-2 text-[13px] text-[#8E8E93]">可以切换筛选条件查看其他记录。</p>
+        </div>
+      ) : null}
+      {!loading && !error && filtered.length > 0 ? (
+        <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
+          {filtered.map((video) => {
+            const tone = videoStatusTone(video.analysis_status);
+            const updatedText = formatUpdatedAt(video.updated_at) || formatUpdatedAt(video.created_at) || '未知时间';
+            return (
+              <article key={video.id} className="overflow-hidden rounded-2xl border border-[#EAEAEA] bg-white shadow-[0_8px_28px_rgba(15,23,42,0.04)]">
+                <div className="aspect-video bg-[#111111]">
+                  {video.public_url ? (
+                    <video src={video.public_url} className="h-full w-full object-cover" muted preload="metadata" />
+                  ) : (
+                    <div className="flex h-full items-center justify-center text-white/55">
+                      <i className="ri-movie-2-line text-[28px]" aria-hidden />
+                    </div>
+                  )}
+                </div>
+                <div className="p-4">
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <h3 className="truncate text-[15px] font-bold text-[#1D1D1F]">{videoTitle(video)}</h3>
+                      <p className="mt-1 text-[11.5px] text-[#8E8E93]">视频解析 ID：{video.id} · 更新于：{updatedText}</p>
+                    </div>
+                    <span className="shrink-0 rounded-full px-2.5 py-1 text-[11px] font-semibold" style={{ background: tone.bg, color: tone.color, border: `1px solid ${tone.border}` }}>
+                      {videoStatusLabel(video.analysis_status)}
+                    </span>
+                  </div>
+                  <p
+                    className="mt-3 min-h-[38px] overflow-hidden text-[12px] leading-relaxed text-[#6E6E73]"
+                    style={{ display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical' }}
+                  >
+                    {descriptionSummary(videoSummary(video))}
+                  </p>
+                  <div className="mt-4 flex gap-2">
+                    <button
+                      type="button"
+                      onClick={() => onOpen(video.id)}
+                      className="flex flex-1 items-center justify-center gap-1.5 rounded-xl bg-[#1D1D1F] px-4 py-2.5 text-[13px] font-semibold text-white"
+                    >
+                      查看解析
+                      <i className="ri-arrow-right-line text-[12px]" />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => onDelete(video.id)}
+                      className="rounded-xl border border-[#EAEAEA] bg-white px-3 py-2.5 text-[13px] font-semibold text-[#6E6E73] hover:text-[#B91C1C]"
+                      aria-label="删除视频解析"
+                    >
+                      <i className="ri-delete-bin-line text-[15px]" aria-hidden />
+                    </button>
+                  </div>
+                </div>
+              </article>
+            );
+          })}
+        </div>
+      ) : null}
+    </>
+  );
+}
+
 function MobileProjectWorkbench({
   loading,
   error,
@@ -673,6 +882,11 @@ export function ShortDramaProjectsPage() {
   const [projects, setProjects] = useState<ShortDramaProjectDto[]>([]);
   const [activeFilter, setActiveFilter] = useState<ProjectStatusFilter>('all');
   const [activeModule, setActiveModule] = useState<ManagementModule>('projects');
+  const [videoFilter, setVideoFilter] = useState<VideoStatusFilter>('all');
+  const [videoLoading, setVideoLoading] = useState(false);
+  const [videoError, setVideoError] = useState<string | null>(null);
+  const [videoRows, setVideoRows] = useState<ReferenceVideoDto[]>([]);
+  const [videosLoaded, setVideosLoaded] = useState(false);
   const [assetLoading, setAssetLoading] = useState(false);
   const [assetError, setAssetError] = useState<string | null>(null);
   const [assetRows, setAssetRows] = useState<Record<AssetModule, AssetLibrarySummaryDto[]>>({
@@ -696,7 +910,7 @@ export function ShortDramaProjectsPage() {
     products: 1,
   });
   const [currentPage, setCurrentPage] = useState(1);
-  const selectedAssetModule: AssetModule = activeModule === 'projects' ? 'characters' : activeModule;
+  const selectedAssetModule: AssetModule = isAssetModule(activeModule) ? activeModule : 'characters';
 
   useEffect(() => {
     if (!user?.id) return;
@@ -717,7 +931,7 @@ export function ShortDramaProjectsPage() {
   }, [user?.id]);
 
   useEffect(() => {
-    if (!user?.id || activeModule === 'projects') return;
+    if (!user?.id || !isAssetModule(activeModule)) return;
     const module = activeModule;
     if (assetLoaded[module]) return;
     if (loading) return;
@@ -743,6 +957,38 @@ export function ShortDramaProjectsPage() {
       }
     })();
   }, [activeModule, assetLoaded, loading, projects, user?.id]);
+
+  useEffect(() => {
+    if (!user?.id || activeModule !== 'videos') return;
+    if (videosLoaded) return;
+    setVideoLoading(true);
+    setVideoError(null);
+    void (async () => {
+      try {
+        const res = await listReferenceVideos(user.id);
+        setVideoRows(res.videos || []);
+        setVideosLoaded(true);
+      } catch (e) {
+        const msg = e instanceof ShortDramaApiError ? e.message : e instanceof Error ? e.message : '加载视频解析项目失败';
+        setVideoError(msg);
+      } finally {
+        setVideoLoading(false);
+      }
+    })();
+  }, [activeModule, user?.id, videosLoaded]);
+
+  const removeVideoAnalysis = async (videoId: number) => {
+    if (!user?.id) return;
+    const ok = window.confirm('确认删除这个视频解析项目吗？');
+    if (!ok) return;
+    try {
+      await deleteReferenceVideo(videoId, user.id);
+      setVideoRows((prev) => prev.filter((video) => video.id !== videoId));
+    } catch (e) {
+      const msg = e instanceof ShortDramaApiError ? e.message : e instanceof Error ? e.message : '删除视频解析失败';
+      setVideoError(msg);
+    }
+  };
 
   const sorted = useMemo(
     () =>
@@ -848,7 +1094,7 @@ export function ShortDramaProjectsPage() {
   return (
     <ShortDramaLayout headerMode="landing">
       <div className="min-h-screen bg-[#F7F8FA] px-4 py-7 md:px-6 md:py-10" style={{ fontFamily: "'Inter', sans-serif" }}>
-        <div className="mx-auto max-w-5xl">
+        <div className="mx-auto max-w-[1500px]">
         {!user?.id ? (
           <div className="rounded-2xl border border-amber-200 bg-amber-50 p-6">
             <p className="text-[14px] font-semibold text-amber-900">请先登录后查看项目列表</p>
@@ -894,37 +1140,39 @@ export function ShortDramaProjectsPage() {
           </div>
         </div>
 
-        <div className="mb-7 hidden snap-x gap-3 overflow-x-auto pb-1 md:grid md:grid-cols-2 md:overflow-visible xl:grid-cols-4">
-          {MANAGEMENT_MODULES.map((module) => {
-            const active = activeModule === module.key;
-            return (
-              <button
-                key={module.key}
-                type="button"
-                onClick={() => setActiveModule(module.key)}
-                className="min-w-[220px] snap-start rounded-2xl border p-4 text-left transition-all duration-150 md:min-w-0"
-                style={{
-                  background: active ? '#1D1D1F' : '#ffffff',
-                  borderColor: active ? '#1D1D1F' : '#EAEAEA',
-                  boxShadow: active ? '0 14px 34px rgba(29,29,31,0.16)' : '0 8px 28px rgba(15,23,42,0.04)',
-                }}
-              >
-                <div
-                  className="mb-3 flex h-10 w-10 items-center justify-center rounded-xl"
-                  style={{ background: active ? 'rgba(255,255,255,0.12)' : '#F5F5F7', color: active ? '#ffffff' : '#6E6E73' }}
+        <div className="hidden gap-6 md:grid md:grid-cols-[220px_minmax(0,1fr)]">
+          <aside className="self-start rounded-2xl border border-[#EAEAEA] bg-white p-2 shadow-[0_8px_28px_rgba(15,23,42,0.04)]">
+            {MANAGEMENT_MODULES.map((module) => {
+              const active = activeModule === module.key;
+              return (
+                <button
+                  key={module.key}
+                  type="button"
+                  onClick={() => setActiveModule(module.key)}
+                  className="mb-1 flex w-full items-center gap-3 rounded-xl px-3 py-3 text-left transition-colors duration-150 last:mb-0"
+                  style={{
+                    background: active ? '#1D1D1F' : 'transparent',
+                    color: active ? '#ffffff' : '#444444',
+                  }}
                 >
-                  <i className={`${module.icon} text-[20px]`} aria-hidden />
-                </div>
-                <h2 className="text-[14px] font-bold" style={{ color: active ? '#ffffff' : '#1D1D1F' }}>{module.title}</h2>
-                <p className="mt-2 text-[12px] leading-relaxed" style={{ color: active ? 'rgba(255,255,255,0.72)' : '#8E8E93' }}>
-                  {module.description}
-                </p>
-              </button>
-            );
-          })}
-        </div>
+                  <span
+                    className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg"
+                    style={{ background: active ? 'rgba(255,255,255,0.12)' : '#F5F5F7', color: active ? '#ffffff' : '#6E6E73' }}
+                  >
+                    <i className={`${module.icon} text-[18px]`} aria-hidden />
+                  </span>
+                  <span className="min-w-0">
+                    <span className="block text-[13px] font-bold">{module.shortTitle}</span>
+                    <span className="mt-0.5 block truncate text-[11px]" style={{ color: active ? 'rgba(255,255,255,0.62)' : '#8E8E93' }}>
+                      {module.description}
+                    </span>
+                  </span>
+                </button>
+              );
+            })}
+          </aside>
 
-        <div className="hidden md:block">
+          <section className="min-w-0">
         {activeModule === 'projects' ? (
           <>
             {loading ? <div className="text-[13px] text-[#8E8E93]">加载中...</div> : null}
@@ -1107,7 +1355,7 @@ export function ShortDramaProjectsPage() {
             onFilterChange={updateCurrentAssetFilter}
             onPageChange={updateCurrentAssetPage}
           />
-        ) : (
+        ) : activeModule === 'products' ? (
           <AssetModulePanel
             module="products"
             loading={assetLoading}
@@ -1122,7 +1370,19 @@ export function ShortDramaProjectsPage() {
             onFilterChange={updateCurrentAssetFilter}
             onPageChange={updateCurrentAssetPage}
           />
+        ) : (
+          <VideoAnalysisPanel
+            loading={videoLoading}
+            error={videoError}
+            videos={videoRows}
+            filter={videoFilter}
+            onFilterChange={setVideoFilter}
+            onCreate={() => navigate('/short-drama/video-analysis')}
+            onOpen={(videoId) => navigate(`/short-drama/video-analysis?video_id=${videoId}`)}
+            onDelete={(videoId) => void removeVideoAnalysis(videoId)}
+          />
         )}
+          </section>
         </div>
           </>
         )}

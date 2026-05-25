@@ -35,6 +35,7 @@ from .short_drama.models import (  # noqa: F401
     ProductAsset,
     ProductContextRecord,
     RenderJob,
+    ReferenceVideoAnalysis,
     SceneAsset,
     SegmentScriptRecord,
     ShortDramaProject,

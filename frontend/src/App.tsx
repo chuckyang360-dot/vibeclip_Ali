@@ -22,6 +22,7 @@ import { ShortDramaStoryBlueprintPage } from './pages/short-drama/StoryBlueprint
 import { ShortDramaAssetsPage } from './pages/short-drama/AssetsPage';
 import { ShortDramaStepFourPage } from './pages/short-drama/StepFourPage';
 import { ShortDramaOverviewPage } from './pages/short-drama/OverviewPage';
+import { ShortDramaVideoAnalysisPage } from './pages/short-drama/VideoAnalysisPage';
 import { AccountSettingsPage } from './pages/account/AccountSettingsPage';
 import { BillingPage } from './pages/billing/BillingPage';
 import { BillingPlansPage } from './pages/billing/BillingPlansPage';
@@ -59,6 +60,7 @@ export function App() {
         <Route path="/short-drama/assets" element={<ShortDramaAssetsPage />} />
         <Route path="/short-drama/step4" element={<ShortDramaStepFourPage />} />
         <Route path="/short-drama/overview" element={<ShortDramaOverviewPage />} />
+        <Route path="/short-drama/video-analysis" element={<ShortDramaVideoAnalysisPage />} />
         <Route path="/login" element={<Login />} />
         <Route path="/register" element={<Register />} />
         <Route path="/account/settings" element={<AccountSettingsPage />} />

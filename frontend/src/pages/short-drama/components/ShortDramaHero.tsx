@@ -90,6 +90,14 @@ export function ShortDramaHero() {
             <i className={ri('ri-add-circle-line', 'text-[14px]')} aria-hidden />
             开始创建
           </button>
+          <button
+            type="button"
+            onClick={() => navigate('/short-drama/video-analysis')}
+            className="flex items-center gap-2 whitespace-nowrap rounded-xl border border-[#1D1D1F] bg-white px-8 py-3.5 text-[15px] font-semibold text-[#1D1D1F] transition-all duration-200 hover:bg-[#F5F5F7]"
+          >
+            <i className={ri('ri-movie-2-line', 'text-[14px]')} aria-hidden />
+            视频解构
+          </button>
           <Link
             to="/cases"
             className="flex items-center gap-2 whitespace-nowrap rounded-xl border border-[#EAEAEA] bg-transparent px-8 py-3.5 text-[15px] font-medium text-[#444444] transition-all duration-200 hover:border-[#D1D1D6] hover:bg-[#F7F8FA]"

@@ -688,3 +688,43 @@ export type CreateAssetFromImageBody = {
   image: string;
   optional_name?: string;
 };
+
+export type ReferenceVideoAnalysisJson = {
+  script_reading?: Record<string, unknown>;
+  shooting_method?: Record<string, unknown>;
+  actual_script_structure?: Record<string, unknown>;
+  characters?: Array<Record<string, unknown>>;
+  product_presentation?: Array<Record<string, unknown>>;
+  shot_breakdown?: Array<Record<string, unknown>>;
+  video_prompt?: Record<string, unknown>;
+  uncertainty_notes?: string[];
+  copyright_safety_notes?: string[];
+  [key: string]: unknown;
+};
+
+export type ReferenceVideoDto = {
+  id: number;
+  user_id?: number | null;
+  original_filename: string;
+  mime_type: string;
+  file_size: number;
+  duration_seconds?: number | null;
+  storage_provider: string;
+  storage_key: string;
+  public_url: string;
+  analysis_status: 'uploaded' | 'processing' | 'success' | 'failed';
+  analysis_json?: ReferenceVideoAnalysisJson | null;
+  generated_prompt: string;
+  error_message: string;
+  created_at?: string | null;
+  updated_at?: string | null;
+};
+
+export type AnalyzeReferenceVideoResponseDto = {
+  video: ReferenceVideoDto;
+};
+
+export type ReferenceVideoListResponseDto = {
+  user_id: number;
+  videos: ReferenceVideoDto[];
+};

@@ -89,12 +89,14 @@ def seed_default_ai_model_configs(db: Session) -> None:
         "s2_story_generation": ("xai", "grok-4.20", "text"),
         "s3_asset_management": ("xai", "grok-imagine-image", "image"),
         "s4_video_generation": ("xai", "grok-imagine-video", "video"),
+        "reference_video_understanding": ("gemini", "gemini-3-flash-preview", "vision_text"),
     }
     fallback_model_for_stage = {
         "s1_product_understanding": ("gemini", "gemini-3-flash-preview", "vision_text"),
         "s2_story_generation": ("gemini", "gemini-3.1-pro-preview", "text"),
         "s3_asset_management": ("gemini", "gemini-3.1-flash-image-preview", "image"),
         "s4_video_generation": ("gemini", "veo-3.1-generate-preview", "video"),
+        "reference_video_understanding": ("gemini", "gemini-3.1-pro-preview", "vision_text"),
     }
 
     for stage in AI_STAGE_DEFINITIONS:
