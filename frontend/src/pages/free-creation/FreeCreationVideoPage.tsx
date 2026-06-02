@@ -66,6 +66,7 @@ export function FreeCreationVideoPage() {
   const projectId = parseId(projectIdRaw);
   const [project, setProject] = useState<FreeCreationProject | null>(null);
   const [activeSegmentId, setActiveSegmentId] = useState<number | null>(null);
+  const [draftPrompt, setDraftPrompt] = useState('');
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -78,6 +79,11 @@ export function FreeCreationVideoPage() {
     const rows = project?.segments || [];
     return rows.find((s) => s.id === activeSegmentId) || rows[0] || null;
   }, [activeSegmentId, project?.segments]);
+
+  useEffect(() => {
+    setDraftPrompt(activeSegment?.prompt || '');
+    setMentionOpen(false);
+  }, [activeSegment?.id]);
 
   const allSegmentsReady = Boolean(project?.segments.length) && project!.segments.every((s) => Boolean(s.video_url));
   const activeColor = activeSegment ? colors[(activeSegment.segment_index - 1) % colors.length] : '#B45309';
@@ -125,8 +131,8 @@ export function FreeCreationVideoPage() {
     return () => window.clearInterval(id);
   }, [project]);
 
-  const patchActive = async (patch: Partial<FreeCreationSegment> & { input_assets?: FreeCreationInputAsset[] }) => {
-    if (!activeSegment) return;
+  const patchActive = async (patch: Partial<FreeCreationSegment> & { input_assets?: FreeCreationInputAsset[] }): Promise<FreeCreationSegment | null> => {
+    if (!activeSegment) return null;
     setBusy(true);
     setError(null);
     try {
@@ -145,11 +151,19 @@ export function FreeCreationVideoPage() {
         if (!prev) return prev;
         return { ...prev, segments: prev.segments.map((s) => (s.id === next.id ? next : s)) };
       });
+      return next;
     } catch (e) {
       setError(e instanceof Error ? e.message : '片段保存失败');
+      return null;
     } finally {
       setBusy(false);
     }
+  };
+
+  const persistActivePrompt = async (): Promise<FreeCreationSegment | null> => {
+    if (!activeSegment) return null;
+    if (draftPrompt === activeSegment.prompt) return activeSegment;
+    return patchActive({ prompt: draftPrompt });
   };
 
   const handleUpload = async (files: FileList | null) => {
@@ -176,14 +190,14 @@ export function FreeCreationVideoPage() {
   };
 
   const handlePromptChange = (value: string) => {
+    setDraftPrompt(value);
     setMentionOpen(value.endsWith('@'));
-    void patchActive({ prompt: value });
   };
 
   const insertMentionAsset = async (asset: FreeCreationAsset) => {
     if (!activeSegment) return;
     const label = asset.label || asset.file_name || `@素材${asset.id}`;
-    const current = activeSegment.prompt || '';
+    const current = draftPrompt || '';
     const atIndex = current.lastIndexOf('@');
     const prompt =
       atIndex >= 0
@@ -191,6 +205,7 @@ export function FreeCreationVideoPage() {
         : `${current}${current.endsWith(' ') || !current ? '' : ' '}${label} `;
     const exists = activeSegment.input_assets.some((a) => a.url === asset.url);
     const input_assets = exists ? activeSegment.input_assets : [...activeSegment.input_assets, toInputAsset(asset)];
+    setDraftPrompt(prompt);
     setMentionOpen(false);
     await patchActive({ prompt, input_assets });
     window.setTimeout(() => promptRef.current?.focus(), 0);
@@ -225,6 +240,8 @@ export function FreeCreationVideoPage() {
     setBusy(true);
     setError(null);
     try {
+      const saved = await persistActivePrompt();
+      if (draftPrompt.trim() && !saved) return;
       await generateFreeCreationSegment(activeSegment.id);
       await refresh();
       setPreviewTarget('segment');
@@ -329,7 +346,7 @@ export function FreeCreationVideoPage() {
               <button
                 type="button"
                 onClick={() => void generateActive()}
-                disabled={busy || !activeSegment?.prompt.trim()}
+                disabled={busy || !draftPrompt.trim()}
                 className="flex items-center gap-2 rounded-xl bg-[#1D1D1F] px-5 py-2.5 text-[13px] font-bold text-white disabled:bg-[#D1D5DB]"
               >
                 <i className={ri(activeSegment?.status === 'running' ? 'ri-loader-4-line animate-spin' : 'ri-magic-line', 'text-[14px]')} aria-hidden />
@@ -393,9 +410,12 @@ export function FreeCreationVideoPage() {
                   <div className="relative mt-2">
                     <textarea
                       ref={promptRef}
-                      value={activeSegment.prompt}
+                      value={draftPrompt}
                       onChange={(e) => handlePromptChange(e.target.value)}
-                      onBlur={() => window.setTimeout(() => setMentionOpen(false), 160)}
+                      onBlur={() => {
+                        window.setTimeout(() => setMentionOpen(false), 160);
+                        void persistActivePrompt();
+                      }}
                       rows={7}
                       className="w-full resize-none rounded-xl border border-[#E5E5EA] bg-white p-4 text-[14px] leading-7 text-[#1D1D1F] outline-none focus:border-[#1D1D1F]"
                       placeholder="输入当前片段的画面、动作、风格和素材引用要求。输入 @ 可引用素材。"
