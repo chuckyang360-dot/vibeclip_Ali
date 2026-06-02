@@ -24,6 +24,7 @@ import { ShortDramaStepFourPage } from './pages/short-drama/StepFourPage';
 import { ShortDramaOverviewPage } from './pages/short-drama/OverviewPage';
 import { ShortDramaVideoAnalysisPage } from './pages/short-drama/VideoAnalysisPage';
 import { AccountSettingsPage } from './pages/account/AccountSettingsPage';
+import { FreeCreationVideoPage } from './pages/free-creation/FreeCreationVideoPage';
 import { BillingPage } from './pages/billing/BillingPage';
 import { BillingPlansPage } from './pages/billing/BillingPlansPage';
 import { BillingCheckoutPage } from './pages/billing/BillingCheckoutPage';
@@ -61,6 +62,7 @@ export function App() {
         <Route path="/short-drama/step4" element={<ShortDramaStepFourPage />} />
         <Route path="/short-drama/overview" element={<ShortDramaOverviewPage />} />
         <Route path="/short-drama/video-analysis" element={<ShortDramaVideoAnalysisPage />} />
+        <Route path="/free-creation/projects/:projectId/video" element={<FreeCreationVideoPage />} />
         <Route path="/login" element={<Login />} />
         <Route path="/register" element={<Register />} />
         <Route path="/account/settings" element={<AccountSettingsPage />} />

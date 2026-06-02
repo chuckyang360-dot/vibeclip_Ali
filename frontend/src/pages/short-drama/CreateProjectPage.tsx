@@ -1,6 +1,12 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { getUser } from '../../services/api';
+import {
+  createFreeCreationProject,
+  updateFreeCreationSegment,
+  uploadFreeCreationAsset,
+  type FreeCreationInputAsset,
+} from '@/services/freeCreationApi';
 import { SDWorkflowNav } from './components/SDWorkflowNav';
 import {
   ShortDramaApiError,
@@ -8,21 +14,23 @@ import {
   getShortDramaProject,
   prepareShortDramaScriptImport,
   saveShortDramaCreativeIntent,
+  uploadReferenceVideo,
 } from '@/services/shortDramaApi';
 import type { CreativeIntentInputDto } from '@/types/shortDramaApi';
 import { useShortDramaProject } from './hooks/useShortDramaProject';
 import { MobileBottomActionBar } from './components/MobileBottomActionBar';
+import {
+  CreationTypeDropdown,
+  S0PromptShell,
+  ToolbarButton,
+  type S0CreationType,
+} from './components/S0CreationWorkbench';
 import { ri } from './utils/shortDramaHelpers';
 import { withProjectQuery } from './utils/shortDramaRoutes';
 
 const platformOptions = ['TikTok', '抖音', '小红书', 'Amazon', 'Instagram', 'YouTube'];
 const durationOptions = ['15s', '30s', '45s', '60s'];
 const aspectRatioOptions = ['9:16', '16:9'];
-const mobileIdeaTemplates = [
-  '给这个商品做一条 TikTok 种草短剧，突出真实使用场景和购买理由。',
-  '做一条 30 秒竖屏广告，开头要有强 Hook，结尾引导下单。',
-  '把商品卖点包装成生活痛点解决方案，不要太像硬广。',
-];
 
 const emptyIntent: CreativeIntentInputDto = {
   intent_text: '',
@@ -37,12 +45,27 @@ function parseProjectId(searchParams: URLSearchParams): number | null {
   return Number.isFinite(n) && n > 0 ? Math.trunc(n) : null;
 }
 
+function parseMode(searchParams: URLSearchParams): S0CreationType {
+  const mode = searchParams.get('mode');
+  if (mode === 'script_import' || mode === 'video_analysis' || mode === 'free_creation') return mode;
+  return 'intent';
+}
+
 function projectNameFromIntent(text: string): string {
   const cleaned = text.trim().replace(/\s+/g, ' ');
   return cleaned ? cleaned.slice(0, 28) : '未命名 VibeClip 项目';
 }
 
-function Chip({
+function hintSummary(intent: CreativeIntentInputDto): string {
+  const rows = [
+    intent.platform_hints.length ? `${intent.platform_hints.length} 平台` : '',
+    intent.aspect_ratio_hint,
+    intent.duration_hint,
+  ].filter(Boolean);
+  return rows.length ? rows.join(' · ') : '未设置';
+}
+
+function ToggleOption({
   active,
   children,
   onClick,
@@ -55,12 +78,9 @@ function Chip({
     <button
       type="button"
       onClick={onClick}
-      className="cursor-pointer whitespace-nowrap rounded-full border px-3 py-1 text-[11.5px] font-medium transition-all duration-150"
-      style={{
-        borderColor: active ? '#1D1D1F' : '#E5E5EA',
-        background: active ? '#1D1D1F' : '#F5F5F7',
-        color: active ? '#ffffff' : '#6E6E73',
-      }}
+      className={`rounded-lg border px-3 py-2 text-[12.5px] font-bold transition ${
+        active ? 'border-[#1D1D1F] bg-[#1D1D1F] text-white' : 'border-[#E5E5EA] bg-[#F7F8FA] text-[#6E6E73] hover:text-[#1D1D1F]'
+      }`}
     >
       {children}
     </button>
@@ -69,32 +89,59 @@ function Chip({
 
 export function ShortDramaCreateProjectPage() {
   const navigate = useNavigate();
-  const [searchParams] = useSearchParams();
+  const [searchParams, setSearchParams] = useSearchParams();
   const { setSession } = useShortDramaProject();
   const routedProjectId = useMemo(() => parseProjectId(searchParams), [searchParams]);
   const [projectId, setProjectId] = useState<number | null>(routedProjectId);
+  const [creationType, setCreationType] = useState<S0CreationType>(() => parseMode(searchParams));
   const [intent, setIntent] = useState<CreativeIntentInputDto>(emptyIntent);
-  const [inputMode, setInputMode] = useState<'intent' | 'script_import'>('intent');
   const [scriptText, setScriptText] = useState('');
   const [scriptFileName, setScriptFileName] = useState('');
   const [strictScriptMode, setStrictScriptMode] = useState(false);
-  const [optionalOpen, setOptionalOpen] = useState(false);
-  const [intentFocused, setIntentFocused] = useState(false);
+  const [freePrompt, setFreePrompt] = useState('');
+  const [freeRatio, setFreeRatio] = useState('9:16');
+  const [freeModel, setFreeModel] = useState('Seedance 2.0');
+  const [freeDuration, setFreeDuration] = useState('5s');
+  const [freeAudio, setFreeAudio] = useState(true);
+  const [freeFiles, setFreeFiles] = useState<File[]>([]);
+  const [freeMentionOpen, setFreeMentionOpen] = useState(false);
+  const [typeOpen, setTypeOpen] = useState(false);
+  const [hintPanel, setHintPanel] = useState<'platform' | 'ratio' | 'duration' | 'free_model' | 'free_ratio' | 'free_duration' | null>(null);
+  const [focused, setFocused] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+  const [videoUploading, setVideoUploading] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
+  const scriptFileRef = useRef<HTMLInputElement>(null);
+  const videoFileRef = useRef<HTMLInputElement>(null);
+  const freeFileRef = useRef<HTMLInputElement>(null);
+  const freePromptRef = useRef<HTMLTextAreaElement>(null);
 
   const user = getUser();
-  const canSubmit = Boolean(
+  const canSubmitProject = Boolean(
     user &&
     !submitting &&
-    (inputMode === 'script_import' ? scriptText.trim().length >= 4 : intent.intent_text.trim()),
+    (creationType === 'script_import' ? scriptText.trim().length >= 4 : creationType === 'intent' ? intent.intent_text.trim() : false),
   );
-  const canSaveDraft = inputMode === 'intent' && canSubmit;
-  const hasHints = Boolean(
-    intent.platform_hints.length > 0 ||
-    intent.duration_hint ||
-    intent.aspect_ratio_hint,
-  );
+  const canPrimaryAction = creationType === 'video_analysis' ? !videoUploading : creationType === 'free_creation' ? Boolean(user && !submitting && freePrompt.trim()) : canSubmitProject;
+  const canSaveDraft = creationType === 'intent' && canSubmitProject;
+  const workflowMode = creationType === 'script_import' || creationType === 'video_analysis' || creationType === 'free_creation' ? creationType : 'standard';
+  const indexedFreeFiles = useMemo(() => {
+    let image = 0;
+    let video = 0;
+    let audio = 0;
+    return freeFiles.map((file) => {
+      const type = file.type.startsWith('video/') ? 'video' : file.type.startsWith('audio/') ? 'audio' : 'image';
+      if (type === 'video') video += 1;
+      else if (type === 'audio') audio += 1;
+      else image += 1;
+      const label = type === 'video' ? `@视频${video}` : type === 'audio' ? `@音频${audio}` : `@图片${image}`;
+      return { file, type, label };
+    });
+  }, [freeFiles]);
+
+  useEffect(() => {
+    setCreationType(parseMode(searchParams));
+  }, [searchParams]);
 
   useEffect(() => {
     if (routedProjectId == null) return;
@@ -113,7 +160,7 @@ export function ShortDramaCreateProjectPage() {
           });
         }
         if (project.workflow_mode === 'script_import' && project.script_import) {
-          setInputMode('script_import');
+          setCreationType('script_import');
           setScriptText(project.script_import.source?.raw_text || '');
           setScriptFileName(project.script_import.source?.file_name || '');
         }
@@ -127,10 +174,18 @@ export function ShortDramaCreateProjectPage() {
     };
   }, [routedProjectId, setSession]);
 
+  const selectCreationType = (type: S0CreationType) => {
+    setCreationType(type);
+    setHintPanel(null);
+    const next = new URLSearchParams(searchParams);
+    next.set('mode', type);
+    setSearchParams(next, { replace: true });
+  };
+
   const ensureProject = async (): Promise<number> => {
     if (projectId) return projectId;
     if (!user) throw new Error('请先登录后再创建项目。');
-    const seedText = inputMode === 'script_import' ? scriptText.trim().slice(0, 280) : intent.intent_text.trim();
+    const seedText = creationType === 'script_import' ? scriptText.trim().slice(0, 280) : intent.intent_text.trim();
     const res = await createShortDramaProject({
       user_id: user.id,
       project_name: projectNameFromIntent(seedText),
@@ -153,7 +208,17 @@ export function ShortDramaCreateProjectPage() {
     return id;
   };
 
-  const handleNext = async () => {
+  const freeModelId = (label: string): string => {
+    if (label === 'Seedance 2.0 Fast') return 'doubao-seedance-2-0-fast-260128';
+    return 'doubao-seedance-2-0-260128';
+  };
+
+  const freeDurationSeconds = (label: string): number => {
+    const n = Number.parseInt(label, 10);
+    return Number.isFinite(n) && n > 0 ? n : 5;
+  };
+
+  const handleFreeCreationStart = async () => {
     if (!user) {
       setSubmitError('请先登录后再创建项目。');
       return;
@@ -161,7 +226,56 @@ export function ShortDramaCreateProjectPage() {
     setSubmitting(true);
     setSubmitError(null);
     try {
-      if (inputMode === 'script_import') {
+      const project = await createFreeCreationProject({
+        title: projectNameFromIntent(freePrompt),
+        prompt: freePrompt.trim(),
+        model: freeModelId(freeModel),
+        ratio: freeRatio === '智能比例' ? '9:16' : freeRatio,
+        resolution: '720p',
+        duration: freeDurationSeconds(freeDuration),
+        generate_audio: freeAudio,
+        watermark: false,
+      });
+      const firstSegment = project.segments[0];
+      if (freeFiles.length && firstSegment) {
+        const uploaded = await Promise.all(freeFiles.map((file) => uploadFreeCreationAsset(project.id, file)));
+        const assets: FreeCreationInputAsset[] = uploaded.map((item) => ({
+          type: item.asset_type,
+          url: item.url,
+          storage_key: item.storage_key,
+          file_name: item.file_name,
+          mime_type: item.mime_type,
+          file_size: item.file_size,
+          role: item.role,
+          label: item.label,
+        }));
+        await updateFreeCreationSegment(firstSegment.id, { assets });
+      }
+      navigate(`/free-creation/projects/${project.id}/video`);
+    } catch (e) {
+      setSubmitError(e instanceof Error ? e.message : '自由创作项目创建失败');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const handleNext = async () => {
+    if (!user) {
+      setSubmitError('请先登录后再创建项目。');
+      return;
+    }
+    if (creationType === 'free_creation') {
+      await handleFreeCreationStart();
+      return;
+    }
+    if (creationType === 'video_analysis') {
+      videoFileRef.current?.click();
+      return;
+    }
+    setSubmitting(true);
+    setSubmitError(null);
+    try {
+      if (creationType === 'script_import') {
         const effectiveIntent = scriptText.trim().slice(0, 240) || '剧本导入项目';
         const id = await ensureProject();
         await saveShortDramaCreativeIntent(id, {
@@ -179,12 +293,10 @@ export function ShortDramaCreateProjectPage() {
         navigate(withProjectQuery('/short-drama/step4', id));
       } else {
         const id = await persistIntent();
-        const nextPath = withProjectQuery('/short-drama/product-input', id);
-        navigate(nextPath);
+        navigate(withProjectQuery('/short-drama/product-input', id));
       }
     } catch (e) {
-      const msg = e instanceof ShortDramaApiError ? e.message : e instanceof Error ? e.message : '创建失败';
-      setSubmitError(msg);
+      setSubmitError(e instanceof ShortDramaApiError ? e.message : e instanceof Error ? e.message : '创建失败');
     } finally {
       setSubmitting(false);
     }
@@ -202,6 +314,42 @@ export function ShortDramaCreateProjectPage() {
     }
   };
 
+  const handleVideoFile = async (file: File | null) => {
+    if (!file) return;
+    setSubmitError(null);
+    setVideoUploading(true);
+    try {
+      const uploaded = await uploadReferenceVideo(file, user?.id ?? null);
+      navigate(`/short-drama/video-analysis?video_id=${uploaded.id}`);
+    } catch (e) {
+      setSubmitError(e instanceof ShortDramaApiError ? e.message : e instanceof Error ? e.message : '视频上传失败');
+    } finally {
+      setVideoUploading(false);
+    }
+  };
+
+  const handleFreeFiles = (files: FileList | null) => {
+    if (!files?.length) return;
+    setFreeFiles((prev) => [...prev, ...Array.from(files)].slice(0, 12));
+    setSubmitError(null);
+  };
+
+  const handleFreePromptChange = (value: string) => {
+    setFreePrompt(value);
+    setFreeMentionOpen(value.endsWith('@'));
+  };
+
+  const insertFreeMention = (label: string) => {
+    const atIndex = freePrompt.lastIndexOf('@');
+    const next =
+      atIndex >= 0
+        ? `${freePrompt.slice(0, atIndex)}${label} ${freePrompt.slice(atIndex + 1)}`
+        : `${freePrompt}${freePrompt.endsWith(' ') || !freePrompt ? '' : ' '}${label} `;
+    setFreePrompt(next);
+    setFreeMentionOpen(false);
+    window.setTimeout(() => freePromptRef.current?.focus(), 0);
+  };
+
   const saveDraft = async () => {
     if (!canSaveDraft) return;
     setSubmitting(true);
@@ -215,382 +363,414 @@ export function ShortDramaCreateProjectPage() {
     }
   };
 
+  const showStandardHints = creationType === 'intent' || creationType === 'script_import';
+  const titleCopy = {
+    intent: '描述你的创作想法',
+    script_import: '导入剧本，快速生成视频',
+    video_analysis: '上传视频，拆解创作方法',
+    free_creation: '自由创作，创意无限',
+  }[creationType];
+  const subtitleCopy = {
+    intent: '告诉 AI 你的目标、风格和方向，后续再补充商品信息。',
+    script_import: '粘贴或上传剧本，AI 会解析分镜并进入视频生成流程。',
+    video_analysis: '上传参考视频，拆出剧本结构、拍摄方法和分镜提示词。',
+    free_creation: '输入 prompt，也可以添加参考素材，直接生成视频。',
+  }[creationType];
+  const submitLabel = creationType === 'script_import' ? '解析剧本并生成视频' : creationType === 'video_analysis' ? '下一步：开始解析' : creationType === 'free_creation' ? '下一步：生成视频' : '下一步：上传商品';
+
   return (
     <div className="min-h-screen bg-[#F7F8FA]" style={{ fontFamily: "'Inter', sans-serif" }}>
       <SDWorkflowNav
         currentStep={0}
         projectId={projectId}
         allowSaveAndLeave={false}
-        workflowMode={inputMode === 'script_import' ? 'script_import' : 'standard'}
+        workflowMode={workflowMode}
       />
       <div className="pt-[112px] md:pt-14">
-        <main className="mx-auto max-w-2xl px-4 pb-28 pt-7 md:px-5 md:py-10">
-          <header className="mb-5 text-left md:mb-6 md:text-center">
-            <span
-              className="mb-3 inline-block rounded-full px-3 py-1 text-[11px] font-bold uppercase tracking-widest"
-              style={{ color: '#8E8E93', background: '#EAEAEA' }}
-            >
-              S0 · 创作意图
-            </span>
-            <h1
-              className="mb-0 text-[28px] font-black md:text-[28px]"
-              style={{ fontFamily: "'Syne', sans-serif", color: '#1D1D1F', lineHeight: 1.25 }}
-            >
-              先说目标，<br className="md:hidden" />AI 再补全方案。
-            </h1>
-            <p className="mt-3 text-[13px] leading-relaxed text-[#8E8E93] md:hidden">
-              一句话就能创建项目，平台、时长和比例可以稍后再调。
-            </p>
-          </header>
-
-          <section className="mb-4 md:hidden">
-            <p className="mb-2 text-[12px] font-semibold text-[#6E6E73]">快速套用</p>
-            <div className="flex snap-x gap-2 overflow-x-auto pb-1">
-              {mobileIdeaTemplates.map((text) => (
-                <button
-                  key={text}
-                  type="button"
-                  onClick={() => setIntent((prev) => ({ ...prev, intent_text: text }))}
-                  className="min-w-[245px] snap-start rounded-2xl border border-[#EAEAEA] bg-white p-3 text-left text-[12.5px] leading-relaxed text-[#444444]"
-                >
-                  {text}
-                </button>
-              ))}
-            </div>
-          </section>
-
-          <div className="mb-4 grid grid-cols-2 gap-2 rounded-2xl border border-[#E5E5EA] bg-white p-1">
-            <button
-              type="button"
-              onClick={() => setInputMode('intent')}
-              className="flex h-9 items-center justify-center gap-1.5 rounded-xl text-[12.5px] font-semibold transition-colors"
-              style={{
-                background: inputMode === 'intent' ? '#1D1D1F' : 'transparent',
-                color: inputMode === 'intent' ? '#fff' : '#6E6E73',
-              }}
-            >
-              <i className={ri('ri-quill-pen-line', 'text-[13px]')} aria-hidden />
-              描述想法
-            </button>
-            <button
-              type="button"
-              onClick={() => setInputMode('script_import')}
-              className="flex h-9 items-center justify-center gap-1.5 rounded-xl text-[12.5px] font-semibold transition-colors"
-              style={{
-                background: inputMode === 'script_import' ? '#1D1D1F' : 'transparent',
-                color: inputMode === 'script_import' ? '#fff' : '#6E6E73',
-              }}
-            >
-              <i className={ri('ri-file-upload-line', 'text-[13px]')} aria-hidden />
-              导入剧本
-            </button>
-          </div>
-
-          {inputMode === 'intent' ? (
-          <section
-            className="mb-3 overflow-hidden rounded-2xl transition-all duration-300"
-            style={{
-              background: '#ffffff',
-              border: `1.5px solid ${intentFocused ? '#1D1D1F' : '#E5E5EA'}`,
-            }}
+        <main className="mx-auto max-w-5xl px-4 pb-28 pt-7 md:px-5 md:py-10">
+          <S0PromptShell
+            eyebrow="S0 · 创作意图"
+            title={titleCopy}
+            subtitle={subtitleCopy}
+            className="max-w-[940px]"
           >
-            <div className="flex flex-wrap items-center gap-2 px-5 pb-1 pt-4">
-              <label className="text-[13px] font-bold" style={{ color: '#444444' }}>
-                描述你的创作想法
-              </label>
-              <span className="hidden text-[12px] md:inline" style={{ color: '#AEAEB2' }}>
-                一句话也可以，越具体越好。
-              </span>
-            </div>
-            <textarea
-              value={intent.intent_text}
-              onChange={(e) => setIntent((p) => ({ ...p, intent_text: e.target.value }))}
-              onFocus={() => setIntentFocused(true)}
-              onBlur={() => setIntentFocused(false)}
-              rows={6}
-              placeholder="例如：我想给这个鼻毛器做一个适合 TikTok 的欧美风短剧，感觉真实一点，不要太像硬广，突出便携、安全、不尴尬。"
-              className="w-full resize-none px-5 pb-4 pt-2 text-[14.5px] leading-relaxed outline-none"
-              style={{ color: '#1D1D1F', background: 'transparent' }}
-            />
-            <div
-              className="flex items-center justify-between px-5 py-2.5"
-              style={{ borderTop: '1px solid #F0F0F0' }}
-            >
-              <span className="text-[11px]" style={{ color: '#C7C7CC' }}>
-                {intent.intent_text.length} 字
-              </span>
-              {intent.intent_text.length > 0 ? (
-                <span className="flex items-center gap-1 text-[11px]" style={{ color: '#047857' }}>
-                  <i className={ri('ri-checkbox-circle-fill', 'text-[12px]')} aria-hidden />
-                  已填写
-                </span>
-              ) : null}
-            </div>
-          </section>
-          ) : (
             <section
-              className="mb-3 overflow-hidden rounded-2xl transition-all duration-300"
-              style={{
-                background: '#ffffff',
-                border: `1.5px solid ${intentFocused ? '#1D1D1F' : '#E5E5EA'}`,
-              }}
+              className="relative mb-5 overflow-visible rounded-2xl bg-white transition-all duration-200"
+              style={{ border: `1.5px solid ${focused ? '#1D1D1F' : '#E5E5EA'}` }}
             >
-              <div className="flex flex-wrap items-center justify-between gap-2 px-5 pb-2 pt-4">
-                <div className="flex min-w-0 items-center gap-2">
-                  <label className="text-[13px] font-bold" style={{ color: '#444444' }}>
-                    剧本导入
-                  </label>
-                  {scriptFileName ? (
-                    <span className="truncate text-[11px]" style={{ color: '#8E8E93' }}>
-                      {scriptFileName}
-                    </span>
-                  ) : null}
-                </div>
-                <label
-                  className="flex cursor-pointer items-center gap-1.5 rounded-lg border border-[#E5E5EA] bg-[#F7F8FA] px-3 py-1.5 text-[11.5px] font-semibold text-[#444444]"
-                >
-                  <i className={ri('ri-upload-2-line', 'text-[12px]')} aria-hidden />
-                  上传 pmt
-                  <input
-                    type="file"
-                    accept=".pmt,.txt,.md,.json"
-                    className="hidden"
-                    onChange={(e) => void handleScriptFile(e.target.files?.[0] ?? null)}
-                  />
-                </label>
-              </div>
-              <textarea
-                value={scriptText}
-                onChange={(e) => setScriptText(e.target.value)}
-                onFocus={() => setIntentFocused(true)}
-                onBlur={() => setIntentFocused(false)}
-                rows={9}
-                placeholder="粘贴你的剧本、分镜、口播稿或 prompt 模板。AI 会先解析并补足可生成视频所需的片段结构，然后直接进入视频生成页。"
-                className="w-full resize-none px-5 pb-4 pt-2 text-[14px] leading-relaxed outline-none"
-                style={{ color: '#1D1D1F', background: 'transparent' }}
-              />
-              <div className="flex items-center justify-between gap-3 px-5 py-2.5" style={{ borderTop: '1px solid #F0F0F0' }}>
-                <label className="flex cursor-pointer items-center gap-2 text-[11.5px]" style={{ color: '#6E6E73' }}>
-                  <input
-                    type="checkbox"
-                    checked={strictScriptMode}
-                    onChange={(e) => setStrictScriptMode(e.target.checked)}
-                    className="h-3.5 w-3.5 accent-[#1D1D1F]"
-                  />
-                  尽量严格按原文
-                </label>
-                <span className="text-[11px]" style={{ color: '#C7C7CC' }}>
-                  {scriptText.length} 字
-                </span>
-              </div>
-            </section>
-          )}
-
-          <section
-            className="mb-5 overflow-hidden rounded-2xl"
-            style={{ background: '#ffffff', border: '1px solid #E5E5EA' }}
-          >
-            <button
-              type="button"
-              onClick={() => setOptionalOpen((v) => !v)}
-              className="flex w-full cursor-pointer items-center justify-between px-5 py-3.5 transition-colors duration-150"
-              style={{ background: 'transparent' }}
-              onMouseEnter={(e) => {
-                e.currentTarget.style.background = '#FAFAFA';
-              }}
-              onMouseLeave={(e) => {
-                e.currentTarget.style.background = 'transparent';
-              }}
-            >
-              <div className="flex items-center gap-2">
-                <i className={ri('ri-magic-line', 'text-[12px]')} style={{ color: '#AEAEB2' }} aria-hidden />
-                <span className="text-[12.5px] font-semibold" style={{ color: '#6E6E73' }}>
-                  可选提示信息
-                </span>
-                {hasHints && !optionalOpen ? (
-                  <span
-                    className="rounded-full px-2 py-0.5 text-[10px] font-semibold"
-                    style={{ background: '#1D1D1F', color: '#fff' }}
+              <div className="flex min-h-[168px] gap-4 px-5 pt-5">
+                {(creationType === 'script_import' || creationType === 'video_analysis' || creationType === 'free_creation') && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (creationType === 'script_import') scriptFileRef.current?.click();
+                      if (creationType === 'video_analysis') videoFileRef.current?.click();
+                      if (creationType === 'free_creation') freeFileRef.current?.click();
+                    }}
+                    disabled={false}
+                    className="mt-1 flex h-20 w-16 shrink-0 rotate-[-7deg] items-center justify-center rounded-lg border border-dashed border-[#D6DCE8] bg-[#F7F8FA] text-[30px] font-light text-[#8E8E93] disabled:cursor-default"
+                    aria-label={creationType === 'script_import' ? '上传 pmt' : '上传视频'}
                   >
-                    已选 {[
-                      intent.platform_hints.length > 0 ? `${intent.platform_hints.length} 平台` : '',
-                      intent.duration_hint,
-                      intent.aspect_ratio_hint,
-                    ].filter(Boolean).join(' · ')}
-                  </span>
-                ) : null}
-                {!hasHints ? (
-                  <span className="hidden text-[11px] sm:inline" style={{ color: '#C7C7CC' }}>
-                    · 只作为 AI 理解方向的参考，不会成为固定规则。
-                  </span>
-                ) : null}
+                    +
+                  </button>
+                )}
+
+                {creationType === 'video_analysis' ? (
+                  <div className="flex min-h-[120px] flex-1 items-start pt-2 text-[15px] leading-8 text-[#A4ACBD]">
+                    {videoUploading ? '视频上传中，上传完成后进入解析页面。' : '请上传您的视频，开始解析'}
+                  </div>
+                ) : (
+                  <div className="relative flex-1">
+                  <textarea
+                    ref={creationType === 'free_creation' ? freePromptRef : undefined}
+                    value={creationType === 'script_import' ? scriptText : creationType === 'free_creation' ? freePrompt : intent.intent_text}
+                    onChange={(e) => {
+                      if (creationType === 'script_import') setScriptText(e.target.value);
+                      else if (creationType === 'free_creation') handleFreePromptChange(e.target.value);
+                      else setIntent((p) => ({ ...p, intent_text: e.target.value }));
+                    }}
+                    onFocus={() => setFocused(true)}
+                    onBlur={() => {
+                      setFocused(false);
+                      window.setTimeout(() => setFreeMentionOpen(false), 160);
+                    }}
+                    rows={4}
+                    placeholder={
+                      creationType === 'script_import'
+                        ? '粘贴你的剧本、分镜、口播稿或 prompt 模板。'
+                        : creationType === 'free_creation'
+                          ? '上传参考素材，输入文字或 @ 参考内容，自由组合图、文、音、视频多元素。'
+                          : '例如：我想给这个鼻毛器做一个适合 TikTok 的欧美风短剧，感觉真实一点，不要太像硬广，突出便携、安全、不尴尬。'
+                    }
+                    className="min-h-[120px] w-full resize-none bg-transparent text-[15px] leading-8 text-[#1D1D1F] outline-none placeholder:text-[#A4ACBD]"
+                  />
+                  {creationType === 'free_creation' && freeMentionOpen ? (
+                    <div className="absolute left-0 top-11 z-30 w-[280px] rounded-xl border border-[#E5E5EA] bg-white p-2 shadow-[0_18px_42px_rgba(15,23,42,0.16)]">
+                      {indexedFreeFiles.length ? indexedFreeFiles.map(({ file, type, label }) => (
+                        <button
+                          key={`${label}-${file.name}-${file.size}`}
+                          type="button"
+                          onMouseDown={(e) => e.preventDefault()}
+                          onClick={() => insertFreeMention(label)}
+                          className="flex h-14 w-full items-center gap-3 rounded-lg px-2 text-left hover:bg-[#F2F4F8]"
+                        >
+                          <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-md bg-[#F2F4F8] text-[#6E6E73]">
+                            <i className={ri(type === 'video' ? 'ri-movie-2-line' : type === 'audio' ? 'ri-volume-up-line' : 'ri-image-line', 'text-[17px]')} aria-hidden />
+                          </span>
+                          <span className="min-w-0">
+                            <span className="block truncate text-[15px] font-black text-[#1D1D1F]">{label}</span>
+                            <span className="block truncate text-[11px] font-normal text-[#8E8E93]">{file.name}</span>
+                          </span>
+                        </button>
+                      )) : (
+                        <button
+                          type="button"
+                          onMouseDown={(e) => e.preventDefault()}
+                          onClick={() => {
+                            setFreeMentionOpen(false);
+                            freeFileRef.current?.click();
+                          }}
+                          className="flex w-full items-center gap-2 rounded-lg px-3 py-3 text-left text-[12.5px] font-bold text-[#6E6E73] hover:bg-[#F2F4F8]"
+                        >
+                          <i className={ri('ri-upload-cloud-2-line', 'text-[15px]')} aria-hidden />
+                          先上传参考素材
+                        </button>
+                      )}
+                    </div>
+                  ) : null}
+                  </div>
+                )}
               </div>
-              <i
-                className={ri(optionalOpen ? 'ri-arrow-up-s-line' : 'ri-arrow-down-s-line', 'text-[15px]')}
-                style={{ color: '#AEAEB2' }}
-                aria-hidden
-              />
-            </button>
 
-            {optionalOpen ? (
-              <div className="space-y-5 px-5 pb-5 pt-2" style={{ borderTop: '1px solid #F0F0F0' }}>
-                <div>
-                  <p className="mb-2 text-[12px] font-semibold" style={{ color: '#6E6E73' }}>
-                    参考平台
-                  </p>
-                  <div className="flex flex-wrap gap-1.5">
-                    {platformOptions.map((p) => (
-                      <Chip
-                        key={p}
-                        active={intent.platform_hints.includes(p)}
-                        onClick={() =>
-                          setIntent((prev) => ({
-                            ...prev,
-                            platform_hints: prev.platform_hints.includes(p)
-                              ? prev.platform_hints.filter((x) => x !== p)
-                              : [...prev.platform_hints, p],
-                          }))
-                        }
-                      >
-                        {p}
-                      </Chip>
-                    ))}
-                  </div>
-                </div>
+              <div className="border-t border-[#F0F0F0] px-5 py-3">
+                <div className="flex flex-wrap items-center gap-2">
+                  <CreationTypeDropdown
+                    active={creationType}
+                    open={typeOpen}
+                    onOpenChange={(open) => {
+                      setTypeOpen(open);
+                      if (open) setHintPanel(null);
+                    }}
+                    onSelect={selectCreationType}
+                  />
 
-                <div className="grid grid-cols-1 gap-5 sm:grid-cols-2">
-                  <div>
-                    <p className="mb-2 text-[12px] font-semibold" style={{ color: '#6E6E73' }}>
-                      大概时长
-                    </p>
-                    <div className="flex flex-wrap gap-1.5">
-                      {durationOptions.map((p) => (
-                        <Chip
-                          key={p}
-                          active={intent.duration_hint === p}
-                          onClick={() => setIntent((prev) => ({ ...prev, duration_hint: prev.duration_hint === p ? '' : p }))}
-                        >
-                          {p}
-                        </Chip>
-                      ))}
-                    </div>
-                  </div>
-                  <div>
-                    <p className="mb-2 text-[12px] font-semibold" style={{ color: '#6E6E73' }}>
-                      画面比例
-                    </p>
-                    <div className="flex flex-wrap gap-1.5">
-                      {aspectRatioOptions.map((p) => (
-                        <Chip
-                          key={p}
-                          active={intent.aspect_ratio_hint === p}
-                          onClick={() => setIntent((prev) => ({ ...prev, aspect_ratio_hint: prev.aspect_ratio_hint === p ? '' : p }))}
-                        >
-                          {p}
-                        </Chip>
-                      ))}
-                    </div>
-                  </div>
+                  {showStandardHints && (
+                    <>
+                      <ToolbarButton onClick={() => setHintPanel(hintPanel === 'platform' ? null : 'platform')}>
+                        <i className={ri('ri-global-line', 'text-[15px]')} aria-hidden />
+                        参考平台
+                        <span className="text-[#8E8E93]">{intent.platform_hints.length ? intent.platform_hints.join('/') : ''}</span>
+                      </ToolbarButton>
+                      <ToolbarButton onClick={() => setHintPanel(hintPanel === 'ratio' ? null : 'ratio')}>
+                        <i className={ri('ri-aspect-ratio-line', 'text-[15px]')} aria-hidden />
+                        画面比例
+                        <span className="text-[#8E8E93]">{intent.aspect_ratio_hint || ''}</span>
+                      </ToolbarButton>
+                      <ToolbarButton onClick={() => setHintPanel(hintPanel === 'duration' ? null : 'duration')}>
+                        <i className={ri('ri-time-line', 'text-[15px]')} aria-hidden />
+                        大概时长
+                        <span className="text-[#8E8E93]">{intent.duration_hint || ''}</span>
+                      </ToolbarButton>
+                    </>
+                  )}
+
+                  {creationType === 'script_import' && (
+                    <label className="ml-1 flex cursor-pointer items-center gap-2 text-[12px] font-bold text-[#6E6E73]">
+                      <input
+                        type="checkbox"
+                        checked={strictScriptMode}
+                        onChange={(e) => setStrictScriptMode(e.target.checked)}
+                        className="h-3.5 w-3.5 accent-[#1D1D1F]"
+                      />
+                      严格按原文
+                    </label>
+                  )}
+
+                  {creationType === 'free_creation' && (
+                    <>
+                      <ToolbarButton onClick={() => setHintPanel(hintPanel === 'free_model' ? null : 'free_model')}>
+                        <i className={ri('ri-box-3-line', 'text-[15px]')} aria-hidden />
+                        {freeModel}
+                      </ToolbarButton>
+                      <ToolbarButton onClick={() => setHintPanel(hintPanel === 'free_ratio' ? null : 'free_ratio')}>
+                        <i className={ri('ri-aspect-ratio-line', 'text-[15px]')} aria-hidden />
+                        {freeRatio}
+                      </ToolbarButton>
+                      <ToolbarButton onClick={() => setHintPanel(hintPanel === 'free_duration' ? null : 'free_duration')}>
+                        <i className={ri('ri-time-line', 'text-[15px]')} aria-hidden />
+                        {freeDuration}
+                      </ToolbarButton>
+                      <ToolbarButton active={freeAudio} onClick={() => setFreeAudio((v) => !v)}>
+                        <i className={ri(freeAudio ? 'ri-volume-up-line' : 'ri-volume-mute-line', 'text-[15px]')} aria-hidden />
+                        {freeAudio ? '输出声音' : '无声'}
+                      </ToolbarButton>
+                      <ToolbarButton onClick={() => {
+                        if (freeFiles.length) setFreeMentionOpen((v) => !v);
+                        else freeFileRef.current?.click();
+                      }}>
+                        <i className={ri('ri-at-line', 'text-[15px]')} aria-hidden />
+                        引用{freeFiles.length ? ` ${freeFiles.length}` : ''}
+                      </ToolbarButton>
+                    </>
+                  )}
+
+                  <span className="ml-auto text-[12px] text-[#C7C7CC]">
+                    {creationType === 'script_import' ? scriptText.length : creationType === 'free_creation' ? freePrompt.length : intent.intent_text.length} 字
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => void handleNext()}
+                    disabled={!canPrimaryAction}
+                    className="flex h-11 w-11 items-center justify-center rounded-full bg-[#1D1D1F] text-white disabled:bg-[#D1D5DB]"
+                    aria-label={submitLabel}
+                  >
+                    <i className={ri(submitting ? 'ri-loader-4-line' : 'ri-arrow-up-line', `${submitting ? 'animate-spin ' : ''}text-[18px]`)} aria-hidden />
+                  </button>
                 </div>
+              </div>
+
+              {hintPanel ? (
+                <div className="absolute bottom-[74px] left-5 z-10 w-full max-w-[520px] rounded-xl border border-[#E5E5EA] bg-white p-4 shadow-[0_18px_42px_rgba(15,23,42,0.16)]">
+                  {hintPanel === 'platform' && (
+                    <>
+                      <p className="mb-3 text-[12px] font-black text-[#8E8E93]">参考平台</p>
+                      <div className="flex flex-wrap gap-2">
+                        {platformOptions.map((p) => (
+                          <ToggleOption
+                            key={p}
+                            active={intent.platform_hints.includes(p)}
+                            onClick={() =>
+                              setIntent((prev) => ({
+                                ...prev,
+                                platform_hints: prev.platform_hints.includes(p)
+                                  ? prev.platform_hints.filter((x) => x !== p)
+                                  : [...prev.platform_hints, p],
+                              }))
+                            }
+                          >
+                            {p}
+                          </ToggleOption>
+                        ))}
+                      </div>
+                    </>
+                  )}
+                  {hintPanel === 'ratio' && (
+                    <>
+                      <p className="mb-3 text-[12px] font-black text-[#8E8E93]">画面比例</p>
+                      <div className="flex flex-wrap gap-2">
+                        {aspectRatioOptions.map((p) => (
+                          <ToggleOption key={p} active={intent.aspect_ratio_hint === p} onClick={() => setIntent((prev) => ({ ...prev, aspect_ratio_hint: prev.aspect_ratio_hint === p ? '' : p }))}>
+                            {p}
+                          </ToggleOption>
+                        ))}
+                      </div>
+                    </>
+                  )}
+                  {hintPanel === 'duration' && (
+                    <>
+                      <p className="mb-3 text-[12px] font-black text-[#8E8E93]">大概时长</p>
+                      <div className="flex flex-wrap gap-2">
+                        {durationOptions.map((p) => (
+                          <ToggleOption key={p} active={intent.duration_hint === p} onClick={() => setIntent((prev) => ({ ...prev, duration_hint: prev.duration_hint === p ? '' : p }))}>
+                            {p}
+                          </ToggleOption>
+                        ))}
+                      </div>
+                    </>
+                  )}
+                  {hintPanel === 'free_model' && (
+                    <>
+                      <p className="mb-3 text-[12px] font-black text-[#8E8E93]">模型</p>
+                      <div className="flex flex-wrap gap-2">
+                        {['Seedance 2.0', 'Seedance 2.0 Fast'].map((p) => (
+                          <ToggleOption key={p} active={freeModel === p} onClick={() => setFreeModel(p)}>{p}</ToggleOption>
+                        ))}
+                      </div>
+                    </>
+                  )}
+                  {hintPanel === 'free_ratio' && (
+                    <>
+                      <p className="mb-3 text-[12px] font-black text-[#8E8E93]">比例</p>
+                      <div className="flex flex-wrap gap-2">
+                        {['智能比例', '9:16', '16:9', '1:1', '3:4'].map((p) => (
+                          <ToggleOption key={p} active={freeRatio === p} onClick={() => setFreeRatio(p)}>{p}</ToggleOption>
+                        ))}
+                      </div>
+                    </>
+                  )}
+                  {hintPanel === 'free_duration' && (
+                    <>
+                      <p className="mb-3 text-[12px] font-black text-[#8E8E93]">时长</p>
+                      <div className="flex flex-wrap gap-2">
+                        {['4s', '5s', '8s', '11s', '15s'].map((p) => (
+                          <ToggleOption key={p} active={freeDuration === p} onClick={() => setFreeDuration(p)}>{p}</ToggleOption>
+                        ))}
+                      </div>
+                    </>
+                  )}
+                </div>
+              ) : null}
+            </section>
+
+            <input
+              ref={scriptFileRef}
+              type="file"
+              accept=".pmt,.txt,.md,.json"
+              className="hidden"
+              onChange={(e) => void handleScriptFile(e.target.files?.[0] ?? null)}
+            />
+            <input
+              ref={videoFileRef}
+              type="file"
+              accept="video/mp4,video/quicktime,video/webm,video/mpeg,video/avi,video/x-flv,video/wmv,video/3gpp"
+              className="hidden"
+              onChange={(e) => void handleVideoFile(e.target.files?.[0] ?? null)}
+            />
+            <input
+              ref={freeFileRef}
+              type="file"
+              multiple
+              accept="image/*,video/*,audio/*"
+              className="hidden"
+              onChange={(e) => handleFreeFiles(e.target.files)}
+            />
+
+            <p className="mb-4 text-center text-[11.5px] text-[#C7C7CC]">
+              {showStandardHints ? `可选提示信息：${hintSummary(intent)}，只作为 AI 理解方向的参考。` : creationType === 'video_analysis' ? '上传后进入独立的视频解构链路。' : '自由创作会进入独立视频生成页面，不会跳转到描述想法链路。'}
+            </p>
+
+            {!user && creationType !== 'video_analysis' ? (
+              <p className="mb-3 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-[12.5px] text-amber-900">
+                未检测到登录用户，无法调用创建项目接口。请先前往登录页完成登录。
+              </p>
+            ) : null}
+            {scriptFileName && creationType === 'script_import' ? (
+              <p className="mb-3 rounded-xl border border-[#E5E5EA] bg-white px-4 py-3 text-[12.5px] text-[#6E6E73]">
+                已载入：{scriptFileName}
+              </p>
+            ) : null}
+            {freeFiles.length && creationType === 'free_creation' ? (
+              <div className="mb-3 rounded-xl border border-[#E5E5EA] bg-white px-4 py-3 text-[12.5px] text-[#6E6E73]">
+                已选择 {freeFiles.length} 个参考素材：
+                <span className="ml-1 text-[#1D1D1F]">
+                  {freeFiles.map((file) => file.name).join('、')}
+                </span>
               </div>
             ) : null}
-          </section>
+            {submitError ? (
+              <p className="mb-3 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-[12.5px] text-red-800">
+                {submitError}
+              </p>
+            ) : null}
 
-          <p className="mb-4 text-center text-[11.5px]" style={{ color: '#C7C7CC' }}>
-            这些信息只是帮助 AI 理解你的创作意图，不会变成固定规则。
-          </p>
+            <div className="hidden items-center justify-between gap-3 md:flex">
+              <button
+                type="button"
+                onClick={() => void saveDraft()}
+                disabled={!canSaveDraft}
+                className="flex cursor-pointer items-center gap-2 whitespace-nowrap rounded-xl border border-[#E5E5EA] bg-white px-5 py-2.5 text-[13px] font-medium text-[#6E6E73] transition disabled:cursor-not-allowed disabled:text-[#AEAEB2]"
+              >
+                <i className={ri('ri-save-line', 'text-[13px]')} aria-hidden />
+                保存草稿
+              </button>
+              <button
+                type="button"
+                onClick={() => void handleNext()}
+                disabled={!canPrimaryAction}
+                className="flex items-center gap-2 whitespace-nowrap rounded-xl px-7 py-2.5 text-[13.5px] font-semibold transition disabled:cursor-not-allowed"
+                style={{
+                  background: canPrimaryAction ? '#1D1D1F' : '#F0F0F0',
+                  color: canPrimaryAction ? '#ffffff' : '#AEAEB2',
+                }}
+              >
+                {submitting ? (
+                  <>
+                    <i className={ri('ri-loader-4-line', 'animate-spin text-[13px]')} aria-hidden />
+                    {creationType === 'script_import' ? '解析剧本中…' : '创建项目中…'}
+                  </>
+                ) : (
+                  <>
+                    {submitLabel}
+                    <i className={ri('ri-arrow-right-line', 'text-[13px]')} aria-hidden />
+                  </>
+                )}
+              </button>
+            </div>
 
-          {!user ? (
-            <p className="mb-3 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-[12.5px] text-amber-900">
-              未检测到登录用户，无法调用创建项目接口。请先前往登录页完成登录。
-            </p>
-          ) : null}
-          {submitError ? (
-            <p className="mb-3 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-[12.5px] text-red-800">
-              {submitError}
-            </p>
-          ) : null}
-
-          <div className="hidden items-center justify-between gap-3 md:flex">
-            <button
-              type="button"
-              onClick={() => void saveDraft()}
-              disabled={!canSaveDraft}
-              className="flex cursor-pointer items-center gap-2 whitespace-nowrap rounded-xl px-5 py-2.5 text-[13px] font-medium transition-all duration-200 disabled:cursor-not-allowed"
-              style={{ background: '#ffffff', color: canSaveDraft ? '#6E6E73' : '#AEAEB2', border: '1px solid #E5E5EA' }}
-              onMouseEnter={(e) => {
-                if (canSaveDraft) e.currentTarget.style.background = '#F5F5F7';
-              }}
-              onMouseLeave={(e) => {
-                e.currentTarget.style.background = '#ffffff';
-              }}
-            >
-              <i className={ri('ri-save-line', 'text-[13px]')} aria-hidden />
-              保存草稿
-            </button>
-            <button
-              type="button"
-              onClick={() => void handleNext()}
-              disabled={!canSubmit}
-              className="flex items-center gap-2 whitespace-nowrap rounded-xl px-7 py-2.5 text-[13.5px] font-semibold transition-all duration-200 disabled:cursor-not-allowed"
-              style={{
-                background: canSubmit ? '#1D1D1F' : '#F0F0F0',
-                color: canSubmit ? '#ffffff' : '#AEAEB2',
-                cursor: canSubmit ? 'pointer' : 'not-allowed',
-              }}
-              onMouseEnter={(e) => {
-                if (canSubmit) e.currentTarget.style.background = '#374151';
-              }}
-              onMouseLeave={(e) => {
-                if (canSubmit) e.currentTarget.style.background = '#1D1D1F';
-              }}
-            >
-              {submitting ? (
-                <>
-                  <i className={ri('ri-loader-4-line', 'animate-spin text-[13px]')} aria-hidden />
-                  {inputMode === 'script_import' ? '解析剧本中…' : '创建项目中…'}
-                </>
-              ) : (
-                <>
-                  {inputMode === 'script_import' ? '解析剧本并生成视频' : '下一步：上传商品'}
-                  <i className={ri('ri-arrow-right-line', 'text-[13px]')} aria-hidden />
-                </>
-              )}
-            </button>
-          </div>
-          <MobileBottomActionBar>
-            <button
-              type="button"
-              onClick={() => void saveDraft()}
-              disabled={!canSaveDraft}
-              className="flex h-11 shrink-0 cursor-pointer items-center justify-center rounded-xl border border-[#E5E5EA] bg-white px-4 text-[13px] font-medium text-[#6E6E73] disabled:cursor-not-allowed disabled:text-[#AEAEB2]"
-              aria-label="保存草稿"
-            >
-              <i className={ri('ri-save-line', 'text-[15px]')} aria-hidden />
-            </button>
-            <button
-              type="button"
-              onClick={() => void handleNext()}
-              disabled={!canSubmit}
-              className="flex h-11 min-w-0 flex-1 items-center justify-center gap-2 rounded-xl px-4 text-[13.5px] font-semibold disabled:cursor-not-allowed"
-              style={{
-                background: canSubmit ? '#1D1D1F' : '#F0F0F0',
-                color: canSubmit ? '#ffffff' : '#AEAEB2',
-              }}
-            >
-              {submitting ? (
-                <>
-                  <i className={ri('ri-loader-4-line', 'animate-spin text-[13px]')} aria-hidden />
-                  {inputMode === 'script_import' ? '解析中…' : '创建中…'}
-                </>
-              ) : (
-                <>
-                  {inputMode === 'script_import' ? '解析并进入 S4' : '下一步'}
-                  <i className={ri('ri-arrow-right-line', 'text-[13px]')} aria-hidden />
-                </>
-              )}
-            </button>
-          </MobileBottomActionBar>
+            <MobileBottomActionBar>
+              <button
+                type="button"
+                onClick={() => void saveDraft()}
+                disabled={!canSaveDraft}
+                className="flex h-11 shrink-0 cursor-pointer items-center justify-center rounded-xl border border-[#E5E5EA] bg-white px-4 text-[13px] font-medium text-[#6E6E73] disabled:cursor-not-allowed disabled:text-[#AEAEB2]"
+                aria-label="保存草稿"
+              >
+                <i className={ri('ri-save-line', 'text-[15px]')} aria-hidden />
+              </button>
+              <button
+                type="button"
+                onClick={() => void handleNext()}
+                disabled={!canPrimaryAction}
+                className="flex h-11 min-w-0 flex-1 items-center justify-center gap-2 rounded-xl px-4 text-[13.5px] font-semibold disabled:cursor-not-allowed"
+                style={{
+                  background: canPrimaryAction ? '#1D1D1F' : '#F0F0F0',
+                  color: canPrimaryAction ? '#ffffff' : '#AEAEB2',
+                }}
+              >
+                {submitting ? (
+                  <>
+                    <i className={ri('ri-loader-4-line', 'animate-spin text-[13px]')} aria-hidden />
+                    {creationType === 'script_import' ? '解析中…' : '创建中…'}
+                  </>
+                ) : (
+                  <>
+                    {creationType === 'intent' ? '下一步' : submitLabel}
+                    <i className={ri('ri-arrow-right-line', 'text-[13px]')} aria-hidden />
+                  </>
+                )}
+              </button>
+            </MobileBottomActionBar>
+          </S0PromptShell>
         </main>
       </div>
     </div>

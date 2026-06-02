@@ -143,6 +143,48 @@ def extract_video_url(body: Any) -> str | None:
     return None
 
 
+def extract_last_frame_url(body: Any) -> str | None:
+    """Resolve last-frame image URL from Ark poll response."""
+
+    def _from_mapping(obj: dict[str, Any]) -> str | None:
+        content = obj.get("content")
+        if isinstance(content, dict):
+            val = content.get("last_frame_url")
+            if isinstance(val, str) and val.strip():
+                return val.strip()
+            if isinstance(val, dict):
+                nested = val.get("url")
+                if isinstance(nested, str) and nested.strip():
+                    return nested.strip()
+        for key in ("last_frame_url", "lastFrameUrl"):
+            val = obj.get(key)
+            if isinstance(val, str) and val.strip():
+                return val.strip()
+        output = obj.get("output")
+        if isinstance(output, dict):
+            found = _from_mapping(output)
+            if found:
+                return found
+        outputs = obj.get("outputs")
+        if isinstance(outputs, list):
+            for item in outputs:
+                if isinstance(item, dict):
+                    found = _from_mapping(item)
+                    if found:
+                        return found
+        return None
+
+    if not isinstance(body, dict):
+        return None
+    found = _from_mapping(body)
+    if found:
+        return found
+    data = body.get("data")
+    if isinstance(data, dict):
+        return _from_mapping(data)
+    return None
+
+
 def extract_task_error(body: Any) -> str:
     if not isinstance(body, dict):
         return ""
@@ -292,6 +334,67 @@ class SeedanceVideoClient:
             task_id,
         )
         return task_id
+
+    def create_generation_task(
+        self,
+        *,
+        payload: dict[str, Any],
+        log_context: dict[str, Any] | None = None,
+    ) -> str:
+        """Create a raw Seedance generation task for non-short-drama workflows."""
+        ctx = dict(log_context or {})
+        logger.info(
+            "[SEEDANCE_GENERATION_REQUEST] context=%s model=%s content_count=%s",
+            ctx,
+            payload.get("model"),
+            len(payload.get("content") or []),
+        )
+        resp = self._request("POST", _TASKS_PATH, json_body=payload)
+        if resp.status_code < 200 or resp.status_code >= 300:
+            body_text = ""
+            try:
+                body_text = resp.text or ""
+            except Exception:
+                pass
+            logger.error(
+                "[SEEDANCE_GENERATION_CREATE_HTTP_ERROR] context=%s status_code=%s body_prefix=%s",
+                ctx,
+                resp.status_code,
+                _safe_response_preview(body_text),
+            )
+            raise ShortDramaVideoProviderError(
+                f"Seedance create task HTTP {resp.status_code}: {_safe_response_preview(body_text)}"
+            )
+        try:
+            data = resp.json()
+        except Exception as e:
+            raise ShortDramaVideoProviderError(f"Seedance create task returned non-JSON: {e}") from e
+        task_id = extract_task_id(data)
+        if not task_id:
+            preview = _safe_response_preview(str(data))
+            logger.error("[SEEDANCE_GENERATION_CREATE_PARSE_FAIL] context=%s response_preview=%s", ctx, preview)
+            raise ShortDramaVideoProviderError(f"Seedance create task missing task id: {preview}")
+        logger.info("[SEEDANCE_GENERATION_TASK_CREATED] context=%s task_id=%s", ctx, task_id)
+        return task_id
+
+    def get_video_task(self, *, task_id: str) -> dict[str, Any]:
+        resp = self._request("GET", f"{_TASKS_PATH}/{task_id}")
+        if resp.status_code < 200 or resp.status_code >= 300:
+            body_text = ""
+            try:
+                body_text = resp.text or ""
+            except Exception:
+                pass
+            raise ShortDramaVideoProviderError(
+                f"Seedance poll HTTP {resp.status_code} (task_id={task_id}): {_safe_response_preview(body_text)}"
+            )
+        try:
+            data = resp.json()
+        except Exception as e:
+            raise ShortDramaVideoProviderError(f"Seedance poll non-JSON (task_id={task_id}): {e}") from e
+        if not isinstance(data, dict):
+            raise ShortDramaVideoProviderError(f"Seedance poll unexpected body (task_id={task_id}): {data!r}")
+        return data
 
     def poll_video_task(
         self,

@@ -1,0 +1,542 @@
+from __future__ import annotations
+
+import os
+import tempfile
+import time
+import logging
+from pathlib import Path
+from typing import Any
+from uuid import uuid4
+
+import httpx
+from sqlalchemy.orm import Session
+
+from ..config import settings
+from ..database import SessionLocal
+from ..short_drama.exceptions import ShortDramaFFmpegError, ShortDramaVideoProviderError
+from ..short_drama.providers.seedance_video_client import (
+    SeedanceVideoClient,
+    effective_seedance_video_model,
+    extract_last_frame_url,
+    extract_task_error,
+    extract_task_status,
+    extract_video_url,
+)
+from ..short_drama.utils.ffmpeg_merge import merge_mp4_files
+from ..utils.r2_storage import upload_file
+from .models import FreeCreationAsset, FreeCreationProject, FreeCreationRenderJob, FreeCreationSegment
+from .schemas import (
+    CreateFreeCreationProjectRequest,
+    CreateFreeCreationSegmentRequest,
+    FreeCreationInputAsset,
+    UpdateFreeCreationSegmentRequest,
+)
+
+logger = logging.getLogger(__name__)
+
+
+IMAGE_ROLES = {"reference_image", "first_frame", "last_frame"}
+
+
+def asset_role(asset_type: str) -> str:
+    if asset_type == "video":
+        return "reference_video"
+    if asset_type == "audio":
+        return "reference_audio"
+    return "reference_image"
+
+
+def segment_to_response(row: FreeCreationSegment) -> dict[str, Any]:
+    return {
+        "id": int(row.id),
+        "project_id": int(row.project_id),
+        "segment_index": int(row.segment_index or 1),
+        "title": row.title or "",
+        "prompt": row.prompt or "",
+        "model": row.model or "",
+        "ratio": row.ratio or "9:16",
+        "resolution": row.resolution or "720p",
+        "duration": int(row.duration or 5),
+        "generate_audio": bool(row.generate_audio),
+        "watermark": bool(row.watermark),
+        "input_assets": list(row.input_assets_json or []),
+        "status": row.status or "idle",
+        "error_message": row.error_message or "",
+        "provider_task_id": row.provider_task_id or "",
+        "video_url": row.video_url or "",
+        "last_frame_url": row.last_frame_url or "",
+        "created_at": row.created_at,
+        "updated_at": row.updated_at,
+    }
+
+
+def asset_to_response(row: FreeCreationAsset) -> dict[str, Any]:
+    return {
+        "id": int(row.id),
+        "project_id": int(row.project_id),
+        "type": row.asset_type,
+        "url": row.url or "",
+        "storage_key": row.storage_key or "",
+        "file_name": row.file_name or "",
+        "mime_type": row.mime_type or "",
+        "file_size": int(row.file_size or 0),
+        "role": row.role or asset_role(row.asset_type or ""),
+        "label": row.label or "",
+        "created_at": row.created_at,
+    }
+
+
+def project_to_response(db: Session, row: FreeCreationProject) -> dict[str, Any]:
+    assets = (
+        db.query(FreeCreationAsset)
+        .filter(FreeCreationAsset.project_id == row.id)
+        .order_by(FreeCreationAsset.id.asc())
+        .all()
+    )
+    segments = (
+        db.query(FreeCreationSegment)
+        .filter(FreeCreationSegment.project_id == row.id)
+        .order_by(FreeCreationSegment.segment_index.asc(), FreeCreationSegment.id.asc())
+        .all()
+    )
+    return {
+        "id": int(row.id),
+        "user_id": int(row.user_id),
+        "project_name": row.project_name or "",
+        "status": row.status or "created",
+        "final_video_url": row.final_video_url or "",
+        "final_render_status": row.final_render_status or "idle",
+        "final_render_error": row.final_render_error or "",
+        "settings": dict(row.settings_json or {}),
+        "assets": [asset_to_response(a) for a in assets],
+        "segments": [segment_to_response(s) for s in segments],
+        "created_at": row.created_at,
+        "updated_at": row.updated_at,
+    }
+
+
+def normalize_model(raw: str | None) -> str:
+    value = (raw or "").strip()
+    if value == "Seedance 2.0":
+        return "doubao-seedance-2-0-260128"
+    if value == "Seedance 2.0 Fast":
+        return "doubao-seedance-2-0-fast-260128"
+    return value or effective_seedance_video_model()
+
+
+def normalize_duration(raw: int | None) -> int:
+    try:
+        value = int(raw or 5)
+    except (TypeError, ValueError):
+        value = 5
+    return max(1, min(value, 30))
+
+
+def normalize_assets(assets: list[FreeCreationInputAsset] | None) -> list[dict[str, Any]]:
+    out: list[dict[str, Any]] = []
+    for idx, asset in enumerate(assets or [], start=1):
+        url = str(asset.url or "").strip()
+        if not url:
+            continue
+        asset_type = str(asset.type or "image").strip().lower()
+        role = str(asset.role or asset_role(asset_type)).strip()
+        label = str(asset.label or f"@素材{idx}").strip()
+        out.append(
+            {
+                "type": asset_type,
+                "url": url,
+                "storage_key": str(asset.storage_key or ""),
+                "file_name": str(asset.file_name or ""),
+                "mime_type": str(asset.mime_type or ""),
+                "file_size": int(asset.file_size or 0),
+                "role": role,
+                "label": label,
+            }
+        )
+    return out
+
+
+def build_seedance_payload(segment: FreeCreationSegment) -> dict[str, Any]:
+    content: list[dict[str, Any]] = [{"type": "text", "text": (segment.prompt or "").strip()}]
+    for asset in list(segment.input_assets_json or []):
+        if not isinstance(asset, dict):
+            continue
+        url = str(asset.get("url") or "").strip()
+        asset_type = str(asset.get("type") or "").strip().lower()
+        role = str(asset.get("role") or asset_role(asset_type)).strip()
+        if not url:
+            continue
+        if asset_type in {"image", "avatar"} or role in IMAGE_ROLES:
+            content.append({"type": "image_url", "image_url": {"url": url}, "role": role})
+        elif asset_type == "video":
+            content.append({"type": "video_url", "video_url": {"url": url}, "role": role or "reference_video"})
+        elif asset_type == "audio":
+            content.append({"type": "audio_url", "audio_url": {"url": url}, "role": role or "reference_audio"})
+    return {
+        "model": normalize_model(segment.model),
+        "content": content,
+        "generate_audio": bool(segment.generate_audio),
+        "ratio": (segment.ratio or "9:16").strip(),
+        "duration": int(segment.duration or 5),
+        "watermark": bool(segment.watermark),
+        "resolution": (segment.resolution or "720p").strip(),
+        "return_last_frame": True,
+    }
+
+
+def create_project(db: Session, *, body: CreateFreeCreationProjectRequest, user_id: int) -> FreeCreationProject:
+    title = (body.title or body.prompt or "自由创作项目").strip()[:48]
+    row = FreeCreationProject(
+        user_id=user_id,
+        project_name=title or "自由创作项目",
+        status="created",
+        settings_json={
+            "workflow_mode": "free_creation",
+            "model": normalize_model(body.model),
+            "ratio": body.ratio or "9:16",
+            "resolution": body.resolution or "720p",
+            "duration": normalize_duration(body.duration),
+            "generate_audio": bool(body.generate_audio),
+        },
+    )
+    db.add(row)
+    db.flush()
+    seg = FreeCreationSegment(
+        project_id=row.id,
+        user_id=user_id,
+        segment_index=1,
+        title="片段 1",
+        prompt=body.prompt.strip(),
+        model=normalize_model(body.model),
+        ratio=(body.ratio or "9:16").strip(),
+        resolution=(body.resolution or "720p").strip(),
+        duration=normalize_duration(body.duration),
+        generate_audio=bool(body.generate_audio),
+        watermark=bool(body.watermark),
+        input_assets_json=normalize_assets(body.assets),
+        status="idle",
+    )
+    db.add(seg)
+    db.commit()
+    db.refresh(row)
+    return row
+
+
+def create_segment(db: Session, *, project: FreeCreationProject, body: CreateFreeCreationSegmentRequest) -> FreeCreationSegment:
+    last = (
+        db.query(FreeCreationSegment)
+        .filter(FreeCreationSegment.project_id == project.id)
+        .order_by(FreeCreationSegment.segment_index.desc(), FreeCreationSegment.id.desc())
+        .first()
+    )
+    next_index = int(last.segment_index or 0) + 1 if last else 1
+    row = FreeCreationSegment(
+        project_id=project.id,
+        user_id=project.user_id,
+        segment_index=next_index,
+        title=(body.title or f"片段 {next_index}").strip(),
+        prompt=(body.prompt or "").strip(),
+        model=normalize_model(body.model),
+        ratio=(body.ratio or "9:16").strip(),
+        resolution=(body.resolution or "720p").strip(),
+        duration=normalize_duration(body.duration),
+        generate_audio=bool(body.generate_audio),
+        watermark=bool(body.watermark),
+        input_assets_json=normalize_assets(body.assets),
+        status="idle",
+    )
+    db.add(row)
+    db.commit()
+    db.refresh(row)
+    return row
+
+
+def update_segment(db: Session, *, segment: FreeCreationSegment, body: UpdateFreeCreationSegmentRequest) -> FreeCreationSegment:
+    if body.title is not None:
+        segment.title = body.title.strip()
+    if body.prompt is not None:
+        segment.prompt = body.prompt.strip()
+    if body.assets is not None:
+        segment.input_assets_json = normalize_assets(body.assets)
+    if body.model is not None:
+        segment.model = normalize_model(body.model)
+    if body.ratio is not None:
+        segment.ratio = body.ratio.strip() or "9:16"
+    if body.resolution is not None:
+        segment.resolution = body.resolution.strip() or "720p"
+    if body.duration is not None:
+        segment.duration = normalize_duration(body.duration)
+    if body.generate_audio is not None:
+        segment.generate_audio = bool(body.generate_audio)
+    if body.watermark is not None:
+        segment.watermark = bool(body.watermark)
+    if segment.status in {"failed", "succeeded", "completed"}:
+        segment.status = "idle"
+        segment.error_message = ""
+    db.add(segment)
+    db.commit()
+    db.refresh(segment)
+    return segment
+
+
+def upload_asset_file(
+    db: Session,
+    *,
+    project: FreeCreationProject,
+    local_path: str,
+    file_name: str,
+    mime_type: str,
+    asset_type_value: str,
+    file_size: int,
+) -> FreeCreationAsset:
+    ext = Path(file_name or "").suffix.lower()
+    if not ext:
+        ext = ".mp4" if asset_type_value == "video" else ".mp3" if asset_type_value == "audio" else ".png"
+    key = f"free-creation/uploads/{project.user_id}/{project.id}/{uuid4().hex}{ext}"
+    url = upload_file(local_path, key)
+    role = asset_role(asset_type_value)
+    label_prefix = "视频" if asset_type_value == "video" else "音频" if asset_type_value == "audio" else "图片"
+    count = (
+        db.query(FreeCreationAsset)
+        .filter(FreeCreationAsset.project_id == project.id, FreeCreationAsset.asset_type == asset_type_value)
+        .count()
+    )
+    row = FreeCreationAsset(
+        project_id=project.id,
+        user_id=project.user_id,
+        asset_type=asset_type_value,
+        url=url,
+        storage_key=key,
+        file_name=file_name or "",
+        mime_type=mime_type or "",
+        file_size=int(file_size or 0),
+        role=role,
+        label=f"@{label_prefix}{count + 1}",
+    )
+    db.add(row)
+    db.commit()
+    db.refresh(row)
+    return row
+
+
+def enqueue_segment_generation(db: Session, *, segment: FreeCreationSegment) -> FreeCreationRenderJob:
+    payload = build_seedance_payload(segment)
+    segment.status = "queued"
+    segment.error_message = ""
+    segment.request_json = payload
+    job = FreeCreationRenderJob(
+        project_id=segment.project_id,
+        segment_id=segment.id,
+        target_type="segment",
+        status="queued",
+        progress=0,
+        request_json=payload,
+    )
+    db.add(segment)
+    db.add(job)
+    db.commit()
+    db.refresh(job)
+    return job
+
+
+def _download_to_temp(url: str, suffix: str) -> Path:
+    timeout = httpx.Timeout(connect=20.0, read=240.0, write=30.0, pool=10.0)
+    fd, tmp_name = tempfile.mkstemp(suffix=suffix)
+    os.close(fd)
+    path = Path(tmp_name)
+    try:
+        with httpx.Client(timeout=timeout, follow_redirects=True) as client:
+            resp = client.get(url)
+        if resp.status_code >= 400:
+            raise ShortDramaVideoProviderError(f"download HTTP {resp.status_code}: {url}")
+        path.write_bytes(resp.content)
+        return path
+    except Exception:
+        path.unlink(missing_ok=True)
+        raise
+
+
+def _upload_remote_to_r2(*, url: str, key: str, suffix: str) -> str:
+    tmp = _download_to_temp(url, suffix)
+    try:
+        return upload_file(str(tmp.resolve()), key)
+    finally:
+        tmp.unlink(missing_ok=True)
+
+
+def run_segment_generation_job(job_id: int) -> None:
+    db = SessionLocal()
+    client = SeedanceVideoClient()
+    try:
+        job = db.get(FreeCreationRenderJob, job_id)
+        if job is None or job.segment_id is None:
+            return
+        segment = db.get(FreeCreationSegment, int(job.segment_id))
+        if segment is None:
+            return
+        job.status = "running"
+        job.progress = 5
+        segment.status = "running"
+        db.commit()
+        payload = dict(job.request_json or build_seedance_payload(segment))
+        provider_task_id = client.create_generation_task(
+            payload=payload,
+            log_context={"workflow": "free_creation", "project_id": segment.project_id, "segment_id": segment.id},
+        )
+        job.provider_task_id = provider_task_id
+        segment.provider_task_id = provider_task_id
+        db.commit()
+
+        deadline = time.monotonic() + float(settings.SEEDANCE_TASK_TIMEOUT_SECONDS)
+        interval = max(1.0, float(settings.SEEDANCE_TASK_POLL_INTERVAL_SECONDS))
+        final: dict[str, Any] | None = None
+        while time.monotonic() < deadline:
+            data = client.get_video_task(task_id=provider_task_id)
+            status = extract_task_status(data)
+            job.response_json = data
+            segment.response_json = data
+            job.progress = min(90, max(10, int(job.progress or 10) + 8))
+            db.commit()
+            if status in {"succeeded", "success", "completed"}:
+                final = data
+                break
+            if status in {"failed", "cancelled", "expired", "error"}:
+                err = extract_task_error(data) or status
+                job.status = "failed"
+                job.error_message = err
+                segment.status = "failed"
+                segment.error_message = err
+                db.commit()
+                return
+            time.sleep(interval)
+
+        if final is None:
+            job.status = "failed"
+            job.error_message = "Seedance task polling timed out"
+            segment.status = "failed"
+            segment.error_message = job.error_message
+            db.commit()
+            return
+        video_url = extract_video_url(final)
+        if not video_url:
+            job.status = "failed"
+            job.error_message = "Seedance task succeeded but video_url is missing"
+            segment.status = "failed"
+            segment.error_message = job.error_message
+            db.commit()
+            return
+
+        video_key = f"free-creation/videos/{segment.user_id}/{segment.project_id}/{segment.id}/result.mp4"
+        final_video_url = _upload_remote_to_r2(url=video_url, key=video_key, suffix=".mp4")
+        segment.provider_video_url = video_url
+        segment.video_url = final_video_url
+        segment.video_storage_key = video_key
+        segment.status = "completed"
+        segment.error_message = ""
+        job.output_url = final_video_url
+        job.status = "completed"
+        job.progress = 100
+
+        last_frame = extract_last_frame_url(final)
+        if last_frame:
+            frame_key = f"free-creation/images/{segment.user_id}/{segment.project_id}/{segment.id}/last_frame.png"
+            try:
+                segment.last_frame_url = _upload_remote_to_r2(url=last_frame, key=frame_key, suffix=".png")
+                segment.last_frame_storage_key = frame_key
+            except Exception:
+                pass
+        project = db.get(FreeCreationProject, int(segment.project_id))
+        if project:
+            project.status = "video_generating"
+            db.add(project)
+        db.commit()
+    except Exception as exc:
+        logger.exception("[FREE_CREATION_SEGMENT_GENERATION_FAILED] job_id=%s", job_id)
+        job = db.get(FreeCreationRenderJob, job_id)
+        if job is not None:
+            job.status = "failed"
+            job.error_message = str(exc)[:2000]
+            if job.segment_id is not None:
+                segment = db.get(FreeCreationSegment, int(job.segment_id))
+                if segment is not None:
+                    segment.status = "failed"
+                    segment.error_message = job.error_message
+            db.commit()
+    finally:
+        db.close()
+
+
+def enqueue_merge(db: Session, *, project: FreeCreationProject) -> FreeCreationRenderJob:
+    job = FreeCreationRenderJob(
+        project_id=project.id,
+        segment_id=None,
+        target_type="final",
+        status="queued",
+        progress=0,
+    )
+    project.final_render_status = "queued"
+    project.final_render_error = ""
+    db.add(job)
+    db.add(project)
+    db.commit()
+    db.refresh(job)
+    return job
+
+
+def run_merge_job(job_id: int) -> None:
+    db = SessionLocal()
+    temp_paths: list[Path] = []
+    output: Path | None = None
+    try:
+        job = db.get(FreeCreationRenderJob, job_id)
+        if job is None:
+            return
+        project = db.get(FreeCreationProject, int(job.project_id))
+        if project is None:
+            return
+        job.status = "running"
+        job.progress = 10
+        project.final_render_status = "running"
+        db.commit()
+        segments = (
+            db.query(FreeCreationSegment)
+            .filter(FreeCreationSegment.project_id == project.id)
+            .order_by(FreeCreationSegment.segment_index.asc(), FreeCreationSegment.id.asc())
+            .all()
+        )
+        ready = [s for s in segments if (s.video_url or "").strip()]
+        if len(ready) != len(segments) or not ready:
+            raise ShortDramaFFmpegError("所有片段视频生成完成后才能合成。")
+        for s in ready:
+            temp_paths.append(_download_to_temp(str(s.video_url), ".mp4"))
+        fd, out_name = tempfile.mkstemp(suffix=".mp4")
+        os.close(fd)
+        output = Path(out_name)
+        merge_mp4_files(temp_paths, output, project_id=int(project.id), segment_id="free_creation_final")
+        key = f"free-creation/final-videos/{project.user_id}/{project.id}/final.mp4"
+        final_url = upload_file(str(output.resolve()), key)
+        project.final_video_url = final_url
+        project.final_video_storage_key = key
+        project.final_render_status = "completed"
+        project.final_render_error = ""
+        project.status = "completed"
+        job.output_url = final_url
+        job.status = "completed"
+        job.progress = 100
+        db.commit()
+    except Exception as exc:
+        job = db.get(FreeCreationRenderJob, job_id)
+        if job is not None:
+            job.status = "failed"
+            job.error_message = str(exc)[:2000]
+            project = db.get(FreeCreationProject, int(job.project_id))
+            if project is not None:
+                project.final_render_status = "failed"
+                project.final_render_error = job.error_message
+            db.commit()
+    finally:
+        for p in temp_paths:
+            p.unlink(missing_ok=True)
+        if output is not None:
+            output.unlink(missing_ok=True)
+        db.close()

@@ -18,6 +18,15 @@ const SCRIPT_IMPORT_STEPS = [
   { label: '视频生成', path: '/short-drama/step4', step: 4 },
 ] as const;
 
+const VIDEO_ANALYSIS_STEPS = [
+  { label: '视频解构', path: '/short-drama/create', step: 0 },
+] as const;
+
+const FREE_CREATION_STEPS = [
+  { label: '自由创作', path: '/short-drama/create', step: 0 },
+  { label: '视频生成', path: '/free-creation/video', step: 4 },
+] as const;
+
 export type SDWorkflowNavProps = {
   /** Framer：无 currentStep 时不渲染中部步骤条（如创建项目页） */
   currentStep?: number;
@@ -45,8 +54,14 @@ export function SDWorkflowNav({
 }: SDWorkflowNavProps) {
   const navigate = useNavigate();
   const [dialog, setDialog] = useState<null | 'leave' | 'save'>(null);
-  const isScriptImport = workflowMode === 'script_import';
-  const steps = isScriptImport ? SCRIPT_IMPORT_STEPS : STEPS;
+  const steps =
+    workflowMode === 'script_import'
+      ? SCRIPT_IMPORT_STEPS
+      : workflowMode === 'video_analysis'
+        ? VIDEO_ANALYSIS_STEPS
+        : workflowMode === 'free_creation'
+          ? FREE_CREATION_STEPS
+          : STEPS;
 
   const handleLeaveHomeClick = () => {
     if (!isDirty) {

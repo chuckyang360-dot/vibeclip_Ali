@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { getUser } from '../../services/api';
+import { listFreeCreationProjects, type FreeCreationProject } from '@/services/freeCreationApi';
 import { ProjectCoverImage } from './components/ProjectCoverImage';
 import { ShortDramaLayout } from './components/ShortDramaLayout';
 import {
@@ -21,6 +22,12 @@ type AssetModule = 'characters' | 'scenes' | 'products';
 type VideoStatusFilter = 'all' | 'uploaded' | 'processing' | 'success' | 'failed';
 type AssetImageFilter = 'all' | 'with_image' | 'without_image';
 type AssetSortKey = 'recent' | 'oldest' | 'name_az';
+
+type ManagedProjectDto = ShortDramaProjectDto & {
+  project_kind: 'short_drama' | 'free_creation';
+  source_key: string;
+  entry_url: string;
+};
 
 type AssetFilterState = {
   query: string;
@@ -325,12 +332,67 @@ function assetLibraryItemToSummary(asset: AssetLibraryItemDto, projectName: stri
   };
 }
 
-function projectSortTimeMs(p: ShortDramaProjectDto): number {
+function projectSortTimeMs(p: Pick<ShortDramaProjectDto, 'updated_at' | 'created_at'>): number {
   const updated = p.updated_at ? new Date(p.updated_at).getTime() : NaN;
   if (!Number.isNaN(updated)) return updated;
   const created = p.created_at ? new Date(p.created_at).getTime() : NaN;
   if (!Number.isNaN(created)) return created;
   return 0;
+}
+
+function freeCreationOverallStatus(project: FreeCreationProject): NonNullable<ShortDramaProjectDto['overall_status']> {
+  const segments = project.segments || [];
+  if (project.final_video_url || project.final_render_status === 'completed') return 'completed';
+  if (segments.some((seg) => seg.status === 'failed') || project.final_render_status === 'failed') return 'failed';
+  if (segments.some((seg) => seg.status === 'queued' || seg.status === 'running') || project.final_render_status === 'queued' || project.final_render_status === 'running') return 'generating';
+  if (segments.some((seg) => Boolean(seg.video_url))) return 'completed';
+  return 'draft';
+}
+
+function freeCreationCover(project: FreeCreationProject): ShortDramaProjectDto['cover_asset'] {
+  const image = (project.assets || []).find((asset) => asset.type === 'image' && asset.url);
+  if (!image) return { asset_type: null, name: null, image_url: null, status: 'missing' };
+  return {
+    asset_type: 'product',
+    name: image.file_name || image.label || '自由创作素材',
+    image_url: image.url,
+    status: 'ready',
+  };
+}
+
+function freeCreationToManagedProject(project: FreeCreationProject): ManagedProjectDto {
+  const segmentTotal = project.segments?.length || 0;
+  const segmentDone = project.segments?.filter((seg) => Boolean(seg.video_url)).length || 0;
+  return {
+    id: project.id,
+    user_id: project.user_id,
+    project_name: project.project_name || `自由创作 ${project.id}`,
+    status: project.status || 'created',
+    last_active_step: 'step_4',
+    step_status: { step_4: segmentDone > 0 ? 'completed' : 'draft' },
+    overall_status: freeCreationOverallStatus(project),
+    final_video_url: project.final_video_url || null,
+    has_final_video: Boolean(project.final_video_url),
+    has_all_segment_videos: segmentTotal > 0 && segmentDone === segmentTotal,
+    segment_video_count: segmentDone,
+    segment_video_total: segmentTotal,
+    cover_asset: freeCreationCover(project),
+    workflow_mode: 'free_creation',
+    created_at: project.created_at || null,
+    updated_at: project.updated_at || project.created_at || null,
+    project_kind: 'free_creation',
+    source_key: `free_creation:${project.id}`,
+    entry_url: `/free-creation/projects/${project.id}/video`,
+  };
+}
+
+function shortDramaToManagedProject(project: ShortDramaProjectDto): ManagedProjectDto {
+  return {
+    ...project,
+    project_kind: 'short_drama',
+    source_key: `short_drama:${project.id}`,
+    entry_url: `/short-drama/projects/${project.id}`,
+  };
 }
 
 function coverFallbackText(p: ShortDramaProjectDto): string {
@@ -743,9 +805,9 @@ function MobileProjectWorkbench({
 }: {
   loading: boolean;
   error: string | null;
-  projects: ShortDramaProjectDto[];
+  projects: ManagedProjectDto[];
   statusCounts: Record<ProjectStatusFilter, number>;
-  onOpenProject: (id: number) => void;
+  onOpenProject: (project: ManagedProjectDto) => void;
   onCreateProject: () => void;
 }) {
   const generating = projects.filter((p) => p.overall_status === 'generating');
@@ -801,7 +863,7 @@ function MobileProjectWorkbench({
           type="button"
           onClick={() => {
             const target = failed[0] || generating[0] || topProjects[0];
-            if (target?.id) onOpenProject(target.id);
+            if (target?.id) onOpenProject(target);
           }}
           disabled={!topProjects.length}
           className="rounded-2xl border border-[#EAEAEA] bg-white p-4 text-left disabled:opacity-50"
@@ -840,9 +902,9 @@ function MobileProjectWorkbench({
               const progressLabel = progressTotal > 0 ? `${progressDone}/${progressTotal}` : stepLabel(p.last_active_step);
               return (
                 <button
-                  key={p.id}
+                  key={p.source_key}
                   type="button"
-                  onClick={() => onOpenProject(p.id)}
+                  onClick={() => onOpenProject(p)}
                   className="flex w-full items-center gap-3 rounded-2xl border border-[#EAEAEA] bg-white p-3 text-left"
                 >
                   <div className="h-16 w-16 shrink-0 overflow-hidden rounded-2xl bg-[#F5F5F7]">
@@ -879,7 +941,7 @@ export function ShortDramaProjectsPage() {
   const user = getUser();
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [projects, setProjects] = useState<ShortDramaProjectDto[]>([]);
+  const [projects, setProjects] = useState<ManagedProjectDto[]>([]);
   const [activeFilter, setActiveFilter] = useState<ProjectStatusFilter>('all');
   const [activeModule, setActiveModule] = useState<ManagementModule>('projects');
   const [videoFilter, setVideoFilter] = useState<VideoStatusFilter>('all');
@@ -918,9 +980,21 @@ export function ShortDramaProjectsPage() {
     setError(null);
     void (async () => {
       try {
-        const res = await listShortDramaProjects(user.id);
-        setProjects(res.projects || []);
-        console.info('[FRONT_PROJECT_LIST_LOADED]', { user_id: user.id, count: res.projects?.length ?? 0 });
+        const [shortDramaRes, freeCreationRows] = await Promise.all([
+          listShortDramaProjects(user.id),
+          listFreeCreationProjects(),
+        ]);
+        const merged = [
+          ...(shortDramaRes.projects || []).map(shortDramaToManagedProject),
+          ...(freeCreationRows || []).map(freeCreationToManagedProject),
+        ];
+        setProjects(merged);
+        console.info('[FRONT_PROJECT_LIST_LOADED]', {
+          user_id: user.id,
+          short_drama_count: shortDramaRes.projects?.length ?? 0,
+          free_creation_count: freeCreationRows?.length ?? 0,
+          count: merged.length,
+        });
       } catch (e) {
         const msg = e instanceof ShortDramaApiError ? e.message : e instanceof Error ? e.message : '加载项目列表失败';
         setError(msg);
@@ -940,7 +1014,7 @@ export function ShortDramaProjectsPage() {
     void (async () => {
       try {
         const assetType = moduleToAssetType(module);
-        const projectList = projects.filter((project) => typeof project.id === 'number');
+        const projectList = projects.filter((project) => project.project_kind === 'short_drama' && typeof project.id === 'number');
         const lists = await Promise.all(
           projectList.map(async (project) => {
             const res = await listShortDramaAssetLibrary(project.id, assetType);
@@ -1126,7 +1200,7 @@ export function ShortDramaProjectsPage() {
           error={error}
           projects={sorted}
           statusCounts={statusCounts}
-          onOpenProject={(id) => navigate(`/short-drama/projects/${id}`)}
+          onOpenProject={(project) => navigate(project.entry_url)}
           onCreateProject={() => navigate('/short-drama/create')}
         />
 
@@ -1209,10 +1283,10 @@ export function ShortDramaProjectsPage() {
                 : createdText
                   ? `创建于：${createdText}`
                   : '创建于：未知时间';
-              console.info('[FRONT_PROJECT_CARD_RENDERED]', { project_id: p.id, overall_status: p.overall_status || 'draft', cover_asset_type: cover?.asset_type || null });
+              console.info('[FRONT_PROJECT_CARD_RENDERED]', { project_id: p.id, project_kind: p.project_kind, overall_status: p.overall_status || 'draft', cover_asset_type: cover?.asset_type || null });
               return (
                 <div
-                  key={p.id}
+                  key={p.source_key}
                   className="overflow-hidden rounded-2xl border border-[#EAEAEA] bg-white shadow-[0_8px_28px_rgba(15,23,42,0.04)] transition-transform duration-150 hover:-translate-y-0.5"
                 >
                   <div className="relative h-44 bg-[#F5F5F7]">
@@ -1228,6 +1302,11 @@ export function ShortDramaProjectsPage() {
                     >
                       {overallStatusLabel(p.overall_status)}
                     </span>
+                    {p.project_kind === 'free_creation' ? (
+                      <span className="absolute left-3 top-3 rounded-full border border-white/70 bg-white/90 px-2.5 py-1 text-[11px] font-semibold text-[#6D28D9] backdrop-blur">
+                        自由创作
+                      </span>
+                    ) : null}
                     {cover?.image_url && cover?.asset_type !== 'character' ? (
                       <span className="absolute bottom-3 left-3 rounded-full bg-white/90 px-2.5 py-1 text-[10.5px] text-[#6E6E73]">
                         {coverFallbackText(p)}
@@ -1240,6 +1319,7 @@ export function ShortDramaProjectsPage() {
                       <h2 className="truncate text-[15px] font-bold text-[#1D1D1F]">{p.project_name || `项目 ${p.id}`}</h2>
                       <div className="mt-1 flex flex-wrap items-center gap-2 text-[11.5px] text-[#8E8E93]">
                         <span>项目 ID：{p.id}</span>
+                        {p.project_kind === 'free_creation' ? <span>自由创作</span> : null}
                         <span>{timeLabel}</span>
                       </div>
                     </div>
@@ -1261,7 +1341,7 @@ export function ShortDramaProjectsPage() {
 
                     <button
                       type="button"
-                      onClick={() => navigate(`/short-drama/projects/${p.id}`)}
+                      onClick={() => navigate(p.entry_url)}
                       className="mt-4 flex w-full items-center justify-center gap-1.5 rounded-xl bg-[#1D1D1F] px-4 py-2.5 text-[13px] font-semibold text-white transition-colors duration-150 hover:bg-[#374151]"
                     >
                       {actionLabel(p.overall_status)}

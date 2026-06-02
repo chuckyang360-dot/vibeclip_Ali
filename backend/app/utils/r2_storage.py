@@ -1,9 +1,13 @@
 import os
 import time
+from pathlib import Path
 
 import boto3
+from dotenv import load_dotenv
 
 from ..admin.api_logger import safe_log_api_call
+
+load_dotenv(Path(__file__).resolve().parents[2] / ".env")
 
 s3 = boto3.client(
     "s3",
