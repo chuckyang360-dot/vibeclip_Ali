@@ -264,7 +264,7 @@ export function FreeCreationVideoPage() {
     });
   }, [project?.segments]);
 
-  const allSegmentsReady = Boolean(project?.segments.length) && project!.segments.every((s) => s.status.toLowerCase() === 'completed' && Boolean(s.video_url));
+  const allSegmentsReady = Boolean(project?.segments.length) && project!.segments.every((s) => Boolean(s.video_url));
   const activeColor = activeSegment ? colors[(activeSegment.segment_index - 1) % colors.length] : '#B45309';
   const previewUrl = previewTarget === 'final'
     ? (project?.final_video_preview_url || project?.final_video_url)

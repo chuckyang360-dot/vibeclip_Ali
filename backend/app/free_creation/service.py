@@ -47,6 +47,7 @@ FREE_CREATION_R2_KEY_MARKERS = (
 )
 
 ACTIVE_RENDER_STATUSES = {"queued", "running"}
+TERMINAL_ERROR_STATUSES = {"failed", "cancelled"}
 
 
 def _utc_now() -> datetime:
@@ -71,6 +72,39 @@ def asset_role(asset_type: str) -> str:
     if asset_type == "audio":
         return "reference_audio"
     return "reference_image"
+
+
+def _effective_segment_status(row: FreeCreationSegment) -> str:
+    status = str(row.status or "idle").strip().lower()
+    if status in ACTIVE_RENDER_STATUSES or status in TERMINAL_ERROR_STATUSES:
+        return status
+    if (row.video_url or "").strip():
+        return "completed"
+    return status or "idle"
+
+
+def repair_segment_statuses_from_outputs(db: Session, *, project_id: int | None = None) -> int:
+    query = db.query(FreeCreationSegment).filter(FreeCreationSegment.video_url != "")
+    if project_id is not None:
+        query = query.filter(FreeCreationSegment.project_id == project_id)
+    rows = query.all()
+    repaired = 0
+    for row in rows:
+        current = str(row.status or "").strip().lower()
+        if current in ACTIVE_RENDER_STATUSES or current in TERMINAL_ERROR_STATUSES or current == "completed":
+            continue
+        row.status = "completed"
+        row.error_message = ""
+        repaired += 1
+        logger.info(
+            "[FREE_CREATION_SEGMENT_STATUS_REPAIRED] project_id=%s segment_id=%s previous_status=%s reason=has_video_url",
+            row.project_id,
+            row.id,
+            current or "(empty)",
+        )
+    if repaired:
+        db.commit()
+    return repaired
 
 
 def expire_stale_render_jobs(db: Session, *, project_id: int | None = None) -> int:
@@ -113,6 +147,7 @@ def expire_stale_render_jobs(db: Session, *, project_id: int | None = None) -> i
 
 
 def segment_to_response(row: FreeCreationSegment) -> dict[str, Any]:
+    status = _effective_segment_status(row)
     return {
         "id": int(row.id),
         "project_id": int(row.project_id),
@@ -130,7 +165,7 @@ def segment_to_response(row: FreeCreationSegment) -> dict[str, Any]:
             for asset in list(row.input_assets_json or [])
             if isinstance(asset, dict)
         ],
-        "status": row.status or "idle",
+        "status": status,
         "error_message": row.error_message or "",
         "provider_task_id": row.provider_task_id or "",
         "video_url": row.video_url or "",
@@ -161,6 +196,7 @@ def asset_to_response(row: FreeCreationAsset) -> dict[str, Any]:
 
 def project_to_response(db: Session, row: FreeCreationProject) -> dict[str, Any]:
     expire_stale_render_jobs(db, project_id=int(row.id))
+    repair_segment_statuses_from_outputs(db, project_id=int(row.id))
     assets = (
         db.query(FreeCreationAsset)
         .filter(FreeCreationAsset.project_id == row.id)

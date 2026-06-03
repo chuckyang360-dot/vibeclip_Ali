@@ -61,3 +61,20 @@ def test_segment_response_adds_preview_urls_to_bound_assets_and_outputs(monkeypa
     assert data["input_assets"][0]["preview_url"] == "https://signed.example/free-creation/uploads/3/2/a.png"
     assert data["video_preview_url"] == "https://signed.example/free-creation/videos/3/2/4/result.mp4"
     assert data["last_frame_preview_url"] == "https://signed.example/free-creation/images/3/2/4/last_frame.png"
+
+
+def test_segment_response_treats_existing_video_as_completed() -> None:
+    row = FreeCreationSegment(
+        id=5,
+        project_id=2,
+        user_id=3,
+        segment_index=1,
+        title="片段 1",
+        prompt="p",
+        status="idle",
+        video_url="https://public.example/free-creation/videos/3/2/5/result.mp4",
+    )
+
+    data = segment_to_response(row)
+
+    assert data["status"] == "completed"
