@@ -20,8 +20,19 @@ const modelOptions = [
   { label: 'Seedance 2.0 Fast', value: 'doubao-seedance-2-0-fast-260128' },
 ];
 const ratioOptions = ['9:16', '16:9', '1:1', '3:4'];
+const resolutionOptions = ['480p', '720p', '1080p'];
 const durationOptions = [4, 5, 8, 11, 15];
 const colors = ['#B45309', '#DC2626', '#047857', '#334155', '#9333EA', '#0F766E'];
+
+type LibraryAsset = FreeCreationInputAsset & {
+  id: string;
+  displayName: string;
+  subLabel: string;
+  source: 'upload' | 'segment_video';
+  sourceSegmentId?: number;
+  sourceSegmentIndex?: number;
+  thumbnailUrl?: string;
+};
 
 function parseId(raw?: string): number | null {
   const n = Number(raw);
@@ -41,6 +52,65 @@ function toInputAsset(asset: FreeCreationAsset): FreeCreationInputAsset {
   };
 }
 
+function libraryToInputAsset(asset: LibraryAsset): FreeCreationInputAsset {
+  return {
+    type: asset.type,
+    url: asset.url,
+    storage_key: asset.storage_key,
+    file_name: asset.file_name,
+    mime_type: asset.mime_type,
+    file_size: asset.file_size,
+    role: asset.role,
+    label: asset.label,
+  };
+}
+
+function toLibraryAsset(asset: FreeCreationAsset): LibraryAsset {
+  return {
+    ...toInputAsset(asset),
+    id: `asset-${asset.id}`,
+    displayName: asset.label || asset.file_name || `素材 ${asset.id}`,
+    subLabel: asset.file_name || asset.type,
+    source: 'upload',
+  };
+}
+
+function segmentVideoAsset(segment: FreeCreationSegment): LibraryAsset | null {
+  if (!segment.video_url) return null;
+  return {
+    id: `segment-video-${segment.id}`,
+    type: 'video',
+    url: segment.video_url,
+    file_name: `片段${segment.segment_index}-${segment.title || '生成视频'}.mp4`,
+    role: 'reference_video',
+    label: `@片段${segment.segment_index}视频`,
+    displayName: `@片段${segment.segment_index}视频`,
+    subLabel: segment.title || `片段 ${segment.segment_index} 生成视频`,
+    source: 'segment_video',
+    sourceSegmentId: segment.id,
+    sourceSegmentIndex: segment.segment_index,
+    thumbnailUrl: segment.last_frame_url || undefined,
+  };
+}
+
+function canUseAssetForSegment(asset: LibraryAsset, segment: FreeCreationSegment): boolean {
+  if (asset.source !== 'segment_video') return true;
+  return Boolean(asset.sourceSegmentIndex && asset.sourceSegmentIndex < segment.segment_index);
+}
+
+function uploadToInputAsset(upload: Awaited<ReturnType<typeof uploadFreeCreationAsset>>): FreeCreationInputAsset {
+  return {
+    type: upload.asset_type,
+    url: upload.url,
+    storage_key: upload.storage_key,
+    file_name: upload.file_name,
+    mime_type: upload.mime_type,
+    file_size: upload.file_size,
+    role: upload.role,
+    label: upload.label,
+  };
+}
+
 function modelLabel(value: string): string {
   return modelOptions.find((m) => m.value === value)?.label || value || 'Seedance 2.0';
 }
@@ -49,6 +119,50 @@ function assetIcon(type: string): string {
   if (type === 'video') return 'ri-movie-2-line';
   if (type === 'audio') return 'ri-volume-up-line';
   return 'ri-image-line';
+}
+
+function AssetThumbnail({ asset }: { asset: LibraryAsset }) {
+  if (asset.type === 'image') {
+    return (
+      <img
+        src={asset.url}
+        alt={asset.displayName}
+        className="h-full w-full object-cover"
+        loading="lazy"
+      />
+    );
+  }
+
+  if (asset.type === 'video') {
+    if (asset.thumbnailUrl) {
+      return (
+        <img
+          src={asset.thumbnailUrl}
+          alt={asset.displayName}
+          className="h-full w-full object-cover"
+          loading="lazy"
+        />
+      );
+    }
+
+    return (
+      <video
+        src={asset.url}
+        className="h-full w-full object-cover"
+        muted
+        playsInline
+        autoPlay
+        loop
+        preload="metadata"
+      />
+    );
+  }
+
+  return (
+    <span className="flex h-full w-full items-center justify-center text-[#6E6E73]">
+      <i className={ri(assetIcon(asset.type), 'text-[16px]')} aria-hidden />
+    </span>
+  );
 }
 
 function statusText(status: string): string {
@@ -66,13 +180,16 @@ export function FreeCreationVideoPage() {
   const projectId = parseId(projectIdRaw);
   const [project, setProject] = useState<FreeCreationProject | null>(null);
   const [activeSegmentId, setActiveSegmentId] = useState<number | null>(null);
-  const [draftPrompt, setDraftPrompt] = useState('');
+  const [draftPrompts, setDraftPrompts] = useState<Record<number, string>>({});
+  const [expandedSegmentIds, setExpandedSegmentIds] = useState<Record<number, boolean>>({});
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [previewTarget, setPreviewTarget] = useState<'segment' | 'final'>('segment');
-  const [mentionOpen, setMentionOpen] = useState(false);
+  const [mentionOpenSegmentId, setMentionOpenSegmentId] = useState<number | null>(null);
+  const [uploadTargetSegmentId, setUploadTargetSegmentId] = useState<number | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
+  const segmentFileRef = useRef<HTMLInputElement>(null);
   const promptRef = useRef<HTMLTextAreaElement>(null);
 
   const activeSegment = useMemo(() => {
@@ -81,13 +198,39 @@ export function FreeCreationVideoPage() {
   }, [activeSegmentId, project?.segments]);
 
   useEffect(() => {
-    setDraftPrompt(activeSegment?.prompt || '');
-    setMentionOpen(false);
-  }, [activeSegment?.id]);
+    if (!project?.segments.length) return;
+    setDraftPrompts((prev) => {
+      const next = { ...prev };
+      project.segments.forEach((seg) => {
+        if (next[seg.id] == null) next[seg.id] = seg.prompt || '';
+      });
+      return next;
+    });
+    setExpandedSegmentIds((prev) => {
+      if (Object.keys(prev).length) return prev;
+      const first = project.segments[0];
+      return first ? { [first.id]: true } : prev;
+    });
+  }, [project?.segments]);
 
   const allSegmentsReady = Boolean(project?.segments.length) && project!.segments.every((s) => Boolean(s.video_url));
   const activeColor = activeSegment ? colors[(activeSegment.segment_index - 1) % colors.length] : '#B45309';
   const previewUrl = previewTarget === 'final' ? project?.final_video_url : activeSegment?.video_url;
+  const activeStatus = activeSegment?.status.toLowerCase() || 'idle';
+  const previewGenerating = previewTarget === 'segment' && ['queued', 'running'].includes(activeStatus);
+  const libraryAssets = useMemo<LibraryAsset[]>(() => {
+    const uploads = (project?.assets || []).map(toLibraryAsset);
+    const segmentVideos = (project?.segments || [])
+      .map(segmentVideoAsset)
+      .filter((asset): asset is LibraryAsset => Boolean(asset));
+    return [...uploads, ...segmentVideos];
+  }, [project?.assets, project?.segments]);
+  const activeLibraryAssets = useMemo(() => {
+    if (!activeSegment) return libraryAssets;
+    return libraryAssets.filter((asset) => canUseAssetForSegment(asset, activeSegment));
+  }, [activeSegment, libraryAssets]);
+  const getSegmentLibraryAssets = (segment: FreeCreationSegment): LibraryAsset[] =>
+    libraryAssets.filter((asset) => canUseAssetForSegment(asset, segment));
 
   const refresh = async () => {
     if (!projectId) return;
@@ -131,12 +274,11 @@ export function FreeCreationVideoPage() {
     return () => window.clearInterval(id);
   }, [project]);
 
-  const patchActive = async (patch: Partial<FreeCreationSegment> & { input_assets?: FreeCreationInputAsset[] }): Promise<FreeCreationSegment | null> => {
-    if (!activeSegment) return null;
+  const patchSegment = async (segment: FreeCreationSegment, patch: Partial<FreeCreationSegment> & { input_assets?: FreeCreationInputAsset[] }): Promise<FreeCreationSegment | null> => {
     setBusy(true);
     setError(null);
     try {
-      const next = await updateFreeCreationSegment(activeSegment.id, {
+      const next = await updateFreeCreationSegment(segment.id, {
         title: patch.title,
         prompt: patch.prompt,
         model: patch.model,
@@ -151,6 +293,9 @@ export function FreeCreationVideoPage() {
         if (!prev) return prev;
         return { ...prev, segments: prev.segments.map((s) => (s.id === next.id ? next : s)) };
       });
+      if (patch.prompt != null) {
+        setDraftPrompts((prev) => ({ ...prev, [next.id]: next.prompt || '' }));
+      }
       return next;
     } catch (e) {
       setError(e instanceof Error ? e.message : '片段保存失败');
@@ -160,10 +305,15 @@ export function FreeCreationVideoPage() {
     }
   };
 
-  const persistActivePrompt = async (): Promise<FreeCreationSegment | null> => {
+  const patchActive = async (patch: Partial<FreeCreationSegment> & { input_assets?: FreeCreationInputAsset[] }): Promise<FreeCreationSegment | null> => {
     if (!activeSegment) return null;
-    if (draftPrompt === activeSegment.prompt) return activeSegment;
-    return patchActive({ prompt: draftPrompt });
+    return patchSegment(activeSegment, patch);
+  };
+
+  const persistSegmentPrompt = async (segment: FreeCreationSegment): Promise<FreeCreationSegment | null> => {
+    const prompt = draftPrompts[segment.id] ?? segment.prompt ?? '';
+    if (prompt === segment.prompt) return segment;
+    return patchSegment(segment, { prompt });
   };
 
   const handleUpload = async (files: FileList | null) => {
@@ -180,35 +330,62 @@ export function FreeCreationVideoPage() {
     }
   };
 
-  const toggleAsset = async (asset: FreeCreationAsset) => {
+  const toggleAsset = async (asset: LibraryAsset) => {
     if (!activeSegment) return;
     const exists = activeSegment.input_assets.some((a) => a.url === asset.url);
     const next = exists
       ? activeSegment.input_assets.filter((a) => a.url !== asset.url)
-      : [...activeSegment.input_assets, toInputAsset(asset)];
+      : [...activeSegment.input_assets, libraryToInputAsset(asset)];
     await patchActive({ input_assets: next });
   };
 
-  const handlePromptChange = (value: string) => {
-    setDraftPrompt(value);
-    setMentionOpen(value.endsWith('@'));
+  const toggleSegmentAsset = async (segment: FreeCreationSegment, asset: LibraryAsset) => {
+    const exists = segment.input_assets.some((a) => a.url === asset.url);
+    const next = exists
+      ? segment.input_assets.filter((a) => a.url !== asset.url)
+      : [...segment.input_assets, libraryToInputAsset(asset)];
+    await patchSegment(segment, { input_assets: next });
   };
 
-  const insertMentionAsset = async (asset: FreeCreationAsset) => {
-    if (!activeSegment) return;
-    const label = asset.label || asset.file_name || `@素材${asset.id}`;
-    const current = draftPrompt || '';
+  const handlePromptChange = (segmentId: number, value: string) => {
+    setDraftPrompts((prev) => ({ ...prev, [segmentId]: value }));
+    setMentionOpenSegmentId(value.endsWith('@') ? segmentId : null);
+  };
+
+  const insertMentionAsset = async (segment: FreeCreationSegment, asset: LibraryAsset) => {
+    const label = asset.label || asset.displayName || asset.file_name || '@素材';
+    const current = draftPrompts[segment.id] ?? segment.prompt ?? '';
     const atIndex = current.lastIndexOf('@');
     const prompt =
       atIndex >= 0
         ? `${current.slice(0, atIndex)}${label} ${current.slice(atIndex + 1)}`
         : `${current}${current.endsWith(' ') || !current ? '' : ' '}${label} `;
-    const exists = activeSegment.input_assets.some((a) => a.url === asset.url);
-    const input_assets = exists ? activeSegment.input_assets : [...activeSegment.input_assets, toInputAsset(asset)];
-    setDraftPrompt(prompt);
-    setMentionOpen(false);
-    await patchActive({ prompt, input_assets });
+    const exists = segment.input_assets.some((a) => a.url === asset.url);
+    const input_assets = exists ? segment.input_assets : [...segment.input_assets, libraryToInputAsset(asset)];
+    setDraftPrompts((prev) => ({ ...prev, [segment.id]: prompt }));
+    setMentionOpenSegmentId(null);
+    await patchSegment(segment, { prompt, input_assets });
     window.setTimeout(() => promptRef.current?.focus(), 0);
+  };
+
+  const uploadForSegment = async (files: FileList | null) => {
+    if (!projectId || !files?.length || !uploadTargetSegmentId) return;
+    const segment = project?.segments.find((s) => s.id === uploadTargetSegmentId);
+    if (!segment) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const uploaded = await Promise.all(Array.from(files).map((file) => uploadFreeCreationAsset(projectId, file)));
+      const input_assets = [...segment.input_assets, ...uploaded.map(uploadToInputAsset)];
+      await patchSegment(segment, { input_assets });
+      await refresh();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : '素材上传失败');
+    } finally {
+      setUploadTargetSegmentId(null);
+      setBusy(false);
+      if (segmentFileRef.current) segmentFileRef.current.value = '';
+    }
   };
 
   const addSegment = async () => {
@@ -235,14 +412,16 @@ export function FreeCreationVideoPage() {
     }
   };
 
-  const generateActive = async () => {
-    if (!activeSegment) return;
+  const generateSegment = async (segment: FreeCreationSegment) => {
     setBusy(true);
     setError(null);
     try {
-      const saved = await persistActivePrompt();
-      if (draftPrompt.trim() && !saved) return;
-      await generateFreeCreationSegment(activeSegment.id);
+      setActiveSegmentId(segment.id);
+      setExpandedSegmentIds((prev) => ({ ...prev, [segment.id]: true }));
+      const prompt = draftPrompts[segment.id] ?? segment.prompt ?? '';
+      const saved = await persistSegmentPrompt(segment);
+      if (prompt.trim() && !saved) return;
+      await generateFreeCreationSegment(segment.id);
       await refresh();
       setPreviewTarget('segment');
     } catch (e) {
@@ -308,7 +487,7 @@ export function FreeCreationVideoPage() {
           </div>
           <input ref={fileRef} type="file" multiple accept="image/*,video/*,audio/*" className="hidden" onChange={(e) => void handleUpload(e.target.files)} />
           <div className="space-y-2 overflow-y-auto">
-            {project?.assets.length ? project.assets.map((asset) => {
+            {activeLibraryAssets.length ? activeLibraryAssets.map((asset) => {
               const selected = activeSegment?.input_assets.some((a) => a.url === asset.url);
               return (
                 <button
@@ -317,12 +496,12 @@ export function FreeCreationVideoPage() {
                   onClick={() => void toggleAsset(asset)}
                   className={`flex w-full items-center gap-3 rounded-lg border bg-white p-3 text-left transition ${selected ? 'border-[#1D1D1F]' : 'border-[#E5E5EA] hover:border-[#B9C0CE]'}`}
                 >
-                  <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md bg-[#F2F4F8] text-[#6E6E73]">
-                    <i className={ri(assetIcon(asset.type), 'text-[16px]')} aria-hidden />
+                  <span className="flex h-12 w-12 shrink-0 items-center justify-center overflow-hidden rounded-md bg-[#F2F4F8]">
+                    <AssetThumbnail asset={asset} />
                   </span>
                   <span className="min-w-0 flex-1">
-                    <span className="block truncate text-[13px] font-black text-[#1D1D1F]">{asset.label || asset.file_name}</span>
-                    <span className="block truncate text-[11px] text-[#8E8E93]">{asset.file_name}</span>
+                    <span className="block truncate text-[13px] font-black text-[#1D1D1F]">{asset.displayName}</span>
+                    <span className="block truncate text-[11px] text-[#8E8E93]">{asset.subLabel}</span>
                   </span>
                   {selected ? <i className={ri('ri-check-line', 'text-[15px] text-[#047857]')} aria-hidden /> : null}
                 </button>
@@ -343,129 +522,206 @@ export function FreeCreationVideoPage() {
                 <p className="text-[11px] font-black uppercase tracking-widest text-[#8E8E93]">Free Creation · Video</p>
                 <h1 className="mt-2 text-[26px] font-black text-[#1D1D1F]">自由创作片段</h1>
               </div>
-              <button
-                type="button"
-                onClick={() => void generateActive()}
-                disabled={busy || !draftPrompt.trim()}
-                className="flex items-center gap-2 rounded-xl bg-[#1D1D1F] px-5 py-2.5 text-[13px] font-bold text-white disabled:bg-[#D1D5DB]"
-              >
-                <i className={ri(activeSegment?.status === 'running' ? 'ri-loader-4-line animate-spin' : 'ri-magic-line', 'text-[14px]')} aria-hidden />
-                {activeSegment?.video_url ? '重新生成' : '生成当前片段'}
-              </button>
             </div>
             {error ? <p className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-[12px] text-red-800">{error}</p> : null}
           </div>
 
           <div className="min-h-0 flex-1 overflow-y-auto px-8 py-6">
-            {activeSegment ? (
-              <article className="rounded-2xl border bg-[#F7F8FA] p-5" style={{ borderColor: `${activeColor}55` }}>
-                <div className="mb-4 flex items-center justify-between">
-                  <div className="flex items-center gap-3">
-                    <span className="flex h-10 w-10 items-center justify-center rounded-lg text-[14px] font-black" style={{ background: `${activeColor}18`, color: activeColor }}>
-                      S{activeSegment.segment_index}
-                    </span>
-                    <div>
-                      <input
-                        value={activeSegment.title}
-                        onChange={(e) => void patchActive({ title: e.target.value })}
-                        className="h-8 w-[320px] rounded-md border border-transparent bg-transparent px-2 text-[18px] font-black text-[#1D1D1F] outline-none hover:border-[#E5E5EA] focus:border-[#1D1D1F] focus:bg-white"
-                      />
-                      <p className="text-[12px] text-[#8E8E93]">{statusText(activeSegment.status)}</p>
-                      {activeSegment.error_message ? (
-                        <p className="mt-1 max-w-[620px] break-words text-[12px] text-red-700">
-                          {activeSegment.error_message}
-                        </p>
-                      ) : null}
-                    </div>
-                  </div>
-                </div>
-
-                <div className="mb-4 grid grid-cols-4 gap-3">
-                  <label className="text-[12px] font-bold text-[#6E6E73]">
-                    模型
-                    <select value={activeSegment.model} onChange={(e) => void patchActive({ model: e.target.value })} className="mt-1 h-10 w-full rounded-lg border border-[#E5E5EA] bg-white px-3 text-[#1D1D1F]">
-                      {modelOptions.map((m) => <option key={m.value} value={m.value}>{m.label}</option>)}
-                    </select>
-                  </label>
-                  <label className="text-[12px] font-bold text-[#6E6E73]">
-                    比例
-                    <select value={activeSegment.ratio} onChange={(e) => void patchActive({ ratio: e.target.value })} className="mt-1 h-10 w-full rounded-lg border border-[#E5E5EA] bg-white px-3 text-[#1D1D1F]">
-                      {ratioOptions.map((r) => <option key={r} value={r}>{r}</option>)}
-                    </select>
-                  </label>
-                  <label className="text-[12px] font-bold text-[#6E6E73]">
-                    时长
-                    <select value={activeSegment.duration} onChange={(e) => void patchActive({ duration: Number(e.target.value) })} className="mt-1 h-10 w-full rounded-lg border border-[#E5E5EA] bg-white px-3 text-[#1D1D1F]">
-                      {durationOptions.map((d) => <option key={d} value={d}>{d}s</option>)}
-                    </select>
-                  </label>
-                  <label className="flex items-end gap-2 pb-2 text-[12px] font-bold text-[#6E6E73]">
-                    <input type="checkbox" checked={activeSegment.generate_audio} onChange={(e) => void patchActive({ generate_audio: e.target.checked })} className="h-4 w-4 accent-[#1D1D1F]" />
-                    输出声音
-                  </label>
-                </div>
-
-                <label className="block text-[12px] font-bold text-[#6E6E73]">
-                  Prompt
-                  <div className="relative mt-2">
-                    <textarea
-                      ref={promptRef}
-                      value={draftPrompt}
-                      onChange={(e) => handlePromptChange(e.target.value)}
-                      onBlur={() => {
-                        window.setTimeout(() => setMentionOpen(false), 160);
-                        void persistActivePrompt();
+            <input ref={segmentFileRef} type="file" multiple accept="image/*,video/*,audio/*" className="hidden" onChange={(e) => void uploadForSegment(e.target.files)} />
+            <div className="space-y-3">
+              {project?.segments.map((seg) => {
+                const c = colors[(seg.segment_index - 1) % colors.length];
+                const active = seg.id === activeSegment?.id;
+                const expanded = !!expandedSegmentIds[seg.id];
+                const draft = draftPrompts[seg.id] ?? seg.prompt ?? '';
+                const generating = ['queued', 'running'].includes(seg.status.toLowerCase());
+                const segmentLibraryAssets = getSegmentLibraryAssets(seg);
+                return (
+                  <article
+                    key={seg.id}
+                    className="overflow-hidden rounded-2xl border transition-all"
+                    style={{ borderColor: active ? `${c}55` : '#E5E5EA', background: active ? '#fff' : '#F7F8FA', boxShadow: active ? `0 2px 12px ${c}12` : 'none' }}
+                  >
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setActiveSegmentId(seg.id);
+                        setPreviewTarget('segment');
+                        setExpandedSegmentIds((prev) => ({ ...prev, [seg.id]: !prev[seg.id] }));
                       }}
-                      rows={7}
-                      className="w-full resize-none rounded-xl border border-[#E5E5EA] bg-white p-4 text-[14px] leading-7 text-[#1D1D1F] outline-none focus:border-[#1D1D1F]"
-                      placeholder="输入当前片段的画面、动作、风格和素材引用要求。输入 @ 可引用素材。"
-                    />
-                    {mentionOpen ? (
-                      <div className="absolute left-4 top-12 z-20 w-[260px] rounded-xl border border-[#E5E5EA] bg-white p-2 shadow-[0_18px_42px_rgba(15,23,42,0.16)]">
-                        {project?.assets.length ? project.assets.map((asset) => (
-                          <button
-                            key={asset.id}
-                            type="button"
-                            onMouseDown={(e) => e.preventDefault()}
-                            onClick={() => void insertMentionAsset(asset)}
-                            className="flex h-14 w-full items-center gap-3 rounded-lg px-2 text-left hover:bg-[#F2F4F8]"
-                          >
-                            <span className="flex h-10 w-10 shrink-0 items-center justify-center overflow-hidden rounded-md bg-[#F2F4F8] text-[#6E6E73]">
-                              {asset.type === 'image' ? (
-                                <img src={asset.url} alt={asset.label || asset.file_name || 'asset'} className="h-full w-full object-cover" />
-                              ) : (
-                                <i className={ri(assetIcon(asset.type), 'text-[17px]')} aria-hidden />
-                              )}
-                            </span>
-                            <span className="min-w-0">
-                              <span className="block truncate text-[15px] font-black text-[#1D1D1F]">{asset.label || asset.file_name}</span>
-                              <span className="block truncate text-[11px] font-normal text-[#8E8E93]">{asset.file_name}</span>
-                            </span>
-                          </button>
-                        )) : (
-                          <div className="px-3 py-4 text-[12px] font-normal text-[#8E8E93]">
-                            还没有可引用素材，请先从左侧上传。
+                      className="flex w-full items-center justify-between gap-3 p-4 text-left"
+                    >
+                      <div className="flex min-w-0 items-center gap-3">
+                        <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-[13px] font-black" style={{ background: `${c}18`, color: c }}>
+                          S{seg.segment_index}
+                        </span>
+                        <div className="min-w-0">
+                          <p className="truncate text-[16px] font-black text-[#1D1D1F]">{seg.title || `片段 ${seg.segment_index}`}</p>
+                          <p className="truncate text-[12px] text-[#8E8E93]">
+                            {modelLabel(seg.model)} · {seg.ratio} · {seg.resolution || '720p'} · {seg.duration}s · {statusText(seg.status)}
+                          </p>
+                        </div>
+                      </div>
+                      <div className="flex shrink-0 items-center gap-2">
+                        {generating ? <i className={ri('ri-loader-4-line animate-spin', 'text-[14px]')} style={{ color: c }} aria-hidden /> : null}
+                        {seg.video_url ? <i className={ri('ri-checkbox-circle-fill', 'text-[14px] text-[#047857]')} aria-hidden /> : null}
+                        <i className={ri(expanded ? 'ri-arrow-up-s-line' : 'ri-arrow-down-s-line', 'text-[18px] text-[#AEAEB2]')} aria-hidden />
+                      </div>
+                    </button>
+
+                    {expanded ? (
+                      <div className="space-y-4 px-4 pb-4">
+                        <div className="grid grid-cols-[1fr_1fr_1fr_1fr_auto] gap-3 rounded-xl border border-[#EAEAEA] bg-[#FAFAFB] p-3">
+                          <label className="text-[12px] font-bold text-[#6E6E73]">
+                            模型
+                            <select
+                              value={seg.model}
+                              onChange={(e) => {
+                                const model = e.target.value;
+                                void patchSegment(seg, {
+                                  model,
+                                  resolution: model.includes('fast') && seg.resolution === '1080p' ? '720p' : seg.resolution,
+                                });
+                              }}
+                              className="mt-1 h-10 w-full rounded-lg border border-[#E5E5EA] bg-white px-3 text-[#1D1D1F]"
+                            >
+                              {modelOptions.map((m) => <option key={m.value} value={m.value}>{m.label}</option>)}
+                            </select>
+                          </label>
+                          <label className="text-[12px] font-bold text-[#6E6E73]">
+                            比例
+                            <select value={seg.ratio} onChange={(e) => void patchSegment(seg, { ratio: e.target.value })} className="mt-1 h-10 w-full rounded-lg border border-[#E5E5EA] bg-white px-3 text-[#1D1D1F]">
+                              {ratioOptions.map((r) => <option key={r} value={r}>{r}</option>)}
+                            </select>
+                          </label>
+                          <label className="text-[12px] font-bold text-[#6E6E73]">
+                            分辨率
+                            <select value={seg.resolution || '720p'} onChange={(e) => void patchSegment(seg, { resolution: e.target.value })} className="mt-1 h-10 w-full rounded-lg border border-[#E5E5EA] bg-white px-3 text-[#1D1D1F]">
+                              {resolutionOptions.map((r) => <option key={r} value={r} disabled={seg.model.includes('fast') && r === '1080p'}>{r}</option>)}
+                            </select>
+                          </label>
+                          <label className="text-[12px] font-bold text-[#6E6E73]">
+                            时长
+                            <select value={seg.duration} onChange={(e) => void patchSegment(seg, { duration: Number(e.target.value) })} className="mt-1 h-10 w-full rounded-lg border border-[#E5E5EA] bg-white px-3 text-[#1D1D1F]">
+                              {durationOptions.map((d) => <option key={d} value={d}>{d}s</option>)}
+                            </select>
+                          </label>
+                          <label className="flex items-end gap-2 pb-2 text-[12px] font-bold text-[#6E6E73]">
+                            <input type="checkbox" checked={seg.generate_audio} onChange={(e) => void patchSegment(seg, { generate_audio: e.target.checked })} className="h-4 w-4 accent-[#1D1D1F]" />
+                            输出声音
+                          </label>
+                        </div>
+
+                        <label className="block text-[12px] font-bold text-[#6E6E73]">
+                          Prompt
+                          <div className="relative mt-2">
+                            <textarea
+                              ref={active ? promptRef : undefined}
+                              value={draft}
+                              onChange={(e) => handlePromptChange(seg.id, e.target.value)}
+                              onBlur={() => {
+                                window.setTimeout(() => setMentionOpenSegmentId(null), 160);
+                                void persistSegmentPrompt(seg);
+                              }}
+                              rows={6}
+                              className="w-full resize-none rounded-xl border border-[#E5E5EA] bg-white p-4 text-[14px] leading-7 text-[#1D1D1F] outline-none focus:border-[#1D1D1F]"
+                              placeholder="输入当前片段的画面、动作、风格和素材引用要求。输入 @ 可引用素材。"
+                            />
+                            {mentionOpenSegmentId === seg.id ? (
+                              <div className="absolute left-4 top-12 z-20 w-[260px] rounded-xl border border-[#E5E5EA] bg-white p-2 shadow-[0_18px_42px_rgba(15,23,42,0.16)]">
+                                {segmentLibraryAssets.length ? segmentLibraryAssets.map((asset) => (
+                                  <button
+                                    key={asset.id}
+                                    type="button"
+                                    onMouseDown={(e) => e.preventDefault()}
+                                    onClick={() => void insertMentionAsset(seg, asset)}
+                                    className="flex h-14 w-full items-center gap-3 rounded-lg px-2 text-left hover:bg-[#F2F4F8]"
+                                  >
+                                    <span className="flex h-10 w-10 shrink-0 items-center justify-center overflow-hidden rounded-md bg-[#F2F4F8] text-[#6E6E73]">
+                                      {asset.type === 'image' ? (
+                                        <img src={asset.url} alt={asset.label || asset.file_name || 'asset'} className="h-full w-full object-cover" />
+                                      ) : (
+                                        <i className={ri(assetIcon(asset.type), 'text-[17px]')} aria-hidden />
+                                      )}
+                                    </span>
+                                    <span className="min-w-0">
+                                      <span className="block truncate text-[15px] font-black text-[#1D1D1F]">{asset.displayName}</span>
+                                      <span className="block truncate text-[11px] font-normal text-[#8E8E93]">{asset.subLabel}</span>
+                                    </span>
+                                  </button>
+                                )) : (
+                                  <div className="px-3 py-4 text-[12px] font-normal text-[#8E8E93]">
+                                    还没有可引用素材，请先上传，或生成前序片段后再引用。
+                                  </div>
+                                )}
+                              </div>
+                            ) : null}
                           </div>
-                        )}
+                        </label>
+
+                        <div className="rounded-xl border border-[#EAEAEA] bg-[#FAFAFB] p-3">
+                          <div className="mb-2 flex items-center justify-between">
+                            <p className="text-[12px] font-bold text-[#6E6E73]">当前片段引用素材</p>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setUploadTargetSegmentId(seg.id);
+                                segmentFileRef.current?.click();
+                              }}
+                              className="inline-flex items-center gap-1.5 rounded-lg border border-[#E5E5EA] bg-white px-3 py-1.5 text-[12px] font-bold text-[#444444]"
+                            >
+                              <i className={ri('ri-upload-cloud-2-line', 'text-[14px]')} aria-hidden />
+                              上传素材
+                            </button>
+                          </div>
+                          <div className="flex flex-wrap gap-2">
+                            {seg.input_assets.length ? seg.input_assets.map((asset) => (
+                              <span key={asset.url} title={asset.url} className="inline-flex items-center gap-2 rounded-lg border border-[#E5E5EA] bg-white px-3 py-2 text-[12px] text-[#444444]">
+                                <i className={ri(assetIcon(asset.type), 'text-[14px]')} aria-hidden />
+                                {asset.label || asset.file_name || asset.type}
+                                <span className="text-[#047857]">已绑定</span>
+                              </span>
+                            )) : <span className="text-[12px] text-[#AEAEB2]">未引用素材，可从左侧素材库选择，或直接上传到当前片段。</span>}
+                          </div>
+                          {segmentLibraryAssets.length ? (
+                            <div className="mt-3 flex flex-wrap gap-2">
+                              {segmentLibraryAssets.map((asset) => {
+                                const selected = seg.input_assets.some((a) => a.url === asset.url);
+                                return (
+                                  <button
+                                    key={asset.id}
+                                    type="button"
+                                    onClick={() => void toggleSegmentAsset(seg, asset)}
+                                    className={`inline-flex items-center gap-2 rounded-lg border px-3 py-2 text-[12px] font-bold ${selected ? 'border-[#1D1D1F] bg-white text-[#1D1D1F]' : 'border-[#E5E5EA] bg-white text-[#6E6E73]'}`}
+                                  >
+                                    <i className={ri(assetIcon(asset.type), 'text-[14px]')} aria-hidden />
+                                    {asset.displayName}
+                                    {selected ? <i className={ri('ri-check-line', 'text-[14px] text-[#047857]')} aria-hidden /> : null}
+                                  </button>
+                                );
+                              })}
+                            </div>
+                          ) : null}
+                        </div>
+
+                        <div className="flex items-center justify-end gap-3">
+                          {seg.error_message ? <p className="mr-auto max-w-[560px] break-words text-[12px] text-red-700">{seg.error_message}</p> : null}
+                          <button
+                            type="button"
+                            onClick={() => void generateSegment(seg)}
+                            disabled={busy || generating || !(draft || '').trim()}
+                            className="flex items-center gap-2 rounded-xl bg-[#1D1D1F] px-5 py-2.5 text-[13px] font-bold text-white disabled:bg-[#D1D5DB]"
+                          >
+                            <i className={ri(generating ? 'ri-loader-4-line animate-spin' : seg.video_url ? 'ri-refresh-line' : 'ri-magic-line', 'text-[14px]')} aria-hidden />
+                            {generating ? '生成中...' : seg.video_url ? '重新生成' : '生成视频'}
+                          </button>
+                        </div>
                       </div>
                     ) : null}
-                  </div>
-                </label>
-
-                <div className="mt-5">
-                  <p className="mb-2 text-[12px] font-bold text-[#6E6E73]">当前片段引用素材</p>
-                  <div className="flex flex-wrap gap-2">
-                    {activeSegment.input_assets.length ? activeSegment.input_assets.map((asset) => (
-                      <span key={asset.url} title={asset.url} className="inline-flex items-center gap-2 rounded-lg border border-[#E5E5EA] bg-white px-3 py-2 text-[12px] text-[#444444]">
-                        <i className={ri(assetIcon(asset.type), 'text-[14px]')} aria-hidden />
-                        {asset.label || asset.file_name || asset.type}
-                        <span className="text-[#047857]">已绑定</span>
-                      </span>
-                    )) : <span className="text-[12px] text-[#AEAEB2]">未引用素材，可从左侧素材库选择。</span>}
-                  </div>
-                </div>
-              </article>
-            ) : null}
+                  </article>
+                );
+              })}
+            </div>
           </div>
 
           <div className="border-t border-[#E5E5EA] bg-[#F7F8FA] px-6 py-4">
@@ -504,15 +760,29 @@ export function FreeCreationVideoPage() {
             <button type="button" onClick={() => setPreviewTarget('segment')} className={`h-9 rounded-lg text-[12px] font-bold ${previewTarget === 'segment' ? 'bg-[#1D1D1F] text-white' : 'text-[#6E6E73]'}`}>当前片段</button>
             <button type="button" onClick={() => setPreviewTarget('final')} className={`h-9 rounded-lg text-[12px] font-bold ${previewTarget === 'final' ? 'bg-[#1D1D1F] text-white' : 'text-[#6E6E73]'}`}>最终成片</button>
           </div>
-          <div className="flex aspect-[9/16] w-full items-center justify-center overflow-hidden rounded-xl bg-[#111] text-center text-[13px] text-[#8E8E93]">
+          <div className="relative flex aspect-[9/16] w-full items-center justify-center overflow-hidden rounded-xl bg-[#111] text-center text-[13px] text-[#8E8E93]">
             {previewUrl ? (
               <video src={previewUrl} controls className="h-full w-full object-contain" />
+            ) : previewGenerating ? (
+              <div className="px-8">
+                <i className={ri('ri-loader-4-line animate-spin', 'mb-3 block text-[30px] text-white/80')} aria-hidden />
+                视频正在生成中，请稍等
+              </div>
             ) : (
               <div className="px-8">
                 <i className={ri('ri-video-line', 'mb-3 block text-[30px] text-white/80')} aria-hidden />
                 {previewTarget === 'final' ? '合成完成后可预览最终成片' : '生成当前片段后可预览'}
               </div>
             )}
+            {previewGenerating && previewUrl ? (
+              <div className="absolute inset-x-4 top-4 rounded-xl bg-black/70 px-4 py-3 text-left text-white shadow-lg backdrop-blur">
+                <div className="flex items-center gap-2 text-[13px] font-bold">
+                  <i className={ri('ri-loader-4-line animate-spin', 'text-[15px]')} aria-hidden />
+                  视频正在生成中，请稍等
+                </div>
+                <p className="mt-1 text-[11px] text-white/70">生成完成后会自动刷新当前片段预览。</p>
+              </div>
+            ) : null}
           </div>
           <div className="mt-4 rounded-xl border border-[#E5E5EA] bg-white p-4">
             <p className="text-[11px] text-[#8E8E93]">{previewTarget === 'final' ? '最终成片' : '当前片段'}</p>
@@ -522,6 +792,11 @@ export function FreeCreationVideoPage() {
             {activeSegment ? (
               <p className="mt-2 text-[12px] text-[#8E8E93]">
                 {modelLabel(activeSegment.model)} · {activeSegment.ratio} · {activeSegment.duration}s
+              </p>
+            ) : null}
+            {previewGenerating ? (
+              <p className="mt-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-[12px] leading-5 text-amber-900">
+                视频正在生成中，请稍等。生成完成后会自动显示在右侧预览区。
               </p>
             ) : null}
             {activeSegment?.error_message ? (

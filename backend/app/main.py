@@ -12,6 +12,7 @@ from .database import init_db
 from .admin.router import router as admin_router
 from .auth.routes import router as auth_router
 from .routes.billing import router as billing_router
+from .ad_materials.routes import router as ad_materials_router
 from .free_creation.routes import router as free_creation_router
 from .short_drama.routes import router as short_drama_router
 from .short_drama.providers.ai_provider_config_audit import log_ai_provider_config_audit
@@ -42,6 +43,7 @@ from .short_drama.models import (  # noqa: F401
     ShortDramaProject,
     StoryBlueprintRecord,
 )
+from .ad_materials.models import AdMaterialTask  # noqa: F401
 from .free_creation.models import (  # noqa: F401
     FreeCreationAsset,
     FreeCreationProject,
@@ -135,6 +137,7 @@ log_ai_provider_config_audit()
 app.include_router(auth_router, prefix="/api/auth", tags=["Authentication"])
 app.include_router(admin_router, prefix="/api/admin", tags=["Admin"])
 app.include_router(billing_router, prefix="/api/billing", tags=["Billing"])
+app.include_router(ad_materials_router, prefix="/api/ad-materials", tags=["Ad Materials"])
 app.include_router(free_creation_router, prefix="/api/free-creation", tags=["Free Creation"])
 app.include_router(short_drama_router, prefix="/api/short-drama", tags=["Short Drama"])
 

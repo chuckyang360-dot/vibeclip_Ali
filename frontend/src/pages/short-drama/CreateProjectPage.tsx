@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { type ReactNode, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { getUser } from '../../services/api';
 import {
@@ -31,6 +31,9 @@ import { withProjectQuery } from './utils/shortDramaRoutes';
 const platformOptions = ['TikTok', '抖音', '小红书', 'Amazon', 'Instagram', 'YouTube'];
 const durationOptions = ['15s', '30s', '45s', '60s'];
 const aspectRatioOptions = ['9:16', '16:9'];
+const freeResolutionOptions = ['480p', '720p', '1080p'];
+type HintPanel = 'platform' | 'ratio' | 'duration' | 'free_model' | 'free_ratio' | 'free_resolution' | 'free_duration' | null;
+type ActiveHintPanel = Exclude<HintPanel, null>;
 
 const emptyIntent: CreativeIntentInputDto = {
   intent_text: '',
@@ -68,22 +71,73 @@ function hintSummary(intent: CreativeIntentInputDto): string {
 function ToggleOption({
   active,
   children,
+  disabled = false,
   onClick,
 }: {
   active: boolean;
   children: string;
+  disabled?: boolean;
   onClick: () => void;
 }) {
   return (
     <button
       type="button"
       onClick={onClick}
+      disabled={disabled}
       className={`rounded-lg border px-3 py-2 text-[12.5px] font-bold transition ${
         active ? 'border-[#1D1D1F] bg-[#1D1D1F] text-white' : 'border-[#E5E5EA] bg-[#F7F8FA] text-[#6E6E73] hover:text-[#1D1D1F]'
-      }`}
+      } disabled:cursor-not-allowed disabled:border-[#E5E5EA] disabled:bg-[#F7F8FA] disabled:text-[#C7C7CC]`}
     >
       {children}
     </button>
+  );
+}
+
+function VerticalOption({
+  active,
+  children,
+  disabled = false,
+  icon,
+  onClick,
+}: {
+  active: boolean;
+  children: ReactNode;
+  disabled?: boolean;
+  icon?: string;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={disabled}
+      className={`flex h-11 w-full items-center justify-between rounded-lg px-3 text-left text-[14px] font-black transition disabled:cursor-not-allowed disabled:text-[#C7C7CC] ${
+        active ? 'bg-[#F2F4F8] text-[#1D1D1F]' : 'text-[#444444] hover:bg-[#F7F8FA]'
+      }`}
+    >
+      <span className="inline-flex min-w-0 items-center gap-2">
+        {icon ? <i className={ri(icon, 'text-[16px]')} aria-hidden /> : null}
+        <span className="truncate">{children}</span>
+      </span>
+      {active ? <i className={ri('ri-check-line', 'text-[16px]')} aria-hidden /> : null}
+    </button>
+  );
+}
+
+function FreeDropdown({
+  children,
+  title,
+  widthClass = 'w-[180px]',
+}: {
+  children: ReactNode;
+  title: string;
+  widthClass?: string;
+}) {
+  return (
+    <div className={`absolute bottom-[calc(100%+10px)] left-1/2 z-20 -translate-x-1/2 rounded-xl border border-[#E5E5EA] bg-white p-2 shadow-[0_18px_42px_rgba(15,23,42,0.16)] ${widthClass}`}>
+      <p className="px-2 pb-2 pt-1 text-[12px] font-bold text-[#8E8E93]">{title}</p>
+      <div className="space-y-1">{children}</div>
+    </div>
   );
 }
 
@@ -101,12 +155,13 @@ export function ShortDramaCreateProjectPage() {
   const [freePrompt, setFreePrompt] = useState('');
   const [freeRatio, setFreeRatio] = useState('9:16');
   const [freeModel, setFreeModel] = useState('Seedance 2.0');
+  const [freeResolution, setFreeResolution] = useState('720p');
   const [freeDuration, setFreeDuration] = useState('5s');
   const [freeAudio, setFreeAudio] = useState(true);
   const [freeFiles, setFreeFiles] = useState<File[]>([]);
   const [freeMentionOpen, setFreeMentionOpen] = useState(false);
   const [typeOpen, setTypeOpen] = useState(false);
-  const [hintPanel, setHintPanel] = useState<'platform' | 'ratio' | 'duration' | 'free_model' | 'free_ratio' | 'free_duration' | null>(null);
+  const [hintPanel, setHintPanel] = useState<HintPanel>(null);
   const [focused, setFocused] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [videoUploading, setVideoUploading] = useState(false);
@@ -139,9 +194,20 @@ export function ShortDramaCreateProjectPage() {
     });
   }, [freeFiles]);
 
+  const toggleHintPanel = (panel: ActiveHintPanel) => {
+    setTypeOpen(false);
+    setHintPanel((prev) => (prev === panel ? null : panel));
+  };
+
   useEffect(() => {
     setCreationType(parseMode(searchParams));
   }, [searchParams]);
+
+  useEffect(() => {
+    if (freeModel === 'Seedance 2.0 Fast' && freeResolution === '1080p') {
+      setFreeResolution('720p');
+    }
+  }, [freeModel, freeResolution]);
 
   useEffect(() => {
     if (routedProjectId == null) return;
@@ -231,7 +297,7 @@ export function ShortDramaCreateProjectPage() {
         prompt: freePrompt.trim(),
         model: freeModelId(freeModel),
         ratio: freeRatio === '智能比例' ? '9:16' : freeRatio,
-        resolution: '720p',
+        resolution: freeResolution,
         duration: freeDurationSeconds(freeDuration),
         generate_audio: freeAudio,
         watermark: false,
@@ -496,17 +562,17 @@ export function ShortDramaCreateProjectPage() {
 
                   {showStandardHints && (
                     <>
-                      <ToolbarButton onClick={() => setHintPanel(hintPanel === 'platform' ? null : 'platform')}>
+                      <ToolbarButton onClick={() => toggleHintPanel('platform')}>
                         <i className={ri('ri-global-line', 'text-[15px]')} aria-hidden />
                         参考平台
                         <span className="text-[#8E8E93]">{intent.platform_hints.length ? intent.platform_hints.join('/') : ''}</span>
                       </ToolbarButton>
-                      <ToolbarButton onClick={() => setHintPanel(hintPanel === 'ratio' ? null : 'ratio')}>
+                      <ToolbarButton onClick={() => toggleHintPanel('ratio')}>
                         <i className={ri('ri-aspect-ratio-line', 'text-[15px]')} aria-hidden />
                         画面比例
                         <span className="text-[#8E8E93]">{intent.aspect_ratio_hint || ''}</span>
                       </ToolbarButton>
-                      <ToolbarButton onClick={() => setHintPanel(hintPanel === 'duration' ? null : 'duration')}>
+                      <ToolbarButton onClick={() => toggleHintPanel('duration')}>
                         <i className={ri('ri-time-line', 'text-[15px]')} aria-hidden />
                         大概时长
                         <span className="text-[#8E8E93]">{intent.duration_hint || ''}</span>
@@ -528,18 +594,102 @@ export function ShortDramaCreateProjectPage() {
 
                   {creationType === 'free_creation' && (
                     <>
-                      <ToolbarButton onClick={() => setHintPanel(hintPanel === 'free_model' ? null : 'free_model')}>
-                        <i className={ri('ri-box-3-line', 'text-[15px]')} aria-hidden />
-                        {freeModel}
-                      </ToolbarButton>
-                      <ToolbarButton onClick={() => setHintPanel(hintPanel === 'free_ratio' ? null : 'free_ratio')}>
-                        <i className={ri('ri-aspect-ratio-line', 'text-[15px]')} aria-hidden />
-                        {freeRatio}
-                      </ToolbarButton>
-                      <ToolbarButton onClick={() => setHintPanel(hintPanel === 'free_duration' ? null : 'free_duration')}>
-                        <i className={ri('ri-time-line', 'text-[15px]')} aria-hidden />
-                        {freeDuration}
-                      </ToolbarButton>
+                      <div className="relative">
+                        <ToolbarButton onClick={() => toggleHintPanel('free_model')}>
+                          <i className={ri('ri-box-3-line', 'text-[15px]')} aria-hidden />
+                          {freeModel}
+                        </ToolbarButton>
+                        {hintPanel === 'free_model' ? (
+                          <FreeDropdown title="模型" widthClass="w-[236px]">
+                            {['Seedance 2.0', 'Seedance 2.0 Fast'].map((p) => (
+                              <VerticalOption
+                                key={p}
+                                active={freeModel === p}
+                                icon="ri-box-3-line"
+                                onClick={() => {
+                                  setFreeModel(p);
+                                  setHintPanel(null);
+                                }}
+                              >
+                                {p}
+                              </VerticalOption>
+                            ))}
+                          </FreeDropdown>
+                        ) : null}
+                      </div>
+                      <div className="relative">
+                        <ToolbarButton onClick={() => toggleHintPanel('free_ratio')}>
+                          <i className={ri('ri-aspect-ratio-line', 'text-[15px]')} aria-hidden />
+                          {freeRatio}
+                        </ToolbarButton>
+                        {hintPanel === 'free_ratio' ? (
+                          <FreeDropdown title="比例" widthClass="w-[176px]">
+                            {['智能比例', '9:16', '16:9', '1:1', '3:4'].map((p) => (
+                              <VerticalOption
+                                key={p}
+                                active={freeRatio === p}
+                                icon="ri-aspect-ratio-line"
+                                onClick={() => {
+                                  setFreeRatio(p);
+                                  setHintPanel(null);
+                                }}
+                              >
+                                {p}
+                              </VerticalOption>
+                            ))}
+                          </FreeDropdown>
+                        ) : null}
+                      </div>
+                      <div className="relative">
+                        <ToolbarButton onClick={() => toggleHintPanel('free_resolution')}>
+                          <i className={ri('ri-hd-line', 'text-[15px]')} aria-hidden />
+                          {freeResolution}
+                        </ToolbarButton>
+                        {hintPanel === 'free_resolution' ? (
+                          <FreeDropdown title="分辨率" widthClass="w-[160px]">
+                            {freeResolutionOptions.map((p) => {
+                              const disabled = freeModel === 'Seedance 2.0 Fast' && p === '1080p';
+                              return (
+                                <VerticalOption
+                                  key={p}
+                                  active={freeResolution === p}
+                                  disabled={disabled}
+                                  icon="ri-hd-line"
+                                  onClick={() => {
+                                    setFreeResolution(p);
+                                    setHintPanel(null);
+                                  }}
+                                >
+                                  {p}
+                                </VerticalOption>
+                              );
+                            })}
+                          </FreeDropdown>
+                        ) : null}
+                      </div>
+                      <div className="relative">
+                        <ToolbarButton onClick={() => toggleHintPanel('free_duration')}>
+                          <i className={ri('ri-time-line', 'text-[15px]')} aria-hidden />
+                          {freeDuration}
+                        </ToolbarButton>
+                        {hintPanel === 'free_duration' ? (
+                          <FreeDropdown title="时长" widthClass="w-[148px]">
+                            {['4s', '5s', '8s', '11s', '15s'].map((p) => (
+                              <VerticalOption
+                                key={p}
+                                active={freeDuration === p}
+                                icon="ri-time-line"
+                                onClick={() => {
+                                  setFreeDuration(p);
+                                  setHintPanel(null);
+                                }}
+                              >
+                                {p}
+                              </VerticalOption>
+                            ))}
+                          </FreeDropdown>
+                        ) : null}
+                      </div>
                       <ToolbarButton active={freeAudio} onClick={() => setFreeAudio((v) => !v)}>
                         <i className={ri(freeAudio ? 'ri-volume-up-line' : 'ri-volume-mute-line', 'text-[15px]')} aria-hidden />
                         {freeAudio ? '输出声音' : '无声'}
@@ -569,7 +719,7 @@ export function ShortDramaCreateProjectPage() {
                 </div>
               </div>
 
-              {hintPanel ? (
+              {hintPanel && !hintPanel.startsWith('free_') ? (
                 <div className="absolute bottom-[74px] left-5 z-10 w-full max-w-[520px] rounded-xl border border-[#E5E5EA] bg-white p-4 shadow-[0_18px_42px_rgba(15,23,42,0.16)]">
                   {hintPanel === 'platform' && (
                     <>
@@ -614,36 +764,6 @@ export function ShortDramaCreateProjectPage() {
                           <ToggleOption key={p} active={intent.duration_hint === p} onClick={() => setIntent((prev) => ({ ...prev, duration_hint: prev.duration_hint === p ? '' : p }))}>
                             {p}
                           </ToggleOption>
-                        ))}
-                      </div>
-                    </>
-                  )}
-                  {hintPanel === 'free_model' && (
-                    <>
-                      <p className="mb-3 text-[12px] font-black text-[#8E8E93]">模型</p>
-                      <div className="flex flex-wrap gap-2">
-                        {['Seedance 2.0', 'Seedance 2.0 Fast'].map((p) => (
-                          <ToggleOption key={p} active={freeModel === p} onClick={() => setFreeModel(p)}>{p}</ToggleOption>
-                        ))}
-                      </div>
-                    </>
-                  )}
-                  {hintPanel === 'free_ratio' && (
-                    <>
-                      <p className="mb-3 text-[12px] font-black text-[#8E8E93]">比例</p>
-                      <div className="flex flex-wrap gap-2">
-                        {['智能比例', '9:16', '16:9', '1:1', '3:4'].map((p) => (
-                          <ToggleOption key={p} active={freeRatio === p} onClick={() => setFreeRatio(p)}>{p}</ToggleOption>
-                        ))}
-                      </div>
-                    </>
-                  )}
-                  {hintPanel === 'free_duration' && (
-                    <>
-                      <p className="mb-3 text-[12px] font-black text-[#8E8E93]">时长</p>
-                      <div className="flex flex-wrap gap-2">
-                        {['4s', '5s', '8s', '11s', '15s'].map((p) => (
-                          <ToggleOption key={p} active={freeDuration === p} onClick={() => setFreeDuration(p)}>{p}</ToggleOption>
                         ))}
                       </div>
                     </>
