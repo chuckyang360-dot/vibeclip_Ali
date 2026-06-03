@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from app.free_creation.models import FreeCreationAsset, FreeCreationSegment
-from app.free_creation.service import asset_to_response, segment_to_response
+from app.free_creation.service import asset_to_response, downloadable_free_creation_url, segment_to_response
 
 
 def test_asset_response_uses_presigned_preview_url(monkeypatch) -> None:
@@ -78,3 +78,32 @@ def test_segment_response_treats_existing_video_as_completed() -> None:
     data = segment_to_response(row)
 
     assert data["status"] == "completed"
+
+
+def test_downloadable_free_creation_url_presigns_private_video_url(monkeypatch) -> None:
+    monkeypatch.setenv("R2_BUCKET_NAME", "bucket-a")
+    monkeypatch.setattr(
+        "app.free_creation.service.build_presigned_get_url",
+        lambda key: f"https://signed.example/{key}",
+    )
+
+    url = downloadable_free_creation_url(
+        "https://pub.example.r2.dev/free-creation/videos/3/2/5/result.mp4"
+    )
+
+    assert url == "https://signed.example/free-creation/videos/3/2/5/result.mp4"
+
+
+def test_downloadable_free_creation_url_prefers_storage_key(monkeypatch) -> None:
+    monkeypatch.setenv("R2_BUCKET_NAME", "bucket-a")
+    monkeypatch.setattr(
+        "app.free_creation.service.build_presigned_get_url",
+        lambda key: f"https://signed.example/{key}",
+    )
+
+    url = downloadable_free_creation_url(
+        "https://pub.example.r2.dev/free-creation/videos/wrong/result.mp4",
+        storage_key="free-creation/videos/3/2/5/result.mp4",
+    )
+
+    assert url == "https://signed.example/free-creation/videos/3/2/5/result.mp4"

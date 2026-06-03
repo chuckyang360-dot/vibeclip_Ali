@@ -330,6 +330,10 @@ def provider_ready_asset_url(url: str | None, *, storage_key: str | None = None)
     return build_public_static_url(s)
 
 
+def downloadable_free_creation_url(url: str | None, *, storage_key: str | None = None) -> str:
+    return provider_ready_asset_url(url, storage_key=storage_key)
+
+
 def browser_ready_asset_url(url: str | None, *, storage_key: str | None = None) -> str:
     key = str(storage_key or "").strip() or _free_creation_r2_key_from_url(url)
     if key and (os.getenv("R2_BUCKET_NAME") or "").strip():
@@ -795,7 +799,12 @@ def run_merge_job(job_id: int) -> None:
         if len(ready) != len(segments) or not ready:
             raise ShortDramaFFmpegError("所有片段视频生成完成后才能合成。")
         for s in ready:
-            temp_paths.append(_download_to_temp(str(s.video_url), ".mp4"))
+            temp_paths.append(
+                _download_to_temp(
+                    downloadable_free_creation_url(str(s.video_url), storage_key=s.video_storage_key),
+                    ".mp4",
+                )
+            )
         fd, out_name = tempfile.mkstemp(suffix=".mp4")
         os.close(fd)
         output = Path(out_name)

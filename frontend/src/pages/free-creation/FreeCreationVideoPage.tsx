@@ -271,6 +271,7 @@ export function FreeCreationVideoPage() {
     : (activeSegment?.video_preview_url || activeSegment?.video_url);
   const activeStatus = activeSegment?.status.toLowerCase() || 'idle';
   const previewGenerating = previewTarget === 'segment' && ['queued', 'running'].includes(activeStatus);
+  const finalRenderError = previewTarget === 'final' ? (project?.final_render_error || '') : '';
   const libraryAssets = useMemo<LibraryAsset[]>(() => {
     const uploads = (project?.assets || []).map(toLibraryAsset);
     const segmentVideos = (project?.segments || [])
@@ -889,6 +890,11 @@ export function FreeCreationVideoPage() {
             {activeSegment?.error_message ? (
               <p className="mt-3 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-[12px] leading-5 text-red-800">
                 {activeSegment.error_message}
+              </p>
+            ) : null}
+            {finalRenderError ? (
+              <p className="mt-3 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-[12px] leading-5 text-red-800">
+                {finalRenderError}
               </p>
             ) : null}
           </div>
