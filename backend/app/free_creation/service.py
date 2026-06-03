@@ -6,6 +6,7 @@ import time
 import logging
 from pathlib import Path
 from typing import Any
+from urllib.parse import unquote, urlparse
 from uuid import uuid4
 
 import httpx
@@ -22,8 +23,9 @@ from ..short_drama.providers.seedance_video_client import (
     extract_task_status,
     extract_video_url,
 )
+from ..short_drama.utils.public_static_url import build_public_static_url
 from ..short_drama.utils.ffmpeg_merge import merge_mp4_files
-from ..utils.r2_storage import upload_file
+from ..utils.r2_storage import build_presigned_get_url, upload_file
 from .models import FreeCreationAsset, FreeCreationProject, FreeCreationRenderJob, FreeCreationSegment
 from .schemas import (
     CreateFreeCreationProjectRequest,
@@ -36,6 +38,11 @@ logger = logging.getLogger(__name__)
 
 
 IMAGE_ROLES = {"reference_image", "first_frame", "last_frame"}
+FREE_CREATION_R2_KEY_MARKERS = (
+    "free-creation/uploads/",
+    "free-creation/videos/",
+    "free-creation/images/",
+)
 
 
 def asset_role(asset_type: str) -> str:
@@ -156,12 +163,46 @@ def normalize_assets(assets: list[FreeCreationInputAsset] | None) -> list[dict[s
     return out
 
 
+def _free_creation_r2_key_from_url(url: str | None) -> str | None:
+    s = str(url or "").strip()
+    if not s:
+        return None
+    normalized = s.lstrip("/")
+    for marker in FREE_CREATION_R2_KEY_MARKERS:
+        if normalized.startswith(marker):
+            return normalized
+    if not (s.startswith("http://") or s.startswith("https://")):
+        return None
+    path = unquote(urlparse(s).path or "").lstrip("/")
+    for marker in FREE_CREATION_R2_KEY_MARKERS:
+        marker_index = path.find(marker)
+        if marker_index >= 0:
+            return path[marker_index:]
+    return None
+
+
+def provider_ready_asset_url(url: str | None, *, storage_key: str | None = None) -> str:
+    key = str(storage_key or "").strip() or _free_creation_r2_key_from_url(url)
+    if key and (os.getenv("R2_BUCKET_NAME") or "").strip():
+        try:
+            return build_presigned_get_url(key)
+        except Exception:
+            logger.exception("[FREE_CREATION_ASSET_PRESIGN_FAILED] key=%s", key[:240])
+    s = str(url or "").strip()
+    if not s:
+        return s
+    return build_public_static_url(s)
+
+
 def build_seedance_payload(segment: FreeCreationSegment) -> dict[str, Any]:
     content: list[dict[str, Any]] = [{"type": "text", "text": (segment.prompt or "").strip()}]
     for asset in list(segment.input_assets_json or []):
         if not isinstance(asset, dict):
             continue
-        url = str(asset.get("url") or "").strip()
+        url = provider_ready_asset_url(
+            asset.get("url"),
+            storage_key=asset.get("storage_key"),
+        )
         asset_type = str(asset.get("type") or "").strip().lower()
         role = str(asset.get("role") or asset_role(asset_type)).strip()
         if not url:
