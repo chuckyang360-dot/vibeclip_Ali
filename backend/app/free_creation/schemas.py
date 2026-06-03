@@ -12,6 +12,7 @@ AssetType = Literal["image", "video", "audio", "avatar"]
 class FreeCreationInputAsset(BaseModel):
     type: AssetType
     url: str
+    preview_url: str | None = ""
     storage_key: str | None = ""
     file_name: str | None = ""
     mime_type: str | None = ""
@@ -30,6 +31,7 @@ class FreeCreationUploadResponse(BaseModel):
     id: int
     project_id: int
     url: str
+    preview_url: str
     storage_key: str
     file_name: str
     mime_type: str
@@ -92,7 +94,9 @@ class FreeCreationSegmentResponse(BaseModel):
     error_message: str
     provider_task_id: str
     video_url: str
+    video_preview_url: str | None = ""
     last_frame_url: str
+    last_frame_preview_url: str | None = ""
     created_at: datetime | None = None
     updated_at: datetime | None = None
 
@@ -103,6 +107,7 @@ class FreeCreationProjectResponse(BaseModel):
     project_name: str
     status: str
     final_video_url: str
+    final_video_preview_url: str | None = ""
     final_render_status: str
     final_render_error: str
     settings: dict[str, Any]

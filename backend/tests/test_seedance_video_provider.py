@@ -14,6 +14,7 @@ from app.short_drama.providers.seedance_video_client import (
     SeedanceVideoClient,
     build_seedance_task_payload,
     extract_task_id,
+    extract_task_error,
     extract_task_status,
     extract_video_url,
 )
@@ -95,6 +96,20 @@ def test_extract_task_id(body: dict[str, Any], expected: str | None) -> None:
 )
 def test_extract_task_status(body: dict[str, Any], expected: str) -> None:
     assert extract_task_status(body) == expected
+
+
+def test_extract_task_error_prefers_structured_code_and_message() -> None:
+    body = {
+        "status": "failed",
+        "error": {
+            "code": "OutputVideoSensitiveContentDetected.PolicyViolation",
+            "message": "The request failed because the output video may be related to copyright restrictions.",
+        },
+    }
+    assert extract_task_error(body) == (
+        "OutputVideoSensitiveContentDetected.PolicyViolation: "
+        "The request failed because the output video may be related to copyright restrictions."
+    )
 
 
 @pytest.mark.parametrize(

@@ -39,6 +39,7 @@ export type FreeCreationAssetType = 'image' | 'video' | 'audio' | 'avatar';
 export type FreeCreationInputAsset = {
   type: FreeCreationAssetType;
   url: string;
+  preview_url?: string;
   storage_key?: string;
   file_name?: string;
   mime_type?: string;
@@ -57,6 +58,7 @@ export type FreeCreationUpload = {
   id: number;
   project_id: number;
   url: string;
+  preview_url: string;
   storage_key: string;
   file_name: string;
   mime_type: string;
@@ -83,7 +85,9 @@ export type FreeCreationSegment = {
   error_message: string;
   provider_task_id: string;
   video_url: string;
+  video_preview_url?: string;
   last_frame_url: string;
+  last_frame_preview_url?: string;
   created_at?: string | null;
   updated_at?: string | null;
 };
@@ -94,6 +98,7 @@ export type FreeCreationProject = {
   project_name: string;
   status: string;
   final_video_url: string;
+  final_video_preview_url?: string;
   final_render_status: string;
   final_render_error: string;
   settings: Record<string, unknown>;

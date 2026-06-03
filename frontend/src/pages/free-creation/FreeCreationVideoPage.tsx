@@ -43,6 +43,7 @@ function toInputAsset(asset: FreeCreationAsset): FreeCreationInputAsset {
   return {
     type: asset.type,
     url: asset.url,
+    preview_url: asset.preview_url,
     storage_key: asset.storage_key,
     file_name: asset.file_name,
     mime_type: asset.mime_type,
@@ -56,6 +57,7 @@ function libraryToInputAsset(asset: LibraryAsset): FreeCreationInputAsset {
   return {
     type: asset.type,
     url: asset.url,
+    preview_url: asset.preview_url,
     storage_key: asset.storage_key,
     file_name: asset.file_name,
     mime_type: asset.mime_type,
@@ -81,6 +83,7 @@ function segmentVideoAsset(segment: FreeCreationSegment): LibraryAsset | null {
     id: `segment-video-${segment.id}`,
     type: 'video',
     url: segment.video_url,
+    preview_url: segment.video_preview_url || segment.video_url,
     file_name: `片段${segment.segment_index}-${segment.title || '生成视频'}.mp4`,
     role: 'reference_video',
     label: `@片段${segment.segment_index}视频`,
@@ -89,7 +92,7 @@ function segmentVideoAsset(segment: FreeCreationSegment): LibraryAsset | null {
     source: 'segment_video',
     sourceSegmentId: segment.id,
     sourceSegmentIndex: segment.segment_index,
-    thumbnailUrl: segment.last_frame_url || undefined,
+    thumbnailUrl: segment.last_frame_preview_url || segment.last_frame_url || undefined,
   };
 }
 
@@ -102,6 +105,7 @@ function uploadToInputAsset(upload: Awaited<ReturnType<typeof uploadFreeCreation
   return {
     type: upload.asset_type,
     url: upload.url,
+    preview_url: upload.preview_url,
     storage_key: upload.storage_key,
     file_name: upload.file_name,
     mime_type: upload.mime_type,
@@ -122,10 +126,11 @@ function assetIcon(type: string): string {
 }
 
 function AssetThumbnail({ asset }: { asset: LibraryAsset }) {
+  const src = asset.preview_url || asset.url;
   if (asset.type === 'image') {
     return (
       <img
-        src={asset.url}
+        src={src}
         alt={asset.displayName}
         className="h-full w-full object-cover"
         loading="lazy"
@@ -136,7 +141,7 @@ function AssetThumbnail({ asset }: { asset: LibraryAsset }) {
   if (asset.type === 'video') {
     if (asset.thumbnailUrl) {
       return (
-        <img
+          <img
           src={asset.thumbnailUrl}
           alt={asset.displayName}
           className="h-full w-full object-cover"
@@ -147,7 +152,7 @@ function AssetThumbnail({ asset }: { asset: LibraryAsset }) {
 
     return (
       <video
-        src={asset.url}
+        src={src}
         className="h-full w-full object-cover"
         muted
         playsInline
@@ -215,7 +220,9 @@ export function FreeCreationVideoPage() {
 
   const allSegmentsReady = Boolean(project?.segments.length) && project!.segments.every((s) => Boolean(s.video_url));
   const activeColor = activeSegment ? colors[(activeSegment.segment_index - 1) % colors.length] : '#B45309';
-  const previewUrl = previewTarget === 'final' ? project?.final_video_url : activeSegment?.video_url;
+  const previewUrl = previewTarget === 'final'
+    ? (project?.final_video_preview_url || project?.final_video_url)
+    : (activeSegment?.video_preview_url || activeSegment?.video_url);
   const activeStatus = activeSegment?.status.toLowerCase() || 'idle';
   const previewGenerating = previewTarget === 'segment' && ['queued', 'running'].includes(activeStatus);
   const libraryAssets = useMemo<LibraryAsset[]>(() => {
@@ -639,7 +646,7 @@ export function FreeCreationVideoPage() {
                                   >
                                     <span className="flex h-10 w-10 shrink-0 items-center justify-center overflow-hidden rounded-md bg-[#F2F4F8] text-[#6E6E73]">
                                       {asset.type === 'image' ? (
-                                        <img src={asset.url} alt={asset.label || asset.file_name || 'asset'} className="h-full w-full object-cover" />
+                                        <img src={asset.preview_url || asset.url} alt={asset.label || asset.file_name || 'asset'} className="h-full w-full object-cover" />
                                       ) : (
                                         <i className={ri(assetIcon(asset.type), 'text-[17px]')} aria-hidden />
                                       )}

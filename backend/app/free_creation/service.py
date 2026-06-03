@@ -42,6 +42,7 @@ FREE_CREATION_R2_KEY_MARKERS = (
     "free-creation/uploads/",
     "free-creation/videos/",
     "free-creation/images/",
+    "free-creation/final-videos/",
 )
 
 
@@ -66,12 +67,18 @@ def segment_to_response(row: FreeCreationSegment) -> dict[str, Any]:
         "duration": int(row.duration or 5),
         "generate_audio": bool(row.generate_audio),
         "watermark": bool(row.watermark),
-        "input_assets": list(row.input_assets_json or []),
+        "input_assets": [
+            _with_preview_url(asset)
+            for asset in list(row.input_assets_json or [])
+            if isinstance(asset, dict)
+        ],
         "status": row.status or "idle",
         "error_message": row.error_message or "",
         "provider_task_id": row.provider_task_id or "",
         "video_url": row.video_url or "",
+        "video_preview_url": browser_ready_asset_url(row.video_url, storage_key=row.video_storage_key),
         "last_frame_url": row.last_frame_url or "",
+        "last_frame_preview_url": browser_ready_asset_url(row.last_frame_url, storage_key=row.last_frame_storage_key),
         "created_at": row.created_at,
         "updated_at": row.updated_at,
     }
@@ -83,6 +90,7 @@ def asset_to_response(row: FreeCreationAsset) -> dict[str, Any]:
         "project_id": int(row.project_id),
         "type": row.asset_type,
         "url": row.url or "",
+        "preview_url": browser_ready_asset_url(row.url, storage_key=row.storage_key),
         "storage_key": row.storage_key or "",
         "file_name": row.file_name or "",
         "mime_type": row.mime_type or "",
@@ -112,6 +120,7 @@ def project_to_response(db: Session, row: FreeCreationProject) -> dict[str, Any]
         "project_name": row.project_name or "",
         "status": row.status or "created",
         "final_video_url": row.final_video_url or "",
+        "final_video_preview_url": browser_ready_asset_url(row.final_video_url, storage_key=row.final_video_storage_key),
         "final_render_status": row.final_render_status or "idle",
         "final_render_error": row.final_render_error or "",
         "settings": dict(row.settings_json or {}),
@@ -192,6 +201,26 @@ def provider_ready_asset_url(url: str | None, *, storage_key: str | None = None)
     if not s:
         return s
     return build_public_static_url(s)
+
+
+def browser_ready_asset_url(url: str | None, *, storage_key: str | None = None) -> str:
+    key = str(storage_key or "").strip() or _free_creation_r2_key_from_url(url)
+    if key and (os.getenv("R2_BUCKET_NAME") or "").strip():
+        try:
+            return build_presigned_get_url(key)
+        except Exception:
+            logger.exception("[FREE_CREATION_ASSET_PREVIEW_PRESIGN_FAILED] key=%s", key[:240])
+    return str(url or "").strip()
+
+
+def _with_preview_url(asset: dict[str, Any]) -> dict[str, Any]:
+    return {
+        **asset,
+        "preview_url": browser_ready_asset_url(
+            asset.get("url"),
+            storage_key=asset.get("storage_key"),
+        ),
+    }
 
 
 def build_seedance_payload(segment: FreeCreationSegment) -> dict[str, Any]:
@@ -420,6 +449,15 @@ def run_segment_generation_job(job_id: int) -> None:
         segment.status = "running"
         db.commit()
         payload = dict(job.request_json or build_seedance_payload(segment))
+        logger.info(
+            "[FREE_CREATION_SEGMENT_GENERATION_START] job_id=%s project_id=%s segment_id=%s model=%s content_count=%s prompt_chars=%s",
+            job_id,
+            segment.project_id,
+            segment.id,
+            payload.get("model"),
+            len(payload.get("content") or []),
+            len(segment.prompt or ""),
+        )
         provider_task_id = client.create_generation_task(
             payload=payload,
             log_context={"workflow": "free_creation", "project_id": segment.project_id, "segment_id": segment.id},
@@ -438,6 +476,15 @@ def run_segment_generation_job(job_id: int) -> None:
             segment.response_json = data
             job.progress = min(90, max(10, int(job.progress or 10) + 8))
             db.commit()
+            logger.info(
+                "[FREE_CREATION_SEGMENT_GENERATION_POLL] job_id=%s project_id=%s segment_id=%s task_id=%s status=%s progress=%s",
+                job_id,
+                segment.project_id,
+                segment.id,
+                provider_task_id,
+                status or "(empty)",
+                job.progress,
+            )
             if status in {"succeeded", "success", "completed"}:
                 final = data
                 break
@@ -448,6 +495,15 @@ def run_segment_generation_job(job_id: int) -> None:
                 segment.status = "failed"
                 segment.error_message = err
                 db.commit()
+                logger.error(
+                    "[FREE_CREATION_SEGMENT_GENERATION_PROVIDER_FAILED] job_id=%s project_id=%s segment_id=%s task_id=%s status=%s error=%s",
+                    job_id,
+                    segment.project_id,
+                    segment.id,
+                    provider_task_id,
+                    status,
+                    err,
+                )
                 return
             time.sleep(interval)
 
@@ -457,6 +513,14 @@ def run_segment_generation_job(job_id: int) -> None:
             segment.status = "failed"
             segment.error_message = job.error_message
             db.commit()
+            logger.error(
+                "[FREE_CREATION_SEGMENT_GENERATION_TIMEOUT] job_id=%s project_id=%s segment_id=%s task_id=%s timeout_seconds=%s",
+                job_id,
+                segment.project_id,
+                segment.id,
+                provider_task_id,
+                settings.SEEDANCE_TASK_TIMEOUT_SECONDS,
+            )
             return
         video_url = extract_video_url(final)
         if not video_url:
@@ -465,6 +529,14 @@ def run_segment_generation_job(job_id: int) -> None:
             segment.status = "failed"
             segment.error_message = job.error_message
             db.commit()
+            logger.error(
+                "[FREE_CREATION_SEGMENT_GENERATION_MISSING_VIDEO_URL] job_id=%s project_id=%s segment_id=%s task_id=%s response_keys=%s",
+                job_id,
+                segment.project_id,
+                segment.id,
+                provider_task_id,
+                list(final.keys()) if isinstance(final, dict) else [],
+            )
             return
 
         video_key = f"free-creation/videos/{segment.user_id}/{segment.project_id}/{segment.id}/result.mp4"
@@ -485,12 +557,26 @@ def run_segment_generation_job(job_id: int) -> None:
                 segment.last_frame_url = _upload_remote_to_r2(url=last_frame, key=frame_key, suffix=".png")
                 segment.last_frame_storage_key = frame_key
             except Exception:
-                pass
+                logger.exception(
+                    "[FREE_CREATION_LAST_FRAME_UPLOAD_FAILED] job_id=%s project_id=%s segment_id=%s task_id=%s",
+                    job_id,
+                    segment.project_id,
+                    segment.id,
+                    provider_task_id,
+                )
         project = db.get(FreeCreationProject, int(segment.project_id))
         if project:
             project.status = "video_generating"
             db.add(project)
         db.commit()
+        logger.info(
+            "[FREE_CREATION_SEGMENT_GENERATION_COMPLETED] job_id=%s project_id=%s segment_id=%s task_id=%s output_url=%s",
+            job_id,
+            segment.project_id,
+            segment.id,
+            provider_task_id,
+            final_video_url,
+        )
     except Exception as exc:
         logger.exception("[FREE_CREATION_SEGMENT_GENERATION_FAILED] job_id=%s", job_id)
         job = db.get(FreeCreationRenderJob, job_id)
@@ -575,6 +661,7 @@ def run_merge_job(job_id: int) -> None:
                 project.final_render_status = "failed"
                 project.final_render_error = job.error_message
             db.commit()
+        logger.exception("[FREE_CREATION_MERGE_FAILED] job_id=%s", job_id)
     finally:
         for p in temp_paths:
             p.unlink(missing_ok=True)

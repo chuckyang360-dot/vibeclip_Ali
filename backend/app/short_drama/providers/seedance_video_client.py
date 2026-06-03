@@ -188,16 +188,20 @@ def extract_last_frame_url(body: Any) -> str | None:
 def extract_task_error(body: Any) -> str:
     if not isinstance(body, dict):
         return ""
+    err = body.get("error")
+    if isinstance(err, dict):
+        code = str(err.get("code") or "").strip()
+        message = str(err.get("message") or err.get("msg") or "").strip()
+        if code and message:
+            return f"{code}: {message}"
+        if message:
+            return message
+        if code:
+            return code
     for key in ("error", "message", "error_message"):
         val = body.get(key)
         if val is not None and str(val).strip():
             return str(val).strip()
-    err = body.get("error")
-    if isinstance(err, dict):
-        for key in ("message", "code", "msg"):
-            val = err.get(key)
-            if val is not None and str(val).strip():
-                return str(val).strip()
     data = body.get("data")
     if isinstance(data, dict):
         nested = extract_task_error(data)

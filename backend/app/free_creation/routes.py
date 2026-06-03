@@ -155,6 +155,7 @@ async def upload_free_creation_asset(
             "id": data["id"],
             "project_id": data["project_id"],
             "url": data["url"],
+            "preview_url": data["preview_url"],
             "storage_key": data["storage_key"],
             "file_name": data["file_name"],
             "mime_type": data["mime_type"],
