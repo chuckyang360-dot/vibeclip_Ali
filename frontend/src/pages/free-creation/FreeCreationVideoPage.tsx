@@ -79,6 +79,7 @@ function toLibraryAsset(asset: FreeCreationAsset): LibraryAsset {
 
 function segmentVideoAsset(segment: FreeCreationSegment): LibraryAsset | null {
   if (!segment.video_url) return null;
+  if (['queued', 'running'].includes(segment.status.toLowerCase())) return null;
   return {
     id: `segment-video-${segment.id}`,
     type: 'video',
@@ -112,6 +113,51 @@ function uploadToInputAsset(upload: Awaited<ReturnType<typeof uploadFreeCreation
     file_size: upload.file_size,
     role: upload.role,
     label: upload.label,
+  };
+}
+
+function keepStablePreviewUrl<T extends { url: string; preview_url?: string }>(prev: T | undefined, next: T): T {
+  if (prev?.url === next.url && prev.preview_url && next.preview_url && prev.preview_url !== next.preview_url) {
+    return { ...next, preview_url: prev.preview_url };
+  }
+  return next;
+}
+
+function isGeneratingStatus(status: string | undefined): boolean {
+  return ['queued', 'running'].includes((status || '').toLowerCase());
+}
+
+function stabilizeProjectMediaUrls(prev: FreeCreationProject | null, next: FreeCreationProject): FreeCreationProject {
+  if (!prev) return next;
+  const prevAssets = new Map(prev.assets.map((asset) => [asset.id, asset]));
+  const prevSegments = new Map(prev.segments.map((segment) => [segment.id, segment]));
+  const finalCompletedAfterGeneration = isGeneratingStatus(prev.final_render_status) && next.final_render_status.toLowerCase() === 'completed';
+  return {
+    ...next,
+    final_video_preview_url:
+      !finalCompletedAfterGeneration && prev.final_video_url === next.final_video_url && prev.final_video_preview_url && next.final_video_preview_url
+        ? prev.final_video_preview_url
+        : next.final_video_preview_url,
+    assets: next.assets.map((asset) => keepStablePreviewUrl(prevAssets.get(asset.id), asset)),
+    segments: next.segments.map((segment) => {
+      const prevSegment = prevSegments.get(segment.id);
+      const completedAfterGeneration = isGeneratingStatus(prevSegment?.status) && segment.status.toLowerCase() === 'completed';
+      return {
+        ...segment,
+        video_preview_url:
+          !completedAfterGeneration && prevSegment?.video_url === segment.video_url && prevSegment.video_preview_url && segment.video_preview_url
+            ? prevSegment.video_preview_url
+            : segment.video_preview_url,
+        last_frame_preview_url:
+          !completedAfterGeneration && prevSegment?.last_frame_url === segment.last_frame_url && prevSegment.last_frame_preview_url && segment.last_frame_preview_url
+            ? prevSegment.last_frame_preview_url
+            : segment.last_frame_preview_url,
+        input_assets: segment.input_assets.map((asset) => {
+          const prevAsset = prevSegment?.input_assets.find((item) => item.url === asset.url);
+          return keepStablePreviewUrl(prevAsset, asset);
+        }),
+      };
+    }),
   };
 }
 
@@ -151,9 +197,13 @@ function AssetThumbnail({ asset }: { asset: LibraryAsset }) {
     }
 
     return (
-      <span className="flex h-full w-full items-center justify-center bg-[#EDEFF5] text-[#6E6E73]">
-        <i className={ri('ri-movie-2-line', 'text-[18px]')} aria-hidden />
-      </span>
+      <video
+        src={src}
+        className="h-full w-full object-cover"
+        muted
+        playsInline
+        preload="metadata"
+      />
     );
   }
 
@@ -212,7 +262,7 @@ export function FreeCreationVideoPage() {
     });
   }, [project?.segments]);
 
-  const allSegmentsReady = Boolean(project?.segments.length) && project!.segments.every((s) => Boolean(s.video_url));
+  const allSegmentsReady = Boolean(project?.segments.length) && project!.segments.every((s) => s.status.toLowerCase() === 'completed' && Boolean(s.video_url));
   const activeColor = activeSegment ? colors[(activeSegment.segment_index - 1) % colors.length] : '#B45309';
   const previewUrl = previewTarget === 'final'
     ? (project?.final_video_preview_url || project?.final_video_url)
@@ -236,7 +286,7 @@ export function FreeCreationVideoPage() {
   const refresh = async () => {
     if (!projectId) return;
     const data = await getFreeCreationProject(projectId);
-    setProject(data);
+    setProject((prev) => stabilizeProjectMediaUrls(prev, data));
     setActiveSegmentId((prev) => prev || data.segments[0]?.id || null);
   };
 
@@ -251,7 +301,7 @@ export function FreeCreationVideoPage() {
       try {
         const data = await getFreeCreationProject(projectId);
         if (cancelled) return;
-        setProject(data);
+        setProject((prev) => stabilizeProjectMediaUrls(prev, data));
         setActiveSegmentId(data.segments[0]?.id || null);
       } catch (e) {
         if (!cancelled) setError(e instanceof Error ? e.message : '项目加载失败');
@@ -584,7 +634,7 @@ export function FreeCreationVideoPage() {
                       </div>
                       <div className="flex shrink-0 items-center gap-2">
                         {generating ? <i className={ri('ri-loader-4-line animate-spin', 'text-[14px]')} style={{ color: c }} aria-hidden /> : null}
-                        {seg.video_url ? <i className={ri('ri-checkbox-circle-fill', 'text-[14px] text-[#047857]')} aria-hidden /> : null}
+                        {!generating && seg.video_url ? <i className={ri('ri-checkbox-circle-fill', 'text-[14px] text-[#047857]')} aria-hidden /> : null}
                         <i className={ri(expanded ? 'ri-arrow-up-s-line' : 'ri-arrow-down-s-line', 'text-[18px] text-[#AEAEB2]')} aria-hidden />
                       </div>
                     </button>
@@ -784,7 +834,8 @@ export function FreeCreationVideoPage() {
             {previewGenerating ? (
               <div className="px-8">
                 <i className={ri('ri-loader-4-line animate-spin', 'mb-3 block text-[30px] text-white/80')} aria-hidden />
-                视频正在生成中，请稍等
+                <p className="font-bold text-white/85">视频正在生成中，请稍等</p>
+                <p className="mt-2 text-[11px] text-white/50">生成完成后会自动刷新当前片段预览</p>
               </div>
             ) : previewUrl ? (
               <video key={`${previewTarget}-${previewUrl}`} src={previewUrl} controls className="h-full w-full object-contain" />
@@ -794,15 +845,6 @@ export function FreeCreationVideoPage() {
                 {previewTarget === 'final' ? '合成完成后可预览最终成片' : '生成当前片段后可预览'}
               </div>
             )}
-            {previewGenerating ? (
-              <div className="absolute inset-x-4 top-4 rounded-xl bg-black/70 px-4 py-3 text-left text-white shadow-lg backdrop-blur">
-                <div className="flex items-center gap-2 text-[13px] font-bold">
-                  <i className={ri('ri-loader-4-line animate-spin', 'text-[15px]')} aria-hidden />
-                  视频正在生成中，请稍等
-                </div>
-                <p className="mt-1 text-[11px] text-white/70">生成完成后会自动刷新当前片段预览。</p>
-              </div>
-            ) : null}
           </div>
           <div className="mt-4 rounded-xl border border-[#E5E5EA] bg-white p-4">
             <p className="text-[11px] text-[#8E8E93]">{previewTarget === 'final' ? '最终成片' : '当前片段'}</p>
@@ -812,11 +854,6 @@ export function FreeCreationVideoPage() {
             {activeSegment ? (
               <p className="mt-2 text-[12px] text-[#8E8E93]">
                 {modelLabel(activeSegment.model)} · {activeSegment.ratio} · {activeSegment.duration}s
-              </p>
-            ) : null}
-            {previewGenerating ? (
-              <p className="mt-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-[12px] leading-5 text-amber-900">
-                视频正在生成中，请稍等。生成完成后会自动显示在右侧预览区。
               </p>
             ) : null}
             {activeSegment?.error_message ? (
