@@ -141,7 +141,7 @@ function AssetThumbnail({ asset }: { asset: LibraryAsset }) {
   if (asset.type === 'video') {
     if (asset.thumbnailUrl) {
       return (
-          <img
+        <img
           src={asset.thumbnailUrl}
           alt={asset.displayName}
           className="h-full w-full object-cover"
@@ -151,15 +151,9 @@ function AssetThumbnail({ asset }: { asset: LibraryAsset }) {
     }
 
     return (
-      <video
-        src={src}
-        className="h-full w-full object-cover"
-        muted
-        playsInline
-        autoPlay
-        loop
-        preload="metadata"
-      />
+      <span className="flex h-full w-full items-center justify-center bg-[#EDEFF5] text-[#6E6E73]">
+        <i className={ri('ri-movie-2-line', 'text-[18px]')} aria-hidden />
+      </span>
     );
   }
 
