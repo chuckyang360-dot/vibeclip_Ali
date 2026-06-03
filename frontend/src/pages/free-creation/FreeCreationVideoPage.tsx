@@ -423,6 +423,25 @@ export function FreeCreationVideoPage() {
       const saved = await persistSegmentPrompt(segment);
       if (prompt.trim() && !saved) return;
       await generateFreeCreationSegment(segment.id);
+      setProject((prev) => {
+        if (!prev) return prev;
+        return {
+          ...prev,
+          segments: prev.segments.map((s) => (
+            s.id === segment.id
+              ? {
+                  ...s,
+                  status: 'running',
+                  error_message: '',
+                  video_url: '',
+                  video_preview_url: '',
+                  last_frame_url: '',
+                  last_frame_preview_url: '',
+                }
+              : s
+          )),
+        };
+      });
       await refresh();
       setPreviewTarget('segment');
     } catch (e) {
@@ -762,20 +781,20 @@ export function FreeCreationVideoPage() {
             <button type="button" onClick={() => setPreviewTarget('final')} className={`h-9 rounded-lg text-[12px] font-bold ${previewTarget === 'final' ? 'bg-[#1D1D1F] text-white' : 'text-[#6E6E73]'}`}>最终成片</button>
           </div>
           <div className="relative flex aspect-[9/16] w-full items-center justify-center overflow-hidden rounded-xl bg-[#111] text-center text-[13px] text-[#8E8E93]">
-            {previewUrl ? (
-              <video src={previewUrl} controls className="h-full w-full object-contain" />
-            ) : previewGenerating ? (
+            {previewGenerating ? (
               <div className="px-8">
                 <i className={ri('ri-loader-4-line animate-spin', 'mb-3 block text-[30px] text-white/80')} aria-hidden />
                 视频正在生成中，请稍等
               </div>
+            ) : previewUrl ? (
+              <video key={`${previewTarget}-${previewUrl}`} src={previewUrl} controls className="h-full w-full object-contain" />
             ) : (
               <div className="px-8">
                 <i className={ri('ri-video-line', 'mb-3 block text-[30px] text-white/80')} aria-hidden />
                 {previewTarget === 'final' ? '合成完成后可预览最终成片' : '生成当前片段后可预览'}
               </div>
             )}
-            {previewGenerating && previewUrl ? (
+            {previewGenerating ? (
               <div className="absolute inset-x-4 top-4 rounded-xl bg-black/70 px-4 py-3 text-left text-white shadow-lg backdrop-blur">
                 <div className="flex items-center gap-2 text-[13px] font-bold">
                   <i className={ri('ri-loader-4-line animate-spin', 'text-[15px]')} aria-hidden />
