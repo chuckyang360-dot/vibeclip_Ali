@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import {
+  cancelFreeCreationSegment,
   createFreeCreationSegment,
   generateFreeCreationSegment,
   getFreeCreationProject,
@@ -219,6 +220,7 @@ function statusText(status: string): string {
   if (s === 'completed') return '已完成';
   if (s === 'running') return '生成中';
   if (s === 'queued') return '排队中';
+  if (s === 'cancelled') return '已终止';
   if (s === 'failed') return '失败';
   return '待生成';
 }
@@ -501,6 +503,23 @@ export function FreeCreationVideoPage() {
     }
   };
 
+  const cancelSegment = async (segment: FreeCreationSegment) => {
+    setBusy(true);
+    setError(null);
+    try {
+      const next = await cancelFreeCreationSegment(segment.id);
+      setProject((prev) => {
+        if (!prev) return prev;
+        return { ...prev, segments: prev.segments.map((s) => (s.id === next.id ? next : s)) };
+      });
+      await refresh();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : '终止生成失败');
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const mergeProject = async () => {
     if (!projectId) return;
     setBusy(true);
@@ -776,6 +795,17 @@ export function FreeCreationVideoPage() {
 
                         <div className="flex items-center justify-end gap-3">
                           {seg.error_message ? <p className="mr-auto max-w-[560px] break-words text-[12px] text-red-700">{seg.error_message}</p> : null}
+                          {generating ? (
+                            <button
+                              type="button"
+                              onClick={() => void cancelSegment(seg)}
+                              disabled={busy}
+                              className="flex items-center gap-2 rounded-xl border border-[#FCA5A5] bg-white px-4 py-2.5 text-[13px] font-bold text-[#B91C1C] disabled:opacity-50"
+                            >
+                              <i className={ri('ri-stop-circle-line', 'text-[14px]')} aria-hidden />
+                              终止生成
+                            </button>
+                          ) : null}
                           <button
                             type="button"
                             onClick={() => void generateSegment(seg)}

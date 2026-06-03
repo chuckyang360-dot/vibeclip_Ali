@@ -4,6 +4,7 @@ import os
 import tempfile
 import time
 import logging
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 from urllib.parse import unquote, urlparse
@@ -45,6 +46,24 @@ FREE_CREATION_R2_KEY_MARKERS = (
     "free-creation/final-videos/",
 )
 
+ACTIVE_RENDER_STATUSES = {"queued", "running"}
+
+
+def _utc_now() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+def _as_aware_utc(value: datetime | None) -> datetime | None:
+    if value is None:
+        return None
+    if value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc)
+
+
+def _render_timeout_seconds() -> float:
+    return max(60.0, float(settings.SEEDANCE_TASK_TIMEOUT_SECONDS or 600.0))
+
 
 def asset_role(asset_type: str) -> str:
     if asset_type == "video":
@@ -52,6 +71,45 @@ def asset_role(asset_type: str) -> str:
     if asset_type == "audio":
         return "reference_audio"
     return "reference_image"
+
+
+def expire_stale_render_jobs(db: Session, *, project_id: int | None = None) -> int:
+    timeout_seconds = _render_timeout_seconds()
+    cutoff = _utc_now().timestamp() - timeout_seconds
+    query = db.query(FreeCreationRenderJob).filter(FreeCreationRenderJob.status.in_(ACTIVE_RENDER_STATUSES))
+    if project_id is not None:
+        query = query.filter(FreeCreationRenderJob.project_id == project_id)
+    jobs = query.all()
+    expired = 0
+    for job in jobs:
+        updated = _as_aware_utc(job.updated_at or job.created_at)
+        if updated is None or updated.timestamp() > cutoff:
+            continue
+        message = f"生成任务超过 {int(timeout_seconds)} 秒未返回结果，已自动终止，请重试。"
+        job.status = "failed"
+        job.error_message = message
+        if job.segment_id is not None:
+            segment = db.get(FreeCreationSegment, int(job.segment_id))
+            if segment is not None and str(segment.status or "").lower() in ACTIVE_RENDER_STATUSES:
+                segment.status = "failed"
+                segment.error_message = message
+        elif str(job.target_type or "") == "final":
+            project = db.get(FreeCreationProject, int(job.project_id))
+            if project is not None and str(project.final_render_status or "").lower() in ACTIVE_RENDER_STATUSES:
+                project.final_render_status = "failed"
+                project.final_render_error = message
+        expired += 1
+        logger.warning(
+            "[FREE_CREATION_RENDER_JOB_EXPIRED] job_id=%s project_id=%s segment_id=%s target_type=%s timeout_seconds=%s",
+            job.id,
+            job.project_id,
+            job.segment_id,
+            job.target_type,
+            timeout_seconds,
+        )
+    if expired:
+        db.commit()
+    return expired
 
 
 def segment_to_response(row: FreeCreationSegment) -> dict[str, Any]:
@@ -102,6 +160,7 @@ def asset_to_response(row: FreeCreationAsset) -> dict[str, Any]:
 
 
 def project_to_response(db: Session, row: FreeCreationProject) -> dict[str, Any]:
+    expire_stale_render_jobs(db, project_id=int(row.id))
     assets = (
         db.query(FreeCreationAsset)
         .filter(FreeCreationAsset.project_id == row.id)
@@ -129,6 +188,38 @@ def project_to_response(db: Session, row: FreeCreationProject) -> dict[str, Any]
         "created_at": row.created_at,
         "updated_at": row.updated_at,
     }
+
+
+def cancel_segment_generation(db: Session, *, segment: FreeCreationSegment) -> FreeCreationSegment:
+    status = str(segment.status or "").lower()
+    if status not in ACTIVE_RENDER_STATUSES:
+        return segment
+    message = "已手动终止生成，可调整后重试。"
+    jobs = (
+        db.query(FreeCreationRenderJob)
+        .filter(
+            FreeCreationRenderJob.segment_id == segment.id,
+            FreeCreationRenderJob.target_type == "segment",
+            FreeCreationRenderJob.status.in_(ACTIVE_RENDER_STATUSES),
+        )
+        .order_by(FreeCreationRenderJob.id.desc())
+        .all()
+    )
+    for job in jobs:
+        job.status = "cancelled"
+        job.error_message = message
+    segment.status = "cancelled"
+    segment.error_message = message
+    db.add(segment)
+    db.commit()
+    db.refresh(segment)
+    logger.info(
+        "[FREE_CREATION_SEGMENT_GENERATION_CANCELLED] project_id=%s segment_id=%s active_job_count=%s",
+        segment.project_id,
+        segment.id,
+        len(jobs),
+    )
+    return segment
 
 
 def normalize_model(raw: str | None) -> str:
@@ -462,6 +553,17 @@ def run_segment_generation_job(job_id: int) -> None:
             payload=payload,
             log_context={"workflow": "free_creation", "project_id": segment.project_id, "segment_id": segment.id},
         )
+        db.refresh(job)
+        db.refresh(segment)
+        if str(job.status or "").lower() == "cancelled" or str(segment.status or "").lower() == "cancelled":
+            logger.info(
+                "[FREE_CREATION_SEGMENT_GENERATION_CANCELLED_BEFORE_POLL] job_id=%s project_id=%s segment_id=%s task_id=%s",
+                job_id,
+                segment.project_id,
+                segment.id,
+                provider_task_id,
+            )
+            return
         job.provider_task_id = provider_task_id
         segment.provider_task_id = provider_task_id
         db.commit()
@@ -470,6 +572,17 @@ def run_segment_generation_job(job_id: int) -> None:
         interval = max(1.0, float(settings.SEEDANCE_TASK_POLL_INTERVAL_SECONDS))
         final: dict[str, Any] | None = None
         while time.monotonic() < deadline:
+            db.refresh(job)
+            db.refresh(segment)
+            if str(job.status or "").lower() == "cancelled" or str(segment.status or "").lower() == "cancelled":
+                logger.info(
+                    "[FREE_CREATION_SEGMENT_GENERATION_CANCELLED_DURING_POLL] job_id=%s project_id=%s segment_id=%s task_id=%s",
+                    job_id,
+                    segment.project_id,
+                    segment.id,
+                    provider_task_id,
+                )
+                return
             data = client.get_video_task(task_id=provider_task_id)
             status = extract_task_status(data)
             job.response_json = data
@@ -539,6 +652,17 @@ def run_segment_generation_job(job_id: int) -> None:
             )
             return
 
+        db.refresh(job)
+        db.refresh(segment)
+        if str(job.status or "").lower() == "cancelled" or str(segment.status or "").lower() == "cancelled":
+            logger.info(
+                "[FREE_CREATION_SEGMENT_GENERATION_CANCELLED_BEFORE_SAVE] job_id=%s project_id=%s segment_id=%s task_id=%s",
+                job_id,
+                segment.project_id,
+                segment.id,
+                provider_task_id,
+            )
+            return
         video_key = f"free-creation/videos/{segment.user_id}/{segment.project_id}/{segment.id}/result.mp4"
         final_video_url = _upload_remote_to_r2(url=video_url, key=video_key, suffix=".mp4")
         segment.provider_video_url = video_url

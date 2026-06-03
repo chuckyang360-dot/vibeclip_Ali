@@ -192,6 +192,10 @@ export async function generateFreeCreationSegment(segmentId: number): Promise<{ 
   return fetchJson(`/api/free-creation/segments/${segmentId}/generate`, { method: 'POST' });
 }
 
+export async function cancelFreeCreationSegment(segmentId: number): Promise<FreeCreationSegment> {
+  return fetchJson<FreeCreationSegment>(`/api/free-creation/segments/${segmentId}/cancel`, { method: 'POST' });
+}
+
 export async function getFreeCreationRenderJob(jobId: number): Promise<FreeCreationRenderJob> {
   return fetchJson<FreeCreationRenderJob>(`/api/free-creation/render-jobs/${jobId}`);
 }

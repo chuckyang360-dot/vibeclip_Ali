@@ -24,6 +24,7 @@ from .schemas import (
 )
 from .service import (
     asset_to_response,
+    cancel_segment_generation,
     create_project,
     create_segment,
     enqueue_merge,
@@ -210,6 +211,16 @@ async def generate_free_creation_segment(
         "status": job.status,
         "ok": True,
     }
+
+
+@router.post("/segments/{segment_id}/cancel", response_model=FreeCreationSegmentResponse)
+async def cancel_free_creation_segment_generation(
+    segment_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    row = _get_segment(db, segment_id, int(current_user.id))
+    return segment_to_response(cancel_segment_generation(db, segment=row))
 
 
 @router.get("/render-jobs/{job_id}", response_model=FreeCreationRenderJobResponse)
