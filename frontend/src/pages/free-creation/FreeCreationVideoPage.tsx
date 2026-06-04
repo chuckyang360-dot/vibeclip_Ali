@@ -265,6 +265,9 @@ export function FreeCreationVideoPage() {
   }, [project?.segments]);
 
   const allSegmentsReady = Boolean(project?.segments.length) && project!.segments.every((s) => Boolean(s.video_url));
+  const segmentResolutions = Array.from(new Set((project?.segments || []).map((s) => s.resolution || '720p')));
+  const hasMixedSegmentResolutions = segmentResolutions.length > 1;
+  const canMergeProject = allSegmentsReady && !hasMixedSegmentResolutions;
   const activeColor = activeSegment ? colors[(activeSegment.segment_index - 1) % colors.length] : '#B45309';
   const previewUrl = previewTarget === 'final'
     ? (project?.final_video_preview_url || project?.final_video_url)
@@ -523,6 +526,10 @@ export function FreeCreationVideoPage() {
 
   const mergeProject = async () => {
     if (!projectId) return;
+    if (hasMixedSegmentResolutions) {
+      setError(`当前片段分辨率不一致（${segmentResolutions.join('、')}），请统一后再合成。`);
+      return;
+    }
     setBusy(true);
     setError(null);
     try {
@@ -832,9 +839,16 @@ export function FreeCreationVideoPage() {
                 时间轴
                 <span className="rounded-full bg-[#EAEAEA] px-2 py-0.5 text-[11px]">{project?.segments.length || 0} 个片段</span>
               </div>
-              <button type="button" onClick={() => void mergeProject()} disabled={busy || !allSegmentsReady} className="rounded-xl bg-[#1D1D1F] px-5 py-2 text-[12.5px] font-bold text-white disabled:bg-[#D1D5DB]">
-                合成完整视频
-              </button>
+              <div className="flex items-center gap-3">
+                {hasMixedSegmentResolutions ? (
+                  <span className="max-w-[260px] text-right text-[11px] font-bold leading-4 text-red-600">
+                    片段分辨率不一致，无法合成
+                  </span>
+                ) : null}
+                <button type="button" onClick={() => void mergeProject()} disabled={busy || !canMergeProject} title={hasMixedSegmentResolutions ? `当前分辨率：${segmentResolutions.join('、')}` : undefined} className="rounded-xl bg-[#1D1D1F] px-5 py-2 text-[12.5px] font-bold text-white disabled:bg-[#D1D5DB]">
+                  合成完整视频
+                </button>
+              </div>
             </div>
             <div className="flex gap-2">
               {project?.segments.map((seg) => {
