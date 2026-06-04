@@ -58,11 +58,9 @@ export function ShortDramaLayout({ children, headerMode: _headerMode = 'workflow
           <Link to="/projects" className="px-3.5 py-1.5 text-[13.5px] font-medium rounded-lg whitespace-nowrap hover:bg-[#F5F5F7] hover:text-[#1D1D1F]" style={{ color: darkOverlayHeader ? 'rgba(255,255,255,0.68)' : '#8E8E93' }}>
             项目管理
           </Link>
-          {import.meta.env.DEV && (
-            <Link to="/ad-materials" className="px-3.5 py-1.5 text-[13.5px] font-medium rounded-lg whitespace-nowrap hover:bg-[#F5F5F7] hover:text-[#1D1D1F]" style={{ color: darkOverlayHeader ? 'rgba(255,255,255,0.68)' : '#8E8E93' }}>
-              模板专区
-            </Link>
-          )}
+          <Link to="/ad-materials" className="px-3.5 py-1.5 text-[13.5px] font-medium rounded-lg whitespace-nowrap hover:bg-[#F5F5F7] hover:text-[#1D1D1F]" style={{ color: darkOverlayHeader ? 'rgba(255,255,255,0.68)' : '#8E8E93' }}>
+            模板专区
+          </Link>
         </nav>
 
         <div className="flex items-center gap-2">
