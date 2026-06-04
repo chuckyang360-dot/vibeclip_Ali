@@ -222,6 +222,64 @@ def test_byte_dogfood_package_replace_template_builds_image_then_video_payload()
     ]
 
 
+def test_byte_house_blue_snow_edit_template_builds_image_then_video_payload() -> None:
+    template = get_template("byte-house-blue-snow-edit")
+    assert template is not None
+    assert template.category == "视频编辑"
+    assert template.theme_categories == ["视频编辑", "建筑空间", "风格迁移"]
+    assert template.preview_video_url == (
+        "https://ark-common-storage-prod-cn-beijing.tos-cn-beijing.volces.com/"
+        "presets/experience/gen_video/templates/reference/edit/46_4.mp4"
+    )
+
+    body = CreateAdMaterialTaskRequest(
+        mode="template",
+        template_id=template.id,
+        assets=[
+            AdMaterialInputAsset(
+                type="image",
+                role="reference_image",
+                url="asset://asset-20260224185115-dg62w",
+                label="@图片1",
+            ),
+            AdMaterialInputAsset(
+                type="video",
+                role="reference_video",
+                url="asset://asset-20260224185115-6x477",
+                label="@视频1",
+            ),
+        ],
+        ratio=template.default_ratio,
+        duration=template.default_duration,
+        generate_audio=template.default_generate_audio,
+        watermark=False,
+        model="doubao-seedance-2-0-260128",
+    )
+
+    prompt = build_prompt(body)
+    payload = build_seedance_payload(body, prompt)
+
+    assert prompt == "将【视频 1】中的房子外立面墙壁刷成蓝色，天气和光线参考【图片 1】的雪天"
+    assert payload["model"] == "doubao-seedance-2-0-260128"
+    assert payload["ratio"] == "16:9"
+    assert payload["duration"] == 11
+    assert payload["generate_audio"] is True
+    assert payload["watermark"] is False
+    assert payload["content"] == [
+        {"type": "text", "text": prompt},
+        {
+            "type": "image_url",
+            "image_url": {"url": "asset://asset-20260224185115-dg62w"},
+            "role": "reference_image",
+        },
+        {
+            "type": "video_url",
+            "video_url": {"url": "asset://asset-20260224185115-6x477"},
+            "role": "reference_video",
+        },
+    ]
+
+
 def test_byte_perfume_light_sweep_template_builds_two_video_reference_payload() -> None:
     template = get_template("byte-perfume-light-sweep")
     assert template is not None
@@ -1259,4 +1317,752 @@ def test_byte_female_anchor_opening_template_builds_image_audio_payload() -> Non
         {"type": "image_url", "image_url": {"url": "asset://asset-20260224185116-s5nfl"}, "role": "reference_image"},
         {"type": "image_url", "image_url": {"url": "asset://asset-20260224185116-jw64c"}, "role": "reference_image"},
         {"type": "audio_url", "audio_url": {"url": "asset://asset-20260224185116-l8q68"}, "role": "reference_audio"},
+    ]
+
+
+def test_byte_new_year_one_take_extension_template_builds_video_audio_payload() -> None:
+    template = get_template("byte-new-year-one-take-extension")
+    assert template is not None
+    assert template.category == "时序补全"
+    assert template.theme_categories == ["生活方式", "国风艺术", "时序补全", "运镜特效"]
+    assert template.preview_video_url == (
+        "https://ark-common-storage-prod-cn-beijing.tos-cn-beijing.volces.com/"
+        "presets/experience/gen_video/templates/reference/timeline/48_4.mp4"
+    )
+
+    body = CreateAdMaterialTaskRequest(
+        mode="template",
+        template_id=template.id,
+        assets=[
+            AdMaterialInputAsset(type="video", role="reference_video", url="asset://asset-20260224185115-kdtp2", label="@视频1"),
+            AdMaterialInputAsset(type="audio", role="reference_audio", url="asset://asset-20260224185115-p2cdz", label="@音频1"),
+        ],
+        ratio=template.default_ratio,
+        duration=template.default_duration,
+        generate_audio=template.default_generate_audio,
+        watermark=False,
+        model="doubao-seedance-2-0-260128",
+    )
+
+    prompt = build_prompt(body)
+    payload = build_seedance_payload(body, prompt)
+
+    assert "10秒一镜到底运镜" in prompt
+    assert "新春快乐，阖家幸福，马年吉祥" in prompt
+    assert payload["model"] == "doubao-seedance-2-0-260128"
+    assert payload["ratio"] == "16:9"
+    assert payload["duration"] == 11
+    assert payload["generate_audio"] is True
+    assert payload["watermark"] is False
+    assert payload["content"] == [
+        {"type": "text", "text": prompt},
+        {"type": "video_url", "video_url": {"url": "asset://asset-20260224185115-kdtp2"}, "role": "reference_video"},
+        {"type": "audio_url", "audio_url": {"url": "asset://asset-20260224185115-p2cdz"}, "role": "reference_audio"},
+    ]
+
+
+def test_byte_gallery_painting_transition_template_builds_three_video_payload() -> None:
+    template = get_template("byte-gallery-painting-transition")
+    assert template is not None
+    assert template.category == "时序补全"
+    assert template.theme_categories == ["国风艺术", "微电影", "时序补全", "运镜特效"]
+    assert template.preview_video_url == (
+        "https://ark-common-storage-prod-cn-beijing.tos-cn-beijing.volces.com/"
+        "presets/experience/gen_video/templates/reference/timeline/23_4.mp4"
+    )
+
+    body = CreateAdMaterialTaskRequest(
+        mode="template",
+        template_id=template.id,
+        assets=[
+            AdMaterialInputAsset(type="video", role="reference_video", url="asset://asset-20260224185117-krtsr", label="@视频1"),
+            AdMaterialInputAsset(type="video", role="reference_video", url="asset://asset-20260224185117-rbfz9", label="@视频2"),
+            AdMaterialInputAsset(type="video", role="reference_video", url="asset://asset-20260224185117-4z4wc", label="@视频3"),
+        ],
+        ratio=template.default_ratio,
+        duration=template.default_duration,
+        generate_audio=template.default_generate_audio,
+        watermark=False,
+        model="doubao-seedance-2-0-260128",
+    )
+
+    prompt = build_prompt(body)
+    payload = build_seedance_payload(body, prompt)
+
+    assert "拱形窗户打开" in prompt
+    assert "镜头进入画内" in prompt
+    assert payload["model"] == "doubao-seedance-2-0-260128"
+    assert payload["ratio"] == "16:9"
+    assert payload["duration"] == 11
+    assert payload["generate_audio"] is True
+    assert payload["watermark"] is False
+    assert payload["content"] == [
+        {"type": "text", "text": prompt},
+        {"type": "video_url", "video_url": {"url": "asset://asset-20260224185117-krtsr"}, "role": "reference_video"},
+        {"type": "video_url", "video_url": {"url": "asset://asset-20260224185117-rbfz9"}, "role": "reference_video"},
+        {"type": "video_url", "video_url": {"url": "asset://asset-20260224185117-4z4wc"}, "role": "reference_video"},
+    ]
+
+
+def test_byte_clay_pancake_style_edit_template_builds_video_payload() -> None:
+    template = get_template("byte-clay-pancake-style-edit")
+    assert template is not None
+    assert template.category == "视频编辑"
+    assert template.theme_categories == ["3D动漫", "生活方式", "食品饮品", "视频修复"]
+    assert template.preview_video_url == (
+        "https://ark-common-storage-prod-cn-beijing.tos-cn-beijing.volces.com/"
+        "presets/experience/gen_video/templates/reference/media/"
+        "tpl-doc-20260408150656-edit-01-04__result01__XpIhbd.mp4"
+    )
+
+    body = CreateAdMaterialTaskRequest(
+        mode="template",
+        template_id=template.id,
+        assets=[
+            AdMaterialInputAsset(type="video", role="reference_video", url="asset://asset-20260408151817-q5fnw", label="@视频1"),
+        ],
+        ratio=template.default_ratio,
+        duration=template.default_duration,
+        generate_audio=template.default_generate_audio,
+        watermark=False,
+        model="doubao-seedance-2-0-260128",
+    )
+
+    prompt = build_prompt(body)
+    payload = build_seedance_payload(body, prompt)
+
+    assert "摊煎饼" in prompt
+    assert "3D 粘土动画风格" in prompt
+    assert payload["model"] == "doubao-seedance-2-0-260128"
+    assert payload["ratio"] == "16:9"
+    assert payload["duration"] == 11
+    assert payload["generate_audio"] is True
+    assert payload["watermark"] is False
+    assert payload["content"] == [
+        {"type": "text", "text": prompt},
+        {"type": "video_url", "video_url": {"url": "asset://asset-20260408151817-q5fnw"}, "role": "reference_video"},
+    ]
+
+
+def test_byte_camera_crew_removal_audio_replace_template_builds_video_audio_payload() -> None:
+    template = get_template("byte-camera-crew-removal-audio-replace")
+    assert template is not None
+    assert template.category == "视频编辑"
+    assert template.theme_categories == ["视频修复", "生活方式", "运镜特效"]
+    assert template.preview_video_url == (
+        "https://ark-common-storage-prod-cn-beijing.tos-cn-beijing.volces.com/"
+        "presets/experience/gen_video/templates/reference/edit/45_4.mp4"
+    )
+
+    body = CreateAdMaterialTaskRequest(
+        mode="template",
+        template_id=template.id,
+        assets=[
+            AdMaterialInputAsset(type="video", role="reference_video", url="asset://asset-20260224185115-x9qsd", label="@视频1"),
+            AdMaterialInputAsset(type="audio", role="reference_audio", url="asset://asset-20260224185115-zsdrw", label="@音频1"),
+        ],
+        ratio=template.default_ratio,
+        duration=template.default_duration,
+        generate_audio=template.default_generate_audio,
+        watermark=False,
+        model="doubao-seedance-2-0-260128",
+    )
+
+    prompt = build_prompt(body)
+    payload = build_seedance_payload(body, prompt)
+
+    assert "摄像穿帮" in prompt
+    assert "背景音替换成【音频 1】" in prompt
+    assert payload["model"] == "doubao-seedance-2-0-260128"
+    assert payload["ratio"] == "16:9"
+    assert payload["duration"] == 11
+    assert payload["generate_audio"] is True
+    assert payload["watermark"] is False
+    assert payload["content"] == [
+        {"type": "text", "text": prompt},
+        {"type": "video_url", "video_url": {"url": "asset://asset-20260224185115-x9qsd"}, "role": "reference_video"},
+        {"type": "audio_url", "audio_url": {"url": "asset://asset-20260224185115-zsdrw"}, "role": "reference_audio"},
+    ]
+
+
+def test_byte_story_prequel_extension_template_builds_video_payload() -> None:
+    template = get_template("byte-story-prequel-extension")
+    assert template is not None
+    assert template.category == "时序补全"
+    assert template.theme_categories == ["微电影", "情绪叙事", "时序补全"]
+    assert template.preview_video_url == (
+        "https://ark-common-storage-prod-cn-beijing.tos-cn-beijing.volces.com/"
+        "presets/experience/gen_video/templates/reference/timeline/19_2.mp4"
+    )
+
+    body = CreateAdMaterialTaskRequest(
+        mode="template",
+        template_id=template.id,
+        assets=[
+            AdMaterialInputAsset(type="video", role="reference_video", url="asset://asset-20260224185117-x4qh7", label="@视频1"),
+        ],
+        ratio=template.default_ratio,
+        duration=template.default_duration,
+        generate_audio=template.default_generate_audio,
+        watermark=False,
+        model="doubao-seedance-2-0-260128",
+    )
+
+    prompt = build_prompt(body)
+    payload = build_seedance_payload(body, prompt)
+
+    assert "前半部分故事情节" in prompt
+    assert payload["model"] == "doubao-seedance-2-0-260128"
+    assert payload["ratio"] == "16:9"
+    assert payload["duration"] == 11
+    assert payload["generate_audio"] is True
+    assert payload["watermark"] is False
+    assert payload["content"] == [
+        {"type": "text", "text": prompt},
+        {"type": "video_url", "video_url": {"url": "asset://asset-20260224185117-x4qh7"}, "role": "reference_video"},
+    ]
+
+
+def test_byte_reference_music_mv_template_builds_image_audio_payload() -> None:
+    template = get_template("byte-reference-music-mv")
+    assert template is not None
+    assert template.category == "参考生成"
+    assert template.theme_categories == ["商业广告", "3D动漫", "情绪叙事"]
+    assert template.preview_video_url == (
+        "https://ark-common-storage-prod-cn-beijing.tos-cn-beijing.volces.com/"
+        "presets/experience/gen_video/templates/reference/reference/14_3.mp4"
+    )
+
+    body = CreateAdMaterialTaskRequest(
+        mode="template",
+        template_id=template.id,
+        assets=[
+            AdMaterialInputAsset(type="image", role="reference_image", url="asset://asset-20260224185116-67fq6", label="@图片1"),
+            AdMaterialInputAsset(type="audio", role="reference_audio", url="asset://asset-20260224185116-4kqfg", label="@音频1"),
+        ],
+        ratio=template.default_ratio,
+        duration=template.default_duration,
+        generate_audio=template.default_generate_audio,
+        watermark=False,
+        model="doubao-seedance-2-0-260128",
+    )
+
+    prompt = build_prompt(body)
+    payload = build_seedance_payload(body, prompt)
+
+    assert "画面画风" in prompt
+    assert "音乐MV" in prompt
+    assert payload["model"] == "doubao-seedance-2-0-260128"
+    assert payload["ratio"] == "16:9"
+    assert payload["duration"] == 11
+    assert payload["generate_audio"] is True
+    assert payload["watermark"] is False
+    assert payload["content"] == [
+        {"type": "text", "text": prompt},
+        {"type": "image_url", "image_url": {"url": "asset://asset-20260224185116-67fq6"}, "role": "reference_image"},
+        {"type": "audio_url", "audio_url": {"url": "asset://asset-20260224185116-4kqfg"}, "role": "reference_audio"},
+    ]
+
+
+def test_byte_passerby_removal_edit_template_builds_video_payload() -> None:
+    template = get_template("byte-passerby-removal-edit")
+    assert template is not None
+    assert template.category == "视频编辑"
+    assert template.theme_categories == ["商业广告", "生活方式", "运镜特效"]
+    assert template.preview_video_url == (
+        "https://ark-common-storage-prod-cn-beijing.tos-cn-beijing.volces.com/"
+        "presets/experience/gen_video/templates/reference/edit/43_3.mp4"
+    )
+
+    body = CreateAdMaterialTaskRequest(
+        mode="template",
+        template_id=template.id,
+        assets=[
+            AdMaterialInputAsset(type="video", role="reference_video", url="asset://asset-20260224185115-55dm2", label="@视频1"),
+        ],
+        ratio=template.default_ratio,
+        duration=template.default_duration,
+        generate_audio=template.default_generate_audio,
+        watermark=False,
+        model="doubao-seedance-2-0-260128",
+    )
+
+    prompt = build_prompt(body)
+    payload = build_seedance_payload(body, prompt)
+
+    assert "走过去的路人" in prompt
+    assert "视频运镜等不改变" in prompt
+    assert payload["model"] == "doubao-seedance-2-0-260128"
+    assert payload["ratio"] == "16:9"
+    assert payload["duration"] == 11
+    assert payload["generate_audio"] is True
+    assert payload["watermark"] is False
+    assert payload["content"] == [
+        {"type": "text", "text": prompt},
+        {"type": "video_url", "video_url": {"url": "asset://asset-20260224185115-55dm2"}, "role": "reference_video"},
+    ]
+
+
+def test_byte_hutong_rooftop_parkour_prequel_template_builds_video_payload() -> None:
+    template = get_template("byte-hutong-rooftop-parkour-prequel")
+    assert template is not None
+    assert template.category == "时序补全"
+    assert template.theme_categories == ["微电影", "动作打斗", "运镜特效", "时序补全"]
+    assert template.preview_video_url == (
+        "https://ark-common-storage-prod-cn-beijing.tos-cn-beijing.volces.com/"
+        "presets/experience/gen_video/templates/reference/media/"
+        "tpl-doc-20260408150656-timeline-05-03__result01__CjLWbO.mp4"
+    )
+
+    body = CreateAdMaterialTaskRequest(
+        mode="template",
+        template_id=template.id,
+        assets=[
+            AdMaterialInputAsset(type="video", role="reference_video", url="asset://asset-20260408151837-bqf26", label="@视频1"),
+        ],
+        ratio=template.default_ratio,
+        duration=template.default_duration,
+        generate_audio=template.default_generate_audio,
+        watermark=False,
+        model="doubao-seedance-2-0-260128",
+    )
+
+    prompt = build_prompt(body)
+    payload = build_seedance_payload(body, prompt)
+
+    assert "胡同灰瓦屋面跑酷" in prompt
+    assert "最终跳下屋顶接【视频 1】" in prompt
+    assert payload["model"] == "doubao-seedance-2-0-260128"
+    assert payload["ratio"] == "16:9"
+    assert payload["duration"] == 11
+    assert payload["generate_audio"] is True
+    assert payload["watermark"] is False
+    assert payload["content"] == [
+        {"type": "text", "text": prompt},
+        {"type": "video_url", "video_url": {"url": "asset://asset-20260408151837-bqf26"}, "role": "reference_video"},
+    ]
+
+
+def test_byte_apocalyptic_overgrown_city_edit_template_builds_image_video_payload() -> None:
+    template = get_template("byte-apocalyptic-overgrown-city-edit")
+    assert template is not None
+    assert template.category == "视频编辑"
+    assert template.theme_categories == ["商业广告", "微电影", "自然纪实", "运镜特效"]
+    assert template.preview_video_url == (
+        "https://ark-common-storage-prod-cn-beijing.tos-cn-beijing.volces.com/"
+        "presets/experience/gen_video/templates/reference/media/"
+        "tpl-doc-20260408150656-edit-02-01__result01__PRDdbZ.mp4"
+    )
+
+    body = CreateAdMaterialTaskRequest(
+        mode="template",
+        template_id=template.id,
+        assets=[
+            AdMaterialInputAsset(type="image", role="reference_image", url="asset://asset-20260408151817-rg4k4", label="@图片1"),
+            AdMaterialInputAsset(type="video", role="reference_video", url="asset://asset-20260408151817-9cvxf", label="@视频1"),
+        ],
+        ratio=template.default_ratio,
+        duration=template.default_duration,
+        generate_audio=template.default_generate_audio,
+        watermark=False,
+        model="doubao-seedance-2-0-260128",
+    )
+
+    prompt = build_prompt(body)
+    payload = build_seedance_payload(body, prompt)
+
+    assert "末世废墟" in prompt
+    assert "长满绿植效果" in prompt
+    assert payload["model"] == "doubao-seedance-2-0-260128"
+    assert payload["ratio"] == "16:9"
+    assert payload["duration"] == 11
+    assert payload["generate_audio"] is True
+    assert payload["watermark"] is False
+    assert payload["content"] == [
+        {"type": "text", "text": prompt},
+        {"type": "image_url", "image_url": {"url": "asset://asset-20260408151817-rg4k4"}, "role": "reference_image"},
+        {"type": "video_url", "video_url": {"url": "asset://asset-20260408151817-9cvxf"}, "role": "reference_video"},
+    ]
+
+
+def test_byte_guofeng_lantern_papercut_horse_transition_template_builds_three_video_payload() -> None:
+    template = get_template("byte-guofeng-lantern-papercut-horse-transition")
+    assert template is not None
+    assert template.category == "时序补全"
+    assert template.theme_categories == ["国风艺术", "商业广告", "运镜特效", "时序补全"]
+    assert template.preview_video_url == (
+        "https://ark-common-storage-prod-cn-beijing.tos-cn-beijing.volces.com/"
+        "presets/experience/gen_video/templates/reference/timeline/cn_2_4.mp4"
+    )
+
+    body = CreateAdMaterialTaskRequest(
+        mode="template",
+        template_id=template.id,
+        assets=[
+            AdMaterialInputAsset(type="video", role="reference_video", url="asset://asset-20260224185117-7mdq6", label="@视频1"),
+            AdMaterialInputAsset(type="video", role="reference_video", url="asset://asset-20260224185117-9frtz", label="@视频2"),
+            AdMaterialInputAsset(type="video", role="reference_video", url="asset://asset-20260224185117-gwv25", label="@视频3"),
+        ],
+        ratio=template.default_ratio,
+        duration=template.default_duration,
+        generate_audio=template.default_generate_audio,
+        watermark=False,
+        model="doubao-seedance-2-0-260128",
+    )
+
+    prompt = build_prompt(body)
+    payload = build_seedance_payload(body, prompt)
+
+    assert "轻柔国风纯音" in prompt
+    assert "渐变融合转场" in prompt
+    assert payload["model"] == "doubao-seedance-2-0-260128"
+    assert payload["ratio"] == "16:9"
+    assert payload["duration"] == 11
+    assert payload["generate_audio"] is True
+    assert payload["watermark"] is False
+    assert payload["content"] == [
+        {"type": "text", "text": prompt},
+        {"type": "video_url", "video_url": {"url": "asset://asset-20260224185117-7mdq6"}, "role": "reference_video"},
+        {"type": "video_url", "video_url": {"url": "asset://asset-20260224185117-9frtz"}, "role": "reference_video"},
+        {"type": "video_url", "video_url": {"url": "asset://asset-20260224185117-gwv25"}, "role": "reference_video"},
+    ]
+
+
+def test_byte_japanese_dialogue_story_extension_template_builds_video_payload() -> None:
+    template = get_template("byte-japanese-dialogue-story-extension")
+    assert template is not None
+    assert template.category == "时序补全"
+    assert template.theme_categories == ["微电影", "3D动漫", "情绪叙事", "时序补全"]
+    assert template.preview_video_url == (
+        "https://ark-common-storage-prod-cn-beijing.tos-cn-beijing.volces.com/"
+        "presets/experience/gen_video/templates/reference/timeline/24_2.mp4"
+    )
+
+    body = CreateAdMaterialTaskRequest(
+        mode="template",
+        template_id=template.id,
+        assets=[
+            AdMaterialInputAsset(type="video", role="reference_video", url="asset://asset-20260224185117-vm7nm", label="@视频1"),
+        ],
+        ratio=template.default_ratio,
+        duration=template.default_duration,
+        generate_audio=template.default_generate_audio,
+        watermark=False,
+        model="doubao-seedance-2-0-260128",
+    )
+
+    prompt = build_prompt(body)
+    payload = build_seedance_payload(body, prompt)
+
+    assert "后续发生的故事" in prompt
+    assert "人物应该讲日语" in prompt
+    assert payload["model"] == "doubao-seedance-2-0-260128"
+    assert payload["ratio"] == "16:9"
+    assert payload["duration"] == 11
+    assert payload["generate_audio"] is True
+    assert payload["watermark"] is False
+    assert payload["content"] == [
+        {"type": "text", "text": prompt},
+        {"type": "video_url", "video_url": {"url": "asset://asset-20260224185117-vm7nm"}, "role": "reference_video"},
+    ]
+
+
+def test_byte_child_dinosaur_drawing_process_template_builds_two_video_payload() -> None:
+    template = get_template("byte-child-dinosaur-drawing-process")
+    assert template is not None
+    assert template.category == "时序补全"
+    assert template.theme_categories == ["生活方式", "3D动漫", "情绪叙事", "时序补全"]
+    assert template.preview_video_url == (
+        "https://ark-common-storage-prod-cn-beijing.tos-cn-beijing.volces.com/"
+        "presets/experience/gen_video/templates/reference/timeline/25_3.mp4"
+    )
+
+    body = CreateAdMaterialTaskRequest(
+        mode="template",
+        template_id=template.id,
+        assets=[
+            AdMaterialInputAsset(type="video", role="reference_video", url="asset://asset-20260224185117-26jbl", label="@视频1"),
+            AdMaterialInputAsset(type="video", role="reference_video", url="asset://asset-20260224185117-75gmc", label="@视频2"),
+        ],
+        ratio=template.default_ratio,
+        duration=template.default_duration,
+        generate_audio=template.default_generate_audio,
+        watermark=False,
+        model="doubao-seedance-2-0-260128",
+    )
+
+    prompt = build_prompt(body)
+    payload = build_seedance_payload(body, prompt)
+
+    assert "小孩子画恐龙" in prompt
+    assert "可以有分镜" in prompt
+    assert payload["model"] == "doubao-seedance-2-0-260128"
+    assert payload["ratio"] == "16:9"
+    assert payload["duration"] == 11
+    assert payload["generate_audio"] is True
+    assert payload["watermark"] is False
+    assert payload["content"] == [
+        {"type": "text", "text": prompt},
+        {"type": "video_url", "video_url": {"url": "asset://asset-20260224185117-26jbl"}, "role": "reference_video"},
+        {"type": "video_url", "video_url": {"url": "asset://asset-20260224185117-75gmc"}, "role": "reference_video"},
+    ]
+
+
+def test_byte_outdoor_hiking_shoe_ad_template_builds_three_image_payload() -> None:
+    template = get_template("byte-outdoor-hiking-shoe-ad")
+    assert template is not None
+    assert template.category == "参考生成"
+    assert template.theme_categories == ["商业广告", "产品展示", "生活方式", "自然纪实"]
+    assert template.preview_video_url == (
+        "https://ark-common-storage-prod-cn-beijing.tos-cn-beijing.volces.com/"
+        "presets/experience/gen_video/templates/reference/reference/4_4.mp4"
+    )
+
+    body = CreateAdMaterialTaskRequest(
+        mode="template",
+        template_id=template.id,
+        assets=[
+            AdMaterialInputAsset(type="image", role="reference_image", url="asset://asset-20260224185116-zvjlj", label="@图片1"),
+            AdMaterialInputAsset(type="image", role="reference_image", url="asset://asset-20260224185116-b4gw8", label="@图片2"),
+            AdMaterialInputAsset(type="image", role="reference_image", url="asset://asset-20260224185116-lff7w", label="@图片3"),
+        ],
+        ratio=template.default_ratio,
+        duration=template.default_duration,
+        generate_audio=template.default_generate_audio,
+        watermark=False,
+        model="doubao-seedance-2-0-260128",
+    )
+
+    prompt = build_prompt(body)
+    payload = build_seedance_payload(body, prompt)
+
+    assert "电影感户外徒步广告片" in prompt
+    assert "Step Beyond Limits" in prompt
+    assert payload["model"] == "doubao-seedance-2-0-260128"
+    assert payload["ratio"] == "16:9"
+    assert payload["duration"] == 11
+    assert payload["generate_audio"] is True
+    assert payload["watermark"] is False
+    assert payload["content"] == [
+        {"type": "text", "text": prompt},
+        {"type": "image_url", "image_url": {"url": "asset://asset-20260224185116-zvjlj"}, "role": "reference_image"},
+        {"type": "image_url", "image_url": {"url": "asset://asset-20260224185116-b4gw8"}, "role": "reference_image"},
+        {"type": "image_url", "image_url": {"url": "asset://asset-20260224185116-lff7w"}, "role": "reference_image"},
+    ]
+
+
+def test_byte_captain_robot_handdrawn_replace_template_builds_image_video_payload() -> None:
+    template = get_template("byte-captain-robot-handdrawn-replace")
+    assert template is not None
+    assert template.category == "视频编辑"
+    assert template.theme_categories == ["人物替换", "3D动漫", "微电影", "商业广告"]
+    assert template.preview_video_url == (
+        "https://ark-common-storage-prod-cn-beijing.tos-cn-beijing.volces.com/"
+        "presets/experience/gen_video/templates/reference/media/"
+        "tpl-doc-20260408150656-edit-01-02__result01__KRr3b3.mp4"
+    )
+
+    body = CreateAdMaterialTaskRequest(
+        mode="template",
+        template_id=template.id,
+        assets=[
+            AdMaterialInputAsset(type="image", role="reference_image", url="asset://asset-20260408151818-7gw6k", label="@图片1"),
+            AdMaterialInputAsset(type="video", role="reference_video", url="asset://asset-20260408151818-lqqdf", label="@视频1"),
+        ],
+        ratio=template.default_ratio,
+        duration=template.default_duration,
+        generate_audio=template.default_generate_audio,
+        watermark=False,
+        model="doubao-seedance-2-0-260128",
+    )
+
+    prompt = build_prompt(body)
+    payload = build_seedance_payload(body, prompt)
+
+    assert "船长替换成" in prompt
+    assert "2D手绘逐帧质感" in prompt
+    assert payload["model"] == "doubao-seedance-2-0-260128"
+    assert payload["ratio"] == "16:9"
+    assert payload["duration"] == 11
+    assert payload["generate_audio"] is True
+    assert payload["watermark"] is False
+    assert payload["content"] == [
+        {"type": "text", "text": prompt},
+        {"type": "image_url", "image_url": {"url": "asset://asset-20260408151818-7gw6k"}, "role": "reference_image"},
+        {"type": "video_url", "video_url": {"url": "asset://asset-20260408151818-lqqdf"}, "role": "reference_video"},
+    ]
+
+
+def test_byte_dark_cyber_sci_fi_prequel_template_builds_video_payload() -> None:
+    template = get_template("byte-dark-cyber-sci-fi-prequel")
+    assert template is not None
+    assert template.category == "时序补全"
+    assert template.theme_categories == ["3D动漫", "动作打斗", "微电影", "运镜特效", "时序补全"]
+    assert template.preview_video_url == (
+        "https://ark-common-storage-prod-cn-beijing.tos-cn-beijing.volces.com/"
+        "presets/experience/gen_video/templates/reference/timeline/53_3.mp4"
+    )
+
+    body = CreateAdMaterialTaskRequest(
+        mode="template",
+        template_id=template.id,
+        assets=[
+            AdMaterialInputAsset(type="video", role="reference_video", url="asset://asset-20260224185115-f9nfx", label="@视频1"),
+        ],
+        ratio=template.default_ratio,
+        duration=template.default_duration,
+        generate_audio=template.default_generate_audio,
+        watermark=False,
+        model="doubao-seedance-2-0-260128",
+    )
+
+    prompt = build_prompt(body)
+    payload = build_seedance_payload(body, prompt)
+
+    assert "暗黑赛博科幻" in prompt
+    assert "最后接【视频 1】" in prompt
+    assert payload["model"] == "doubao-seedance-2-0-260128"
+    assert payload["ratio"] == "16:9"
+    assert payload["duration"] == 11
+    assert payload["generate_audio"] is True
+    assert payload["watermark"] is False
+    assert payload["content"] == [
+        {"type": "text", "text": prompt},
+        {"type": "video_url", "video_url": {"url": "asset://asset-20260224185115-f9nfx"}, "role": "reference_video"},
+    ]
+
+
+def test_byte_orange_cat_new_year_timeline_template_builds_three_video_payload() -> None:
+    template = get_template("byte-orange-cat-new-year-timeline")
+    assert template is not None
+    assert template.category == "时序补全"
+    assert template.theme_categories == ["生活方式", "国风艺术", "情绪叙事", "时序补全"]
+    assert template.preview_video_url == (
+        "https://ark-common-storage-prod-cn-beijing.tos-cn-beijing.volces.com/"
+        "presets/experience/gen_video/templates/reference/timeline/cn_1_4.mp4"
+    )
+
+    body = CreateAdMaterialTaskRequest(
+        mode="template",
+        template_id=template.id,
+        assets=[
+            AdMaterialInputAsset(type="video", role="reference_video", url="asset://asset-20260224185117-c2r4r", label="@视频1"),
+            AdMaterialInputAsset(type="video", role="reference_video", url="asset://asset-20260224185117-l27sd", label="@视频2"),
+            AdMaterialInputAsset(type="video", role="reference_video", url="asset://asset-20260224185117-cvbp2", label="@视频3"),
+        ],
+        ratio=template.default_ratio,
+        duration=template.default_duration,
+        generate_audio=template.default_generate_audio,
+        watermark=False,
+        model="doubao-seedance-2-0-260128",
+    )
+
+    prompt = build_prompt(body)
+    payload = build_seedance_payload(body, prompt)
+
+    assert "奶萌小橘猫" in prompt
+    assert "森系秘境→年味古镇→暖居新年" in prompt
+    assert "接【视频 3】" in prompt
+    assert payload["model"] == "doubao-seedance-2-0-260128"
+    assert payload["ratio"] == "16:9"
+    assert payload["duration"] == 11
+    assert payload["generate_audio"] is True
+    assert payload["watermark"] is False
+    assert payload["content"] == [
+        {"type": "text", "text": prompt},
+        {"type": "video_url", "video_url": {"url": "asset://asset-20260224185117-c2r4r"}, "role": "reference_video"},
+        {"type": "video_url", "video_url": {"url": "asset://asset-20260224185117-l27sd"}, "role": "reference_video"},
+        {"type": "video_url", "video_url": {"url": "asset://asset-20260224185117-cvbp2"}, "role": "reference_video"},
+    ]
+
+
+def test_byte_ceo_rain_romance_reference_template_builds_images_audio_payload() -> None:
+    template = get_template("byte-ceo-rain-romance-reference")
+    assert template is not None
+    assert template.category == "参考生成"
+    assert template.theme_categories == ["微电影", "情绪叙事", "商业广告", "参考生成"]
+    assert template.preview_video_url == (
+        "https://ark-common-storage-prod-cn-beijing.tos-cn-beijing.volces.com/"
+        "presets/experience/gen_video/templates/reference/reference/37_8.mp4"
+    )
+
+    body = CreateAdMaterialTaskRequest(
+        mode="template",
+        template_id=template.id,
+        assets=[
+            AdMaterialInputAsset(type="image", role="reference_image", url="asset://asset-20260224185115-hnjhb", label="@图片1"),
+            AdMaterialInputAsset(type="image", role="reference_image", url="asset://asset-20260224185115-8gghm", label="@图片2"),
+            AdMaterialInputAsset(type="image", role="reference_image", url="asset://asset-20260224185115-cjkwr", label="@图片3"),
+            AdMaterialInputAsset(type="image", role="reference_image", url="asset://asset-20260224185115-pxbk9", label="@图片4"),
+            AdMaterialInputAsset(type="image", role="reference_image", url="asset://asset-20260224185115-2c698", label="@图片5"),
+            AdMaterialInputAsset(type="audio", role="reference_audio", url="asset://asset-20260224185115-dp9qm", label="@音频1"),
+        ],
+        ratio=template.default_ratio,
+        duration=template.default_duration,
+        generate_audio=template.default_generate_audio,
+        watermark=False,
+        model="doubao-seedance-2-0-260128",
+    )
+
+    prompt = build_prompt(body)
+    payload = build_seedance_payload(body, prompt)
+
+    assert "清新奶油画风短剧" in prompt
+    assert "我们一起走吧" in prompt
+    assert "NEW EP DAILY" in prompt
+    assert payload["model"] == "doubao-seedance-2-0-260128"
+    assert payload["ratio"] == "16:9"
+    assert payload["duration"] == 11
+    assert payload["generate_audio"] is True
+    assert payload["watermark"] is False
+    assert payload["content"] == [
+        {"type": "text", "text": prompt},
+        {"type": "image_url", "image_url": {"url": "asset://asset-20260224185115-hnjhb"}, "role": "reference_image"},
+        {"type": "image_url", "image_url": {"url": "asset://asset-20260224185115-8gghm"}, "role": "reference_image"},
+        {"type": "image_url", "image_url": {"url": "asset://asset-20260224185115-cjkwr"}, "role": "reference_image"},
+        {"type": "image_url", "image_url": {"url": "asset://asset-20260224185115-pxbk9"}, "role": "reference_image"},
+        {"type": "image_url", "image_url": {"url": "asset://asset-20260224185115-2c698"}, "role": "reference_image"},
+        {"type": "audio_url", "audio_url": {"url": "asset://asset-20260224185115-dp9qm"}, "role": "reference_audio"},
+    ]
+
+
+def test_byte_ancient_architecture_skywell_reference_template_builds_two_video_payload() -> None:
+    template = get_template("byte-ancient-architecture-skywell-reference")
+    assert template is not None
+    assert template.category == "参考生成"
+    assert template.theme_categories == ["国风艺术", "微电影", "运镜特效", "参考生成"]
+    assert template.preview_video_url == (
+        "https://ark-common-storage-prod-cn-beijing.tos-cn-beijing.volces.com/"
+        "presets/experience/gen_video/templates/reference/reference/34_4.mp4"
+    )
+
+    body = CreateAdMaterialTaskRequest(
+        mode="template",
+        template_id=template.id,
+        assets=[
+            AdMaterialInputAsset(type="video", role="reference_video", url="asset://asset-20260224185114-hj8nr", label="@视频1"),
+            AdMaterialInputAsset(type="video", role="reference_video", url="asset://asset-20260224185114-99dxs", label="@视频2"),
+        ],
+        ratio=template.default_ratio,
+        duration=template.default_duration,
+        generate_audio=template.default_generate_audio,
+        watermark=False,
+        model="doubao-seedance-2-0-260128",
+    )
+
+    prompt = build_prompt(body)
+    payload = build_seedance_payload(body, prompt)
+
+    assert "旋转运镜" in prompt
+    assert "八角形木质穹顶" in prompt
+    assert "参考【视频 2】" in prompt
+    assert payload["model"] == "doubao-seedance-2-0-260128"
+    assert payload["ratio"] == "16:9"
+    assert payload["duration"] == 11
+    assert payload["generate_audio"] is True
+    assert payload["watermark"] is False
+    assert payload["content"] == [
+        {"type": "text", "text": prompt},
+        {"type": "video_url", "video_url": {"url": "asset://asset-20260224185114-hj8nr"}, "role": "reference_video"},
+        {"type": "video_url", "video_url": {"url": "asset://asset-20260224185114-99dxs"}, "role": "reference_video"},
     ]
