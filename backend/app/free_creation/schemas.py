@@ -45,6 +45,8 @@ class CreateFreeCreationProjectRequest(BaseModel):
     title: str | None = ""
     prompt: str = Field(..., min_length=1)
     assets: list[FreeCreationInputAsset] = Field(default_factory=list)
+    template_id: str | None = ""
+    template_preview_video_url: str | None = ""
     model: str | None = "doubao-seedance-2-0-260128"
     ratio: str | None = "9:16"
     resolution: str | None = "720p"

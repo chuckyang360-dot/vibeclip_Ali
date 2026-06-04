@@ -14,6 +14,7 @@ class AdMaterialTemplate(BaseModel):
     category: str
     description: str
     industry_tags: list[str] = []
+    theme_categories: list[str] = []
     supported_ratios: list[str] = []
     default_ratio: str = "9:16"
     default_duration: int = 8

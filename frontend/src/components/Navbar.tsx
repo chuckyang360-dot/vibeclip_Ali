@@ -56,6 +56,18 @@ export function Navbar() {
           >
             视频解构
           </Link>
+          {import.meta.env.DEV && (
+            <Link
+              to="/ad-materials"
+              className={`rounded-lg px-3.5 py-1.5 text-[13.5px] font-medium ${
+                location.pathname === '/ad-materials'
+                  ? 'bg-[#F5F5F7] text-[#1D1D1F]'
+                  : 'text-[#8E8E93] hover:bg-[#F5F5F7] hover:text-[#1D1D1F]'
+              }`}
+            >
+              模板专区
+            </Link>
+          )}
         </nav>
 
         <div className="flex shrink-0 items-center gap-2">

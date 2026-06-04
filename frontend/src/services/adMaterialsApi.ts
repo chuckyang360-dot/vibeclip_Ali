@@ -40,11 +40,14 @@ export type AdMaterialTemplate = {
   category: string;
   description: string;
   industry_tags: string[];
+  theme_categories?: string[];
   supported_ratios: string[];
   default_ratio: string;
   default_duration: number;
   default_resolution: string;
   default_generate_audio: boolean;
+  preview_video_url?: string;
+  cover_url?: string;
   slots: Array<Record<string, unknown>>;
 };
 

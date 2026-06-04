@@ -27,6 +27,7 @@ from ..short_drama.providers.seedance_video_client import (
 from ..short_drama.utils.public_static_url import build_public_static_url
 from ..short_drama.utils.ffmpeg_merge import merge_mp4_files
 from ..utils.r2_storage import build_presigned_get_url, upload_file
+from ..ad_materials.templates import get_template, list_templates
 from .models import FreeCreationAsset, FreeCreationProject, FreeCreationRenderJob, FreeCreationSegment
 from .schemas import (
     CreateFreeCreationProjectRequest,
@@ -209,14 +210,15 @@ def project_to_response(db: Session, row: FreeCreationProject) -> dict[str, Any]
         .order_by(FreeCreationSegment.segment_index.asc(), FreeCreationSegment.id.asc())
         .all()
     )
+    final_video_url = (row.final_video_url or "").strip() or _template_preview_for_project(row)
     return {
         "id": int(row.id),
         "user_id": int(row.user_id),
         "project_name": row.project_name or "",
         "status": row.status or "created",
-        "final_video_url": row.final_video_url or "",
-        "final_video_preview_url": browser_ready_asset_url(row.final_video_url, storage_key=row.final_video_storage_key),
-        "final_render_status": row.final_render_status or "idle",
+        "final_video_url": final_video_url,
+        "final_video_preview_url": browser_ready_asset_url(final_video_url, storage_key=row.final_video_storage_key),
+        "final_render_status": row.final_render_status or ("completed" if final_video_url else "idle"),
         "final_render_error": row.final_render_error or "",
         "settings": dict(row.settings_json or {}),
         "assets": [asset_to_response(a) for a in assets],
@@ -288,6 +290,7 @@ def normalize_assets(assets: list[FreeCreationInputAsset] | None) -> list[dict[s
             {
                 "type": asset_type,
                 "url": url,
+                "preview_url": str(asset.preview_url or ""),
                 "storage_key": str(asset.storage_key or ""),
                 "file_name": str(asset.file_name or ""),
                 "mime_type": str(asset.mime_type or ""),
@@ -344,10 +347,45 @@ def browser_ready_asset_url(url: str | None, *, storage_key: str | None = None) 
     return str(url or "").strip()
 
 
+def _template_slot_preview_url(storage_key: str | None) -> str:
+    raw = str(storage_key or "").strip()
+    if not raw.startswith("template://"):
+        return ""
+    rest = raw[len("template://"):]
+    template_id, _, slot_key = rest.partition("/")
+    tpl = get_template(template_id)
+    if not tpl:
+        return ""
+    for slot in tpl.slots:
+        if str(slot.get("key") or "") != slot_key:
+            continue
+        preview = str(slot.get("preview_url") or "").strip()
+        if preview:
+            return preview
+        if str(slot.get("type") or "").strip() == "video":
+            return str(tpl.preview_video_url or "").strip()
+    return ""
+
+
+def _template_preview_for_project(row: FreeCreationProject) -> str:
+    settings = dict(row.settings_json or {})
+    template_id = str(settings.get("template_id") or "").strip()
+    if template_id:
+        tpl = get_template(template_id)
+        if tpl and tpl.preview_video_url:
+            return str(tpl.preview_video_url).strip()
+    name = str(row.project_name or "").strip()
+    for tpl in list_templates():
+        if str(tpl.name or "").strip() == name and tpl.preview_video_url:
+            return str(tpl.preview_video_url).strip()
+    return ""
+
+
 def _with_preview_url(asset: dict[str, Any]) -> dict[str, Any]:
+    preview_url = str(asset.get("preview_url") or "").strip()
     return {
         **asset,
-        "preview_url": browser_ready_asset_url(
+        "preview_url": preview_url or _template_slot_preview_url(asset.get("storage_key")) or browser_ready_asset_url(
             asset.get("url"),
             storage_key=asset.get("storage_key"),
         ),
@@ -387,12 +425,18 @@ def build_seedance_payload(segment: FreeCreationSegment) -> dict[str, Any]:
 
 def create_project(db: Session, *, body: CreateFreeCreationProjectRequest, user_id: int) -> FreeCreationProject:
     title = (body.title or body.prompt or "自由创作项目").strip()[:48]
+    template_id = str(body.template_id or "").strip()
+    template_preview_video_url = str(body.template_preview_video_url or "").strip()
     row = FreeCreationProject(
         user_id=user_id,
         project_name=title or "自由创作项目",
-        status="created",
+        status="completed" if template_preview_video_url else "created",
+        final_video_url=template_preview_video_url,
+        final_render_status="completed" if template_preview_video_url else "idle",
         settings_json={
             "workflow_mode": "free_creation",
+            "template_id": template_id,
+            "template_preview_video_url": template_preview_video_url,
             "model": normalize_model(body.model),
             "ratio": body.ratio or "9:16",
             "resolution": body.resolution or "720p",

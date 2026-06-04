@@ -124,6 +124,8 @@ export type CreateFreeCreationProjectBody = {
   title?: string;
   prompt: string;
   assets?: FreeCreationInputAsset[];
+  template_id?: string;
+  template_preview_video_url?: string;
   model?: string;
   ratio?: string;
   resolution?: string;

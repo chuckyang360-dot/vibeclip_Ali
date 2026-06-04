@@ -29,7 +29,7 @@ type LibraryAsset = FreeCreationInputAsset & {
   id: string;
   displayName: string;
   subLabel: string;
-  source: 'upload' | 'segment_video';
+  source: 'upload' | 'segment_input' | 'segment_video';
   sourceSegmentId?: number;
   sourceSegmentIndex?: number;
   thumbnailUrl?: string;
@@ -75,6 +75,25 @@ function toLibraryAsset(asset: FreeCreationAsset): LibraryAsset {
     displayName: asset.label || asset.file_name || `素材 ${asset.id}`,
     subLabel: asset.file_name || asset.type,
     source: 'upload',
+  };
+}
+
+function inputAssetLibraryKey(asset: FreeCreationInputAsset): string {
+  return asset.storage_key || asset.url || `${asset.type}:${asset.label || asset.file_name || ''}`;
+}
+
+function inputAssetToLibraryAsset(asset: FreeCreationInputAsset, segment: FreeCreationSegment): LibraryAsset | null {
+  if (!asset.url) return null;
+  const key = inputAssetLibraryKey(asset);
+  const label = asset.label || asset.file_name || (asset.type === 'video' ? '@视频' : asset.type === 'audio' ? '@音频' : '@图片');
+  return {
+    ...asset,
+    id: `segment-input-${segment.id}-${key}`,
+    displayName: label,
+    subLabel: asset.file_name || `片段 ${segment.segment_index} 引用素材`,
+    source: 'segment_input',
+    sourceSegmentId: segment.id,
+    sourceSegmentIndex: segment.segment_index,
   };
 }
 
@@ -201,9 +220,11 @@ function AssetThumbnail({ asset }: { asset: LibraryAsset }) {
       <video
         src={src}
         className="h-full w-full object-cover"
+        autoPlay
+        loop
         muted
         playsInline
-        preload="metadata"
+        preload="auto"
       />
     );
   }
@@ -275,12 +296,29 @@ export function FreeCreationVideoPage() {
   const activeStatus = activeSegment?.status.toLowerCase() || 'idle';
   const previewGenerating = previewTarget === 'segment' && ['queued', 'running'].includes(activeStatus);
   const finalRenderError = previewTarget === 'final' ? (project?.final_render_error || '') : '';
+  const isTemplateProject = Boolean(
+    (typeof project?.settings?.template_id === 'string' && project.settings.template_id.trim()) ||
+    (typeof project?.settings?.template_preview_video_url === 'string' && project.settings.template_preview_video_url.trim()) ||
+    ((project?.project_name || '').includes('模板') && (project?.final_video_preview_url || project?.final_video_url)),
+  );
   const libraryAssets = useMemo<LibraryAsset[]>(() => {
     const uploads = (project?.assets || []).map(toLibraryAsset);
+    const seen = new Set(uploads.map((asset) => inputAssetLibraryKey(asset)));
+    const segmentInputs: LibraryAsset[] = [];
+    (project?.segments || []).forEach((segment) => {
+      segment.input_assets.forEach((asset) => {
+        const key = inputAssetLibraryKey(asset);
+        if (!key || seen.has(key)) return;
+        const libraryAsset = inputAssetToLibraryAsset(asset, segment);
+        if (!libraryAsset) return;
+        seen.add(key);
+        segmentInputs.push(libraryAsset);
+      });
+    });
     const segmentVideos = (project?.segments || [])
       .map(segmentVideoAsset)
       .filter((asset): asset is LibraryAsset => Boolean(asset));
-    return [...uploads, ...segmentVideos];
+    return [...uploads, ...segmentInputs, ...segmentVideos];
   }, [project?.assets, project?.segments]);
   const activeLibraryAssets = useMemo(() => {
     if (!activeSegment) return libraryAssets;
@@ -330,6 +368,13 @@ export function FreeCreationVideoPage() {
     }, 3000);
     return () => window.clearInterval(id);
   }, [project]);
+
+  useEffect(() => {
+    if (!isTemplateProject) return;
+    if (project?.final_video_preview_url || project?.final_video_url) {
+      setPreviewTarget('final');
+    }
+  }, [isTemplateProject, project?.final_video_preview_url, project?.final_video_url]);
 
   const patchSegment = async (segment: FreeCreationSegment, patch: Partial<FreeCreationSegment> & { input_assets?: FreeCreationInputAsset[] }): Promise<FreeCreationSegment | null> => {
     setBusy(true);
@@ -840,14 +885,16 @@ export function FreeCreationVideoPage() {
                 <span className="rounded-full bg-[#EAEAEA] px-2 py-0.5 text-[11px]">{project?.segments.length || 0} 个片段</span>
               </div>
               <div className="flex items-center gap-3">
-                {hasMixedSegmentResolutions ? (
+                {!isTemplateProject && hasMixedSegmentResolutions ? (
                   <span className="max-w-[260px] text-right text-[11px] font-bold leading-4 text-red-600">
                     片段分辨率不一致，无法合成
                   </span>
                 ) : null}
-                <button type="button" onClick={() => void mergeProject()} disabled={busy || !canMergeProject} title={hasMixedSegmentResolutions ? `当前分辨率：${segmentResolutions.join('、')}` : undefined} className="rounded-xl bg-[#1D1D1F] px-5 py-2 text-[12.5px] font-bold text-white disabled:bg-[#D1D5DB]">
-                  合成完整视频
-                </button>
+                {!isTemplateProject ? (
+                  <button type="button" onClick={() => void mergeProject()} disabled={busy || !canMergeProject} title={hasMixedSegmentResolutions ? `当前分辨率：${segmentResolutions.join('、')}` : undefined} className="rounded-xl bg-[#1D1D1F] px-5 py-2 text-[12.5px] font-bold text-white disabled:bg-[#D1D5DB]">
+                    合成完整视频
+                  </button>
+                ) : null}
               </div>
             </div>
             <div className="flex gap-2">
@@ -861,10 +908,12 @@ export function FreeCreationVideoPage() {
                   </button>
                 );
               })}
-              <button type="button" onClick={() => void addSegment()} disabled={busy} className="h-11 min-w-[150px] rounded-lg border border-dashed border-[#C7C7CC] bg-white px-3 text-[12px] font-bold text-[#6E6E73] disabled:opacity-50">
-                <i className={ri('ri-add-circle-line', 'mr-1 text-[14px]')} aria-hidden />
-                手动新增片段
-              </button>
+              {!isTemplateProject ? (
+                <button type="button" onClick={() => void addSegment()} disabled={busy} className="h-11 min-w-[150px] rounded-lg border border-dashed border-[#C7C7CC] bg-white px-3 text-[12px] font-bold text-[#6E6E73] disabled:opacity-50">
+                  <i className={ri('ri-add-circle-line', 'mr-1 text-[14px]')} aria-hidden />
+                  手动新增片段
+                </button>
+              ) : null}
             </div>
           </div>
         </section>
@@ -887,7 +936,9 @@ export function FreeCreationVideoPage() {
             ) : (
               <div className="px-8">
                 <i className={ri('ri-video-line', 'mb-3 block text-[30px] text-white/80')} aria-hidden />
-                {previewTarget === 'final' ? '合成完成后可预览最终成片' : '生成当前片段后可预览'}
+                {previewTarget === 'final'
+                  ? isTemplateProject ? '模板暂无最终成片预览' : '合成完成后可预览最终成片'
+                  : '生成当前片段后可预览'}
               </div>
             )}
           </div>

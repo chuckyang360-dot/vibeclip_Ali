@@ -19,7 +19,7 @@ from .schemas import (
     CreateAdMaterialTaskRequest,
 )
 from .service import ad_material_task_to_response, create_task_record, run_ad_material_task, upload_ad_material_file
-from .templates import list_templates
+from .templates import get_template, list_templates
 
 router = APIRouter()
 
@@ -97,10 +97,25 @@ async def create_ad_material_task(
 ):
     has_image = any(asset.type in {"image", "avatar"} for asset in body.assets)
     has_video = any(asset.type == "video" for asset in body.assets)
+    image_count = sum(1 for asset in body.assets if asset.type in {"image", "avatar"})
+    video_count = sum(1 for asset in body.assets if asset.type == "video")
+    template = get_template(body.template_id)
+    required_slot_types = [
+        str(slot.get("type") or "").strip()
+        for slot in (template.slots if template else [])
+        if bool(slot.get("required"))
+    ]
     if body.mode == "video_edit" and (not has_image or not has_video):
         raise HTTPException(status_code=400, detail="视频编辑需要同时上传参考视频和新商品图片。")
-    if body.mode == "template" and not has_image:
-        raise HTTPException(status_code=400, detail="请至少上传一张商品图片。")
+    if body.mode == "template":
+        required_image_count = sum(1 for t in required_slot_types if t in {"image", "avatar"})
+        required_video_count = sum(1 for t in required_slot_types if t == "video")
+        if required_image_count and image_count < required_image_count:
+            raise HTTPException(status_code=400, detail="请至少上传一张商品图片。")
+        if required_video_count and video_count < required_video_count:
+            raise HTTPException(status_code=400, detail="请上传模板所需的参考视频。")
+        if not required_slot_types and not has_image:
+            raise HTTPException(status_code=400, detail="请至少上传一张商品图片。")
     if body.mode == "product_video" and not body.assets and not body.prompt_text.strip():
         raise HTTPException(status_code=400, detail="请输入提示词，或上传参考素材。")
     row = create_task_record(db, body=body, user_id=int(current_user.id))
