@@ -37,6 +37,7 @@ import { BillingResultPage } from './pages/billing/BillingResultPage';
 import { SimplePlaceholderPage } from './pages/placeholders/SimplePlaceholderPage';
 import { PricingPage } from './pages/pricing/PricingPage';
 import { CaseDemoPage } from './pages/cases/CaseDemoPage';
+import { TutorialsPage } from './pages/tutorials/TutorialsPage';
 import { AuthProvider } from './contexts/AuthContext';
 
 export function App() {
@@ -78,7 +79,7 @@ export function App() {
         <Route path="/billing/result" element={<BillingResultPage />} />
         <Route path="/billing/credits" element={<BillingCreditsPage />} />
         <Route path="/help" element={<SimplePlaceholderPage title="帮助文档" />} />
-        <Route path="/tutorials" element={<SimplePlaceholderPage title="使用教程" />} />
+        <Route path="/tutorials" element={<TutorialsPage />} />
         <Route path="/faq" element={<SimplePlaceholderPage title="常见问题" />} />
         <Route path="/terms" element={<SimplePlaceholderPage title="服务协议" />} />
         <Route path="/privacy" element={<SimplePlaceholderPage title="隐私政策" />} />
