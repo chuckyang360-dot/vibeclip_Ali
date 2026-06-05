@@ -15,6 +15,11 @@ import {
 } from '@/services/freeCreationApi';
 import { SDWorkflowNav } from '../short-drama/components/SDWorkflowNav';
 import { ri } from '../short-drama/utils/shortDramaHelpers';
+import {
+  VirtualAvatarPicker,
+  type VirtualAvatar,
+  virtualAvatarToInputAsset,
+} from './virtualAvatarLibrary';
 
 const modelOptions = [
   { label: 'Seedance 2.0', value: 'doubao-seedance-2-0-260128' },
@@ -120,6 +125,29 @@ function segmentVideoAsset(segment: FreeCreationSegment): LibraryAsset | null {
 function canUseAssetForSegment(asset: LibraryAsset, segment: FreeCreationSegment): boolean {
   if (asset.source !== 'segment_video') return true;
   return Boolean(asset.sourceSegmentIndex && asset.sourceSegmentIndex < segment.segment_index);
+}
+
+function referenceAssetRank(asset: LibraryAsset): number {
+  if (asset.source === 'segment_video') return 0;
+  if (asset.type === 'video') return 1;
+  if (asset.type === 'image') return 2;
+  if (asset.type === 'audio') return 3;
+  return 4;
+}
+
+function orderReferenceAssets(assets: LibraryAsset[]): LibraryAsset[] {
+  return assets
+    .map((asset, index) => ({ asset, index }))
+    .sort((a, b) => {
+      const rankDiff = referenceAssetRank(a.asset) - referenceAssetRank(b.asset);
+      if (rankDiff) return rankDiff;
+      if (a.asset.source === 'segment_video' && b.asset.source === 'segment_video') {
+        const segmentDiff = (b.asset.sourceSegmentIndex || 0) - (a.asset.sourceSegmentIndex || 0);
+        if (segmentDiff) return segmentDiff;
+      }
+      return a.index - b.index;
+    })
+    .map(({ asset }) => asset);
 }
 
 function uploadToInputAsset(upload: Awaited<ReturnType<typeof uploadFreeCreationAsset>>): FreeCreationInputAsset {
@@ -260,6 +288,7 @@ export function FreeCreationVideoPage() {
   const [previewTarget, setPreviewTarget] = useState<'segment' | 'final'>('segment');
   const [mentionOpenSegmentId, setMentionOpenSegmentId] = useState<number | null>(null);
   const [uploadTargetSegmentId, setUploadTargetSegmentId] = useState<number | null>(null);
+  const [avatarTargetSegmentId, setAvatarTargetSegmentId] = useState<number | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
   const segmentFileRef = useRef<HTMLInputElement>(null);
   const promptRef = useRef<HTMLTextAreaElement>(null);
@@ -325,7 +354,10 @@ export function FreeCreationVideoPage() {
     return libraryAssets.filter((asset) => canUseAssetForSegment(asset, activeSegment));
   }, [activeSegment, libraryAssets]);
   const getSegmentLibraryAssets = (segment: FreeCreationSegment): LibraryAsset[] =>
-    libraryAssets.filter((asset) => canUseAssetForSegment(asset, segment));
+    orderReferenceAssets(libraryAssets.filter((asset) => canUseAssetForSegment(asset, segment)));
+  const avatarTargetSegment = useMemo(() => {
+    return project?.segments.find((segment) => segment.id === avatarTargetSegmentId) || activeSegment;
+  }, [activeSegment, avatarTargetSegmentId, project?.segments]);
 
   const refresh = async () => {
     if (!projectId) return;
@@ -466,6 +498,31 @@ export function FreeCreationVideoPage() {
     const input_assets = exists ? segment.input_assets : [...segment.input_assets, libraryToInputAsset(asset)];
     setDraftPrompts((prev) => ({ ...prev, [segment.id]: prompt }));
     setMentionOpenSegmentId(null);
+    await patchSegment(segment, { prompt, input_assets });
+    window.setTimeout(() => promptRef.current?.focus(), 0);
+  };
+
+  const nextImageLabel = (segment: FreeCreationSegment): string => {
+    const n = segment.input_assets.filter((asset) => asset.type === 'image').length + 1;
+    return `@图片${n}`;
+  };
+
+  const insertVirtualAvatar = async (avatar: VirtualAvatar) => {
+    const segment = project?.segments.find((s) => s.id === avatarTargetSegmentId) || activeSegment;
+    if (!segment) return;
+    const existing = segment.input_assets.find((asset) => asset.url === avatar.assetUri);
+    const label = existing?.label || nextImageLabel(segment);
+    const inputAsset = existing || virtualAvatarToInputAsset(avatar, label);
+    const current = draftPrompts[segment.id] ?? segment.prompt ?? '';
+    const atIndex = current.lastIndexOf('@');
+    const prompt =
+      atIndex >= 0
+        ? `${current.slice(0, atIndex)}${label} ${current.slice(atIndex + 1)}`
+        : `${current}${current.endsWith(' ') || !current ? '' : ' '}${label} `;
+    const input_assets = existing ? segment.input_assets : [...segment.input_assets, inputAsset];
+    setDraftPrompts((prev) => ({ ...prev, [segment.id]: prompt }));
+    setMentionOpenSegmentId(null);
+    setAvatarTargetSegmentId(null);
     await patchSegment(segment, { prompt, input_assets });
     window.setTimeout(() => promptRef.current?.focus(), 0);
   };
@@ -623,9 +680,14 @@ export function FreeCreationVideoPage() {
         <aside className="min-h-0 border-r border-[#E5E5EA] bg-[#F7F8FA] px-4 py-5">
           <div className="mb-4 flex items-center justify-between">
             <h2 className="text-[13px] font-black text-[#6E6E73]">项目素材库</h2>
-            <button type="button" onClick={() => fileRef.current?.click()} className="flex h-8 w-8 items-center justify-center rounded-lg border border-[#E5E5EA] bg-white text-[#6E6E73]">
-              <i className={ri('ri-add-line', 'text-[15px]')} aria-hidden />
-            </button>
+            <div className="flex items-center gap-1.5">
+              <button type="button" onClick={() => setAvatarTargetSegmentId(activeSegment?.id || null)} className="flex h-8 w-8 items-center justify-center rounded-lg border border-[#E5E5EA] bg-white text-[#6E6E73]" aria-label="打开人像库">
+                <i className={ri('ri-user-search-line', 'text-[15px]')} aria-hidden />
+              </button>
+              <button type="button" onClick={() => fileRef.current?.click()} className="flex h-8 w-8 items-center justify-center rounded-lg border border-[#E5E5EA] bg-white text-[#6E6E73]" aria-label="上传素材">
+                <i className={ri('ri-add-line', 'text-[15px]')} aria-hidden />
+              </button>
+            </div>
           </div>
           <input ref={fileRef} type="file" multiple accept="image/*,video/*,audio/*" className="hidden" onChange={(e) => void handleUpload(e.target.files)} />
           <div className="space-y-2 overflow-y-auto">
@@ -770,7 +832,7 @@ export function FreeCreationVideoPage() {
                               placeholder="输入当前片段的画面、动作、风格和素材引用要求。输入 @ 可引用素材。"
                             />
                             {mentionOpenSegmentId === seg.id ? (
-                              <div className="absolute left-4 top-12 z-20 w-[260px] rounded-xl border border-[#E5E5EA] bg-white p-2 shadow-[0_18px_42px_rgba(15,23,42,0.16)]">
+                              <div className="absolute left-4 top-12 z-30 max-h-80 w-[300px] overflow-y-auto overscroll-contain rounded-xl border border-[#E5E5EA] bg-white p-2 shadow-[0_18px_42px_rgba(15,23,42,0.16)]">
                                 {segmentLibraryAssets.length ? segmentLibraryAssets.map((asset) => (
                                   <button
                                     key={asset.id}
@@ -804,17 +866,27 @@ export function FreeCreationVideoPage() {
                         <div className="rounded-xl border border-[#EAEAEA] bg-[#FAFAFB] p-3">
                           <div className="mb-2 flex items-center justify-between">
                             <p className="text-[12px] font-bold text-[#6E6E73]">当前片段引用素材</p>
-                            <button
-                              type="button"
-                              onClick={() => {
-                                setUploadTargetSegmentId(seg.id);
-                                segmentFileRef.current?.click();
-                              }}
-                              className="inline-flex items-center gap-1.5 rounded-lg border border-[#E5E5EA] bg-white px-3 py-1.5 text-[12px] font-bold text-[#444444]"
-                            >
-                              <i className={ri('ri-upload-cloud-2-line', 'text-[14px]')} aria-hidden />
-                              上传素材
-                            </button>
+                            <div className="flex items-center gap-2">
+                              <button
+                                type="button"
+                                onClick={() => setAvatarTargetSegmentId(seg.id)}
+                                className="inline-flex items-center gap-1.5 rounded-lg border border-[#E5E5EA] bg-white px-3 py-1.5 text-[12px] font-bold text-[#444444]"
+                              >
+                                <i className={ri('ri-user-search-line', 'text-[14px]')} aria-hidden />
+                                人像库
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setUploadTargetSegmentId(seg.id);
+                                  segmentFileRef.current?.click();
+                                }}
+                                className="inline-flex items-center gap-1.5 rounded-lg border border-[#E5E5EA] bg-white px-3 py-1.5 text-[12px] font-bold text-[#444444]"
+                              >
+                                <i className={ri('ri-upload-cloud-2-line', 'text-[14px]')} aria-hidden />
+                                上传素材
+                              </button>
+                            </div>
                           </div>
                           <div className="flex flex-wrap gap-2">
                             {seg.input_assets.length ? seg.input_assets.map((asset) => (
@@ -965,6 +1037,12 @@ export function FreeCreationVideoPage() {
           </div>
         </aside>
       </main>
+      <VirtualAvatarPicker
+        open={avatarTargetSegmentId != null}
+        onClose={() => setAvatarTargetSegmentId(null)}
+        onSelect={(avatar) => void insertVirtualAvatar(avatar)}
+        selectedAssetUris={(avatarTargetSegment?.input_assets || []).map((asset) => asset.url)}
+      />
     </div>
   );
 }

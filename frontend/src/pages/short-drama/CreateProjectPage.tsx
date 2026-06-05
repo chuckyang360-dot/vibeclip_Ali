@@ -25,6 +25,11 @@ import {
   ToolbarButton,
   type S0CreationType,
 } from './components/S0CreationWorkbench';
+import {
+  VirtualAvatarPicker,
+  type VirtualAvatar,
+  virtualAvatarToInputAsset,
+} from '../free-creation/virtualAvatarLibrary';
 import { ri } from './utils/shortDramaHelpers';
 import { withProjectQuery } from './utils/shortDramaRoutes';
 
@@ -159,6 +164,8 @@ export function ShortDramaCreateProjectPage() {
   const [freeDuration, setFreeDuration] = useState('5s');
   const [freeAudio, setFreeAudio] = useState(true);
   const [freeFiles, setFreeFiles] = useState<File[]>([]);
+  const [freeVirtualAvatars, setFreeVirtualAvatars] = useState<VirtualAvatar[]>([]);
+  const [avatarPickerOpen, setAvatarPickerOpen] = useState(false);
   const [freeMentionOpen, setFreeMentionOpen] = useState(false);
   const [typeOpen, setTypeOpen] = useState(false);
   const [hintPanel, setHintPanel] = useState<HintPanel>(null);
@@ -193,6 +200,14 @@ export function ShortDramaCreateProjectPage() {
       return { file, type, label };
     });
   }, [freeFiles]);
+  const freeImageFileCount = indexedFreeFiles.filter((item) => item.type === 'image').length;
+  const indexedFreeVirtualAvatars = useMemo(() => (
+    freeVirtualAvatars.map((avatar, index) => ({
+      avatar,
+      label: `@图片${freeImageFileCount + index + 1}`,
+    }))
+  ), [freeImageFileCount, freeVirtualAvatars]);
+  const freeReferenceCount = freeFiles.length + freeVirtualAvatars.length;
 
   const toggleHintPanel = (panel: ActiveHintPanel) => {
     setTypeOpen(false);
@@ -303,7 +318,7 @@ export function ShortDramaCreateProjectPage() {
         watermark: false,
       });
       const firstSegment = project.segments[0];
-      if (freeFiles.length && firstSegment) {
+      if ((freeFiles.length || freeVirtualAvatars.length) && firstSegment) {
         const uploaded = await Promise.all(freeFiles.map((file) => uploadFreeCreationAsset(project.id, file)));
         const assets: FreeCreationInputAsset[] = uploaded.map((item) => ({
           type: item.asset_type,
@@ -315,6 +330,9 @@ export function ShortDramaCreateProjectPage() {
           role: item.role,
           label: item.label,
         }));
+        indexedFreeVirtualAvatars.forEach(({ avatar, label }) => {
+          assets.push(virtualAvatarToInputAsset(avatar, label));
+        });
         await updateFreeCreationSegment(firstSegment.id, { assets });
       }
       navigate(`/free-creation/projects/${project.id}/video`);
@@ -416,6 +434,18 @@ export function ShortDramaCreateProjectPage() {
     window.setTimeout(() => freePromptRef.current?.focus(), 0);
   };
 
+  const selectFreeVirtualAvatar = (avatar: VirtualAvatar) => {
+    const exists = freeVirtualAvatars.some((item) => item.assetUri === avatar.assetUri);
+    const nextIndex = exists
+      ? freeVirtualAvatars.findIndex((item) => item.assetUri === avatar.assetUri)
+      : freeVirtualAvatars.length;
+    if (!exists) {
+      setFreeVirtualAvatars((prev) => [...prev, avatar]);
+    }
+    insertFreeMention(`@图片${freeImageFileCount + nextIndex + 1}`);
+    setAvatarPickerOpen(false);
+  };
+
   const saveDraft = async () => {
     if (!canSaveDraft) return;
     setSubmitting(true);
@@ -512,7 +542,9 @@ export function ShortDramaCreateProjectPage() {
                   />
                   {creationType === 'free_creation' && freeMentionOpen ? (
                     <div className="absolute left-0 top-11 z-30 w-[280px] rounded-xl border border-[#E5E5EA] bg-white p-2 shadow-[0_18px_42px_rgba(15,23,42,0.16)]">
-                      {indexedFreeFiles.length ? indexedFreeFiles.map(({ file, type, label }) => (
+                      {indexedFreeFiles.length || indexedFreeVirtualAvatars.length ? (
+                        <>
+                          {indexedFreeFiles.map(({ file, type, label }) => (
                         <button
                           key={`${label}-${file.name}-${file.size}`}
                           type="button"
@@ -528,18 +560,37 @@ export function ShortDramaCreateProjectPage() {
                             <span className="block truncate text-[11px] font-normal text-[#8E8E93]">{file.name}</span>
                           </span>
                         </button>
-                      )) : (
+                          ))}
+                          {indexedFreeVirtualAvatars.map(({ avatar, label }) => (
+                            <button
+                              key={`${label}-${avatar.id}`}
+                              type="button"
+                              onMouseDown={(e) => e.preventDefault()}
+                              onClick={() => insertFreeMention(label)}
+                              className="flex h-14 w-full items-center gap-3 rounded-lg px-2 text-left hover:bg-[#F2F4F8]"
+                            >
+                              <span className="flex h-10 w-10 shrink-0 items-center justify-center overflow-hidden rounded-md bg-[#F2F4F8]">
+                                <img src={avatar.previewUrl} alt={avatar.name} className="h-full w-full object-cover" />
+                              </span>
+                              <span className="min-w-0">
+                                <span className="block truncate text-[15px] font-black text-[#1D1D1F]">{label}</span>
+                                <span className="block truncate text-[11px] font-normal text-[#8E8E93]">{avatar.name} · {avatar.country} · {avatar.gender}</span>
+                              </span>
+                            </button>
+                          ))}
+                        </>
+                      ) : (
                         <button
                           type="button"
                           onMouseDown={(e) => e.preventDefault()}
                           onClick={() => {
                             setFreeMentionOpen(false);
-                            freeFileRef.current?.click();
+                            setAvatarPickerOpen(true);
                           }}
                           className="flex w-full items-center gap-2 rounded-lg px-3 py-3 text-left text-[12.5px] font-bold text-[#6E6E73] hover:bg-[#F2F4F8]"
                         >
-                          <i className={ri('ri-upload-cloud-2-line', 'text-[15px]')} aria-hidden />
-                          先上传参考素材
+                          <i className={ri('ri-user-search-line', 'text-[15px]')} aria-hidden />
+                          打开人像库
                         </button>
                       )}
                     </div>
@@ -694,12 +745,16 @@ export function ShortDramaCreateProjectPage() {
                         <i className={ri(freeAudio ? 'ri-volume-up-line' : 'ri-volume-mute-line', 'text-[15px]')} aria-hidden />
                         {freeAudio ? '输出声音' : '无声'}
                       </ToolbarButton>
+                      <ToolbarButton onClick={() => setAvatarPickerOpen(true)}>
+                        <i className={ri('ri-user-search-line', 'text-[15px]')} aria-hidden />
+                        人像库{freeVirtualAvatars.length ? ` ${freeVirtualAvatars.length}` : ''}
+                      </ToolbarButton>
                       <ToolbarButton onClick={() => {
-                        if (freeFiles.length) setFreeMentionOpen((v) => !v);
+                        if (freeReferenceCount) setFreeMentionOpen((v) => !v);
                         else freeFileRef.current?.click();
                       }}>
                         <i className={ri('ri-at-line', 'text-[15px]')} aria-hidden />
-                        引用{freeFiles.length ? ` ${freeFiles.length}` : ''}
+                        引用{freeReferenceCount ? ` ${freeReferenceCount}` : ''}
                       </ToolbarButton>
                     </>
                   )}
@@ -893,6 +948,12 @@ export function ShortDramaCreateProjectPage() {
           </S0PromptShell>
         </main>
       </div>
+      <VirtualAvatarPicker
+        open={avatarPickerOpen}
+        onClose={() => setAvatarPickerOpen(false)}
+        onSelect={selectFreeVirtualAvatar}
+        selectedAssetUris={freeVirtualAvatars.map((avatar) => avatar.assetUri)}
+      />
     </div>
   );
 }
