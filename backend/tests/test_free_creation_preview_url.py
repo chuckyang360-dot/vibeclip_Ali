@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from app.free_creation.models import FreeCreationAsset, FreeCreationSegment
-from app.free_creation.service import asset_to_response, downloadable_free_creation_url, segment_to_response
+from app.free_creation.service import asset_to_response, build_seedance_payload, downloadable_free_creation_url, segment_to_response
 
 
 def test_asset_response_uses_presigned_preview_url(monkeypatch) -> None:
@@ -107,3 +107,88 @@ def test_downloadable_free_creation_url_prefers_storage_key(monkeypatch) -> None
     )
 
     assert url == "https://signed.example/free-creation/videos/3/2/5/result.mp4"
+
+
+def test_seedance_payload_only_sends_prompt_referenced_assets(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "app.free_creation.service.provider_ready_asset_url",
+        lambda url, storage_key=None: str(url or ""),
+    )
+    row = FreeCreationSegment(
+        id=6,
+        project_id=2,
+        user_id=3,
+        segment_index=1,
+        title="片段 1",
+        prompt="背景参考@图片6，男主说话，画面马上衔接@图片7和@图片8",
+        input_assets_json=[
+            {
+                "type": "image",
+                "url": f"https://example.test/image-{idx}.png",
+                "role": "reference_image",
+                "label": f"@图片{idx}",
+            }
+            for idx in range(1, 9)
+        ],
+    )
+
+    payload = build_seedance_payload(row)
+
+    assert payload["content"] == [
+        {"type": "text", "text": row.prompt},
+        {"type": "image_url", "image_url": {"url": "https://example.test/image-6.png"}, "role": "reference_image"},
+        {"type": "image_url", "image_url": {"url": "https://example.test/image-7.png"}, "role": "reference_image"},
+        {"type": "image_url", "image_url": {"url": "https://example.test/image-8.png"}, "role": "reference_image"},
+    ]
+
+
+def test_seedance_payload_keeps_all_assets_when_prompt_has_no_asset_labels(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "app.free_creation.service.provider_ready_asset_url",
+        lambda url, storage_key=None: str(url or ""),
+    )
+    row = FreeCreationSegment(
+        id=7,
+        project_id=2,
+        user_id=3,
+        segment_index=1,
+        title="片段 1",
+        prompt="沿山路骑行，保持照片质感",
+        input_assets_json=[
+            {"type": "image", "url": "https://example.test/image-1.png", "role": "reference_image", "label": "@图片1"},
+            {"type": "image", "url": "https://example.test/image-2.png", "role": "reference_image", "label": "@图片2"},
+        ],
+    )
+
+    payload = build_seedance_payload(row)
+
+    assert [item["image_url"]["url"] for item in payload["content"][1:]] == [
+        "https://example.test/image-1.png",
+        "https://example.test/image-2.png",
+    ]
+
+
+def test_seedance_payload_does_not_match_short_numeric_label_prefix(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "app.free_creation.service.provider_ready_asset_url",
+        lambda url, storage_key=None: str(url or ""),
+    )
+    row = FreeCreationSegment(
+        id=8,
+        project_id=2,
+        user_id=3,
+        segment_index=1,
+        title="片段 1",
+        prompt="只参考@图片10",
+        input_assets_json=[
+            {"type": "image", "url": "https://example.test/image-1.png", "role": "reference_image", "label": "@图片1"},
+            {"type": "image", "url": "https://example.test/image-10.png", "role": "reference_image", "label": "@图片10"},
+        ],
+    )
+
+    payload = build_seedance_payload(row)
+
+    assert payload["content"] == [
+        {"type": "text", "text": row.prompt},
+        {"type": "image_url", "image_url": {"url": "https://example.test/image-10.png"}, "role": "reference_image"},
+    ]

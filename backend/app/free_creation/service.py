@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import re
 import tempfile
 import time
 import logging
@@ -333,6 +334,29 @@ def provider_ready_asset_url(url: str | None, *, storage_key: str | None = None)
     return build_public_static_url(s)
 
 
+def _asset_label_is_referenced(prompt: str, label: str) -> bool:
+    value = str(label or "").strip()
+    if not value:
+        return False
+    pattern = re.escape(value)
+    if value[-1:].isdigit():
+        pattern = f"{pattern}(?!\\d)"
+    return re.search(pattern, prompt) is not None
+
+
+def _assets_referenced_by_prompt(prompt: str, assets: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    text = str(prompt or "")
+    if not text:
+        return assets
+    referenced: list[dict[str, Any]] = []
+    for asset in assets:
+        if not isinstance(asset, dict):
+            continue
+        if _asset_label_is_referenced(text, str(asset.get("label") or "")):
+            referenced.append(asset)
+    return referenced or assets
+
+
 def downloadable_free_creation_url(url: str | None, *, storage_key: str | None = None) -> str:
     return provider_ready_asset_url(url, storage_key=storage_key)
 
@@ -393,8 +417,10 @@ def _with_preview_url(asset: dict[str, Any]) -> dict[str, Any]:
 
 
 def build_seedance_payload(segment: FreeCreationSegment) -> dict[str, Any]:
-    content: list[dict[str, Any]] = [{"type": "text", "text": (segment.prompt or "").strip()}]
-    for asset in list(segment.input_assets_json or []):
+    prompt = (segment.prompt or "").strip()
+    content: list[dict[str, Any]] = [{"type": "text", "text": prompt}]
+    input_assets = [asset for asset in list(segment.input_assets_json or []) if isinstance(asset, dict)]
+    for asset in _assets_referenced_by_prompt(prompt, input_assets):
         if not isinstance(asset, dict):
             continue
         url = provider_ready_asset_url(
